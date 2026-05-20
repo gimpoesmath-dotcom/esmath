@@ -4358,7 +4358,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
       ${ph?`<div class="prev-box">📋 지난 과제: ${ph.date?`<span style="font-size:10px;color:var(--text3)">[${ph.date}]</span> `:''}${esc(ph.hw)}</div>`:''}
       <textarea class="tarea" oninput="tUpdateHwMem('${s.id}','${dateStr}',this.value)" onblur="tSaveHw('${s.id}','${dateStr}','${s.classType}',this.value)">${esc(l.homework||'')}</textarea>
     </div>
-    ${renderUnitCheckPanels(s.id, s.textbooks||[], parseDate(dateStr).getDay())}
+    ${renderUnitCheckPanels(s.id, s.textbooks||[], parseDate(dateStr).getDay(), dateStr)}
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer"><input type="checkbox" ${l.makeupClass?'checked':''} onchange="tSave('${s.id}','${dateStr}','${s.classType}','makeupClass',this.checked)"> 보강</label>
       <input type="text" placeholder="특이사항" value="${esc(l.note||'')}" onblur="tSave('${s.id}','${dateStr}','${s.classType}','note',this.value)" style="flex:1;min-width:0;padding:4px 7px;border:1px solid var(--border);border-radius:var(--r);font-size:11px;font-family:inherit">
@@ -4371,7 +4371,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
 }
 
 /* ── 단원 체크 패널 렌더 ── */
-function renderUnitCheckPanels(sid, tbs, dow){
+function renderUnitCheckPanels(sid, tbs, dow, dateStr){
   if(!tbs||!tbs.length) return '';
   const isFriday=(dow===5);
   const books=cfg.textbooks||[];
@@ -4400,7 +4400,7 @@ function renderUnitCheckPanels(sid, tbs, dow){
     const safeId='up_'+sid.replace(/[^a-z0-9]/gi,'_')+'__'+tbId.replace(/[^a-z0-9]/gi,'_');
     // 패널이 닫혀 있어도 _unitMap에 항상 등록 (저장 함수가 찾을 수 있도록)
     if(!window._unitMap) window._unitMap={};
-    window._unitMap[safeId]={sid, tbId};
+    window._unitMap[safeId]={sid, tbId, dateStr: dateStr||''};
 
     const needsTestCount=units.filter(u=>u.checked&&!u.manualComplete&&(u.score===null||u.score===undefined||u.score==='')).length;
     const checkedCount=units.filter(u=>u.checked||u.manualComplete).length;
@@ -4444,8 +4444,10 @@ function renderUnitCheckPanels(sid, tbs, dow){
 if(!window._unitMap) window._unitMap={};
 
 function buildUnitRows(sid, tbId, safeId, units, isFriday){
-  // 전역 맵에 등록 (이벤트 핸들러에서 tbId 역참조용)
-  window._unitMap[safeId]={sid, tbId};
+  // 전역 맵에 등록 (이벤트 핸들러에서 tbId 역참조용) — dateStr은 기존 값 유지
+  if(!window._unitMap) window._unitMap={};
+  const existing=window._unitMap[safeId]||{};
+  window._unitMap[safeId]={sid, tbId, dateStr: existing.dateStr||''};
 
   let inner='';
   if(!units.length){
@@ -4548,10 +4550,10 @@ async function unitSaveScore(safeId, idx, val){
   try{
     await saveTbUnits(sid,tbId,units);
     refreshUnitPanelById(sid,tbId,safeId);
-    // 시험점수 input에도 동일한 값 반영 (오늘 날짜 기준)
+    // 시험점수 input에도 동일한 값 반영
     // 단, 전범위 시험이 이미 입력된 경우는 덮어쓰지 않음
     if(next!==null){
-      const dateStr=dk(st.todayDate instanceof Date ? st.todayDate : new Date());
+      const dateStr=r.dateStr||(dk(st.todayDate instanceof Date ? st.todayDate : new Date()));
       const existingLesson=getLesson(sid,dateStr);
       if(!existingLesson?.testIsFullRange){
         const scoreInp=document.getElementById('testScoreInp_'+sid+'_'+dateStr);
