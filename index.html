@@ -1698,7 +1698,7 @@ function sessionsForMonthWithCycle(classType, year, month){
 function prevHwInMonth(sid,dateStr,classType,year,month){
   // 현재 회차에 이미 점수가 입력됐으면 표시 안 함 (이미 채점했으니)
   const curL=mdb.lessons[lk(sid,dateStr)];
-  if(curL && curL.homeworkScore && String(curL.homeworkScore).trim()!=='') return '';
+  if(curL && curL.homeworkScore && String(curL.homeworkScore).trim()!=='') return null;
 
   // 규칙: "지난 과제"는 딱 한 번만 표시.
   //  - 학생의 모든 수업(정규 + 토요보강)을 시간 역순으로 검사
@@ -1732,22 +1732,22 @@ function prevHwInMonth(sid,dateStr,classType,year,month){
     // 점수가 입력됐으면 → 그 시점에 과제가 처리된 거니, 그 이전은 안 본다 (차단)
     // 단, 그 수업 자체가 새 과제(hasHw)를 갖고 있다면 그건 다음 수업의 "지난 과제"
     if(hasScore){
-      if(hasHw) return l.homework;
-      return ''; // 점수만 있고 새 과제 없음 → 처리 완료, 차단
+      if(hasHw) return {hw:l.homework, date:l.date};
+      return null; // 점수만 있고 새 과제 없음 → 처리 완료, 차단
     }
 
     // homework가 있는 수업을 만나면 → 그게 표시될 과제
-    if(hasHw) return l.homework;
+    if(hasHw) return {hw:l.homework, date:l.date};
 
     // 결석이면 건너뜀 (다음 수업으로 이월)
     if(isAbsent) continue;
 
     // 결석도 아니고 homework도 score도 없음 → 차단 (그 수업에서 처리됐다고 봄)
-    return '';
+    return null;
   }
 
-  if(mdb.carryIn&&mdb.carryIn[sid])return mdb.carryIn[sid];
-  return '';
+  if(mdb.carryIn&&mdb.carryIn[sid])return {hw:mdb.carryIn[sid], date:''};
+  return null;
 }
 
 function lk(sid,dateStr){return sid+'_'+dateStr;}
@@ -2911,11 +2911,14 @@ function rMonthly(){
   function calcAwards(sid, classType){
     const stats = calcMonthStats(sid, classType);
     const awards = [];
-    // 출석상 조건: 반의 기준 회차(주3회=12, 주2회=8)가 모두 완료되어야 수여 가능
-    // 토요일 보강은 출석상 출결에 미포함 (sessionsForMonthWithCycle은 정규수업만 포함)
+    // 출석상 조건: 반의 기준 회차(주3회=12, 주2회=8)가 오늘까지 실제로 진행됐어야 수여 가능
     const ct2 = CT()[classType];
     const requiredSessions = ct2 ? (ct2.sessions || 0) : 0;
-    const cycleComplete = requiredSessions > 0 && stats.totalSessions >= requiredSessions;
+    // 오늘까지 지난 회차만 카운트 (미래 날짜 제외)
+    const todayStrAw = dk(new Date());
+    const allSessions = sessionsForMonthWithCycle(classType, st.year, st.month);
+    const passedSessions = allSessions.filter(s => s.dateStr <= todayStrAw).length;
+    const cycleComplete = requiredSessions > 0 && passedSessions >= requiredSessions;
     if(cycleComplete){
       if(stats.absent===0 && stats.late===0 && stats.attend>=requiredSessions)
         awards.push({id:'perfect', label:'PERFECT', sub:'출석상', icon:'🏅', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'});
@@ -4227,8 +4230,8 @@ function renderMatrixTable(studs,mergedCols,todayStr,cls){
 
   studs.forEach((s,ri)=>{
     const scheduleChips = studentScheduleChips(s);
-    const testAvg=window._matrixTestAvg?window._matrixTestAvg[s.id]:null;
-    const avgChip=testAvg!==null?`<span style="font-size:10px;font-weight:700;background:${testAvg>=80?'var(--green-bg)':'var(--amber-bg)'};color:${testAvg>=80?'var(--green)':'var(--amber)'};border-radius:8px;padding:1px 6px;border:1px solid ${testAvg>=80?'#80c090':'#e0c060'}">시험 평균 ${testAvg}점</span>`:'';
+    const testAvg=null; // 시험평균 칩 미표시
+    const avgChip='';
     const specialNote=s.specialNote||'';
     h+=`<tr class="${ri%2===0?'row-e':'row-o'}"><td class="col-student">
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
@@ -4273,7 +4276,7 @@ function renderMatrixTable(studs,mergedCols,todayStr,cls){
           h+=`<td class="dcell${tc} sat-cell" style="min-width:100px;max-width:130px"><textarea class="tinp" onblur="mSave('${s.id}','${d}','progress',this.value)">${esc(l.progress||'')}</textarea></td>`;
           // 이전 과제 표시 (정규 회차랑 똑같이)
           const ph=prevHwInMonth(s.id,d,cls,st.year,st.month);
-          h+=`<td class="dcell${tc} sat-cell" style="min-width:100px;max-width:130px">${ph?`<span class="prev-chip" title="${esc(ph)}">📋 ${esc(ph)}</span>`:''}<textarea class="tinp" onblur="mSaveHw('${s.id}','${d}','${cls}',this.value)">${esc(l.homework||'')}</textarea></td>`;
+          h+=`<td class="dcell${tc} sat-cell" style="min-width:100px;max-width:130px">${ph?`<span class="prev-chip" title="${ph.date?ph.date+' 과제: ':''} ${esc(ph.hw)}">📋 ${esc(ph.hw)}</span>`:''}<textarea class="tinp" onblur="mSaveHw('${s.id}','${d}','${cls}',this.value)">${esc(l.homework||'')}</textarea></td>`;
           h+=`<td class="dcell c${tc} sat-cell"><span class="chk" onclick="mToggle('${s.id}','${d}','makeupClass')">${l.makeupClass?'✅':'☐'}</span></td>`;
           h+=`<td class="dcell${tc} sat-cell" style="min-width:90px;max-width:130px"><textarea class="tinp" onblur="mSave('${s.id}','${d}','note',this.value)">${esc(l.note||'')}</textarea></td>`;
         }
@@ -4295,7 +4298,7 @@ function renderMatrixTable(studs,mergedCols,todayStr,cls){
         h+=`<td class="dcell c${tc}">${starBtn}<input class="sinp" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="mSave('${s.id}','${d}','testScore',this.value)" style="${l.testIsFullRange?'background:#fff8e8':''}">${l.testIsFullRange&&l.testScore?'<div style="font-size:9px;color:var(--amber);font-weight:700;text-align:center;margin-top:1px">전범위</div>':''}</td>`;
         h+=`<td class="dcell${tc}" style="min-width:100px;max-width:130px"><input type="text" class="tinp" style="font-size:10px;color:var(--purple);border-bottom:1px dashed #d4a0f0;margin-bottom:2px;padding-bottom:2px;width:100%" placeholder="목표진도..." value="${esc(l.targetProgress||'')}" onblur="mSave('${s.id}','${d}','targetProgress',this.value)"><textarea class="tinp" onblur="mSave('${s.id}','${d}','progress',this.value)">${esc(l.progress||'')}</textarea></td>`;
         const ph=prevHwInMonth(s.id,d,cls,st.year,st.month);
-        h+=`<td class="dcell${tc}" style="min-width:100px;max-width:130px">${ph?`<span class="prev-chip" title="${esc(ph)}">📋 ${esc(ph)}</span>`:''}<textarea class="tinp" onblur="mSaveHw('${s.id}','${d}','${cls}',this.value)">${esc(l.homework||'')}</textarea></td>`;
+        h+=`<td class="dcell${tc}" style="min-width:100px;max-width:130px">${ph?`<span class="prev-chip" title="${ph.date?ph.date+' 과제: ':''} ${esc(ph.hw)}">📋 ${esc(ph.hw)}</span>`:''}<textarea class="tinp" onblur="mSaveHw('${s.id}','${d}','${cls}',this.value)">${esc(l.homework||'')}</textarea></td>`;
         h+=`<td class="dcell c${tc}"><span class="chk" onclick="mToggle('${s.id}','${d}','makeupClass')">${l.makeupClass?'✅':'☐'}</span></td>`;
         h+=`<td class="dcell${tc}" style="min-width:90px;max-width:130px"><textarea class="tinp" onblur="mSave('${s.id}','${d}','note',this.value)">${esc(l.note||'')}</textarea></td>`;
       }
@@ -4332,7 +4335,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
       </div>
       ${ph?`<div style="margin-bottom:8px">
         <div class="field-lbl">지난 시간 과제</div>
-        <div class="prev-box" style="user-select:text;cursor:default">📋 ${esc(ph)}</div>
+        <div class="prev-box" style="user-select:text;cursor:default">📋 ${ph.date?`<span style="font-size:10px;color:var(--text3)">[${ph.date}]</span> `:''}${esc(ph.hw)}</div>
       </div>`:''}
       <div style="margin-bottom:2px">
         <div class="field-lbl">과제 점수</div>
@@ -4365,7 +4368,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
     </div>
     <div style="margin-bottom:6px"><div class="field-lbl">오늘 진도</div><textarea class="tarea" onblur="tSave('${s.id}','${dateStr}','${s.classType}','progress',this.value)">${esc(l.progress||'')}</textarea></div>
     <div style="margin-bottom:6px"><div class="field-lbl">오늘 과제</div>
-      ${ph?`<div class="prev-box">📋 지난 과제: ${esc(ph)}</div>`:''}
+      ${ph?`<div class="prev-box">📋 지난 과제: ${ph.date?`<span style="font-size:10px;color:var(--text3)">[${ph.date}]</span> `:''}${esc(ph.hw)}</div>`:''}
       <textarea class="tarea" oninput="tUpdateHwMem('${s.id}','${dateStr}',this.value)" onblur="tSaveHw('${s.id}','${dateStr}','${s.classType}',this.value)">${esc(l.homework||'')}</textarea>
     </div>
     ${renderUnitCheckPanels(s.id, s.textbooks||[], parseDate(dateStr).getDay())}
@@ -4382,9 +4385,13 @@ function renderUnitCheckPanels(sid, tbs, dow){
   const isFriday=(dow===5);
   const books=cfg.textbooks||[];
   let html='<div style="margin-top:8px">';
+  let anyPanel=false;
 
   tbs.forEach(function(t){
     const bk=t.tbId?(books.find(function(b){return b.id===t.tbId;})||null):null;
+    // unitCount가 설정된 교재에만 단원 패널 표시
+    if(!bk || !bk.unitCount || bk.unitCount<=0) return;
+    anyPanel=true;
     const tbName=bk?bk.name:(t.name||'교재');
     const tbId=t.tbId||('p_'+sid+'_'+encodeURIComponent(t.name||''));
     const key=sid+'_'+tbId;
@@ -4429,7 +4436,7 @@ function renderUnitCheckPanels(sid, tbs, dow){
   });
 
   html+='</div>';
-  return html;
+  return anyPanel ? html : '';
 }
 
 /* 단원 행 HTML 생성 (렌더 + 리프레시 공용) */
@@ -4456,8 +4463,6 @@ function buildUnitRows(sid, tbId, safeId, units, isFriday){
           placeholder="${needsTest?'🔔점수':'점수'}"
           title="${needsTest?'금요일 시험 예정':''}"
           onblur="unitSaveScore('${safeId}',${ui},this.value)">
-        <button onclick="unitDeleteRow('${safeId}',${ui})"
-          style="flex-shrink:0;padding:1px 5px;font-size:10px;border:1px solid #e0a0a0;border-radius:4px;background:transparent;color:#c05050;cursor:pointer;line-height:1.4">✕</button>
       </div>`;
     });
   }
@@ -4679,6 +4684,7 @@ function rToday(){
     <b style="font-size:14px;padding:0 4px">${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')} (${DAY[dow]})</b>
     <button class="btn btn-sm" onclick="chgD(1)">다음날 ▶</button>
     <button class="btn btn-sm" onclick="goTodayDate()">오늘</button>
+    <input type="date" value="${dateStr}" onchange="if(this.value){const p=this.value.split('-');const nd=new Date(+p[0],+p[1]-1,+p[2]);st.todayDate=nd;ensureMonthLoaded(nd.getFullYear(),nd.getMonth()+1).then(()=>render());}" style="font-size:12px;padding:3px 7px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg);font-family:inherit;cursor:pointer" title="날짜 직접 선택">
     ${holiday?'<span class="badge" style="background:#fce6e6;color:#a02828">휴일</span>':''}
     ${isPrin?`<select onchange="setTodayTeacher(this.value)" style="margin-left:6px" title="선생님별 필터">
       <option value="" ${!teacherFilter?'selected':''}>👩‍🏫 전체 선생님</option>
@@ -4961,8 +4967,8 @@ function renderSaturdayTable(){
     ? allStuds.filter(s=>isStudentOfTeacher(s, session?.username))
     : allStuds;
 
-  // 등록된 학생이 한 명이라도 있는 보강일만 필터
-  const activeDays=days.filter(entry=>getMakeupStudents(entry).length>0);
+  // 등록된 보강일을 모두 표시 (학생 없어도)
+  const activeDays=days;
   if(!activeDays.length) return '';
 
   let h=`<div style="margin-top:24px">
@@ -5546,6 +5552,7 @@ async function toggleAllClassAssistant(assistantName, ctk, checked){
 }
 
 function rSettings(){
+  try {
   const isPrincipal = session?.role==='principal';
   const ctEntries=Object.entries(CT());
   let ny=st.year,nm2=st.month+1;if(nm2>12){nm2=1;ny++;}
@@ -5618,6 +5625,12 @@ function rSettings(){
       });
       // 학년·학기 정렬
       const gradeOrder=['초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
+      const semOrder=['1학기','2학기'];
+      const sortBooks=(arr)=>[...arr].sort((a,b)=>{
+        const gi=gradeOrder.indexOf(a.grade||''), gj=gradeOrder.indexOf(b.grade||'');
+        if(gi!==gj) return (gi<0?99:gi)-(gj<0?99:gj);
+        return (semOrder.indexOf(a.semester||'')||0)-(semOrder.indexOf(b.semester||'')||0);
+      });
       // 시리즈별 카드
       seriesMap.forEach((bkArr,sName)=>{
         const sorted=sortBooks(bkArr);
@@ -5784,11 +5797,11 @@ function rSettings(){
     </div>`;
   }
   return h;
-}
-
-
-
-async function saveStudentTeacher(sid, field, val){
+  } catch(e) {
+    console.error('rSettings 오류:', e);
+    return `<div class="card" style="color:var(--red);padding:20px"><b>설정 화면 로딩 오류</b><br><span style="font-size:11px">${e.message}</span></div>`;
+  }
+}async function saveStudentTeacher(sid, field, val){
   const s=cfg.students.find(x=>x.id===sid);
   if(!s) return;
   s[field]=(val||'').trim();
