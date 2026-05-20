@@ -591,8 +591,8 @@ async function showApp(){
 
   // ③ 교재/시험 데이터는 백그라운드에서 조용히 로드
   loadTextbookProgress().then(()=>loadTextbookTests()).then(()=>loadPointsData()).then(()=>loadSchoolExamData()).then(()=>loadTextbookUnits()).then(()=>{
-    // 교재 탭 또는 월간 요약/포인트 탭이 열려있으면 새로고침
-    if(st.tab==='students' || st.tab==='monthly' || st.tab==='points') render();
+    // 교재 탭 또는 월간 요약/포인트/오늘입력 탭이 열려있으면 새로고침
+    if(st.tab==='students' || st.tab==='monthly' || st.tab==='points' || st.tab==='today' || st.tab==='matrix') render();
   });
 }
 
@@ -2795,8 +2795,9 @@ function rWeekly(){
 
       h+=`<div class="wk-card${needsCare?' needs-care':''}">
         <div class="wk-card-hdr">
-          <b style="font-size:13px;cursor:pointer;text-decoration:underline dotted" onclick="openM('studentProfile','${s.id}')">${s.name}</b>
+          <b style="font-size:13px">${s.name}</b>
           ${s.grade?gradeBadge(s.grade):''}
+          <button onclick="openM('studentProfile','${s.id}')" style="padding:2px 8px;font-size:11px;border:1px solid var(--border2);border-radius:6px;background:var(--bg);color:var(--text2);cursor:pointer;font-family:inherit">📋 상세</button>
           <div class="att-pills" style="flex-wrap:wrap;gap:3px">${datePills}</div>
         </div>
         <div class="wk-card-body">`;
@@ -4387,7 +4388,8 @@ function renderUnitCheckPanels(sid, tbs, dow){
     let units=textbookUnits[key]||[];
 
     // 단원이 없고 교재에 unitCount가 설정된 경우 자동 초기화
-    if(!units.length && bk && bk.unitCount>0){
+    // 단, textbookUnits가 아직 로드 중이면 절대 초기화하지 않음 (기존 데이터 덮어쓰기 방지)
+    if(!units.length && bk && bk.unitCount>0 && _loaded.textbookUnits){
       units=[];
       for(let i=1;i<=bk.unitCount;i++) units.push({name:`${i}단원`,checked:false,score:null,checkedDate:'',addedDate:dk(new Date())});
       // 비동기 저장 (렌더 블로킹 없이)
@@ -4520,7 +4522,8 @@ function refreshUnitPanelById(sid, tbId, safeId){
 
 /* ── 단원 체크 토글 ── */
 async function unitToggleCheck(safeId, idx, checked){
-  const r=window._unitMap[safeId]; if(!r) return;
+  const r=window._unitMap[safeId];
+  if(!r){ toast('단원 정보를 찾을 수 없습니다. 페이지를 새로고침해주세요.', true); return; }
   const {sid,tbId}=r;
   const key=sid+'_'+tbId;
   const units=JSON.parse(JSON.stringify(textbookUnits[key]||[]));
@@ -4537,7 +4540,8 @@ async function unitToggleCheck(safeId, idx, checked){
 
 /* ── 단원 점수 저장 ── */
 async function unitSaveScore(safeId, idx, val){
-  const r=window._unitMap[safeId]; if(!r) return;
+  const r=window._unitMap[safeId];
+  if(!r){ toast('단원 정보를 찾을 수 없습니다. 페이지를 새로고침해주세요.', true); return; }
   const {sid,tbId}=r;
   const key=sid+'_'+tbId;
   const units=JSON.parse(JSON.stringify(textbookUnits[key]||[]));
@@ -4555,7 +4559,7 @@ async function unitSaveScore(safeId, idx, val){
 
 /* ── 단원 시험 없이 완료 처리 ── */
 async function unitMarkComplete(safeId, idx, complete){
-  const r=window._unitMap[safeId]; if(!r) return;
+  const r=window._unitMap[safeId]; if(!r){ toast('단원 정보를 찾을 수 없습니다. 새로고침해주세요.', true); return; }
   const {sid,tbId}=r;
   const key=sid+'_'+tbId;
   const units=JSON.parse(JSON.stringify(textbookUnits[key]||[]));
@@ -4577,7 +4581,7 @@ async function unitMarkComplete(safeId, idx, complete){
 
 /* ── 단원 추가 ── */
 async function unitAddNew(safeId){
-  const r=window._unitMap[safeId]; if(!r) return;
+  const r=window._unitMap[safeId]; if(!r){ toast('단원 정보를 찾을 수 없습니다. 새로고침해주세요.', true); return; }
   const {sid,tbId}=r;
   const inp=document.getElementById('uinp_'+safeId);
   if(!inp) return;
@@ -4596,7 +4600,7 @@ async function unitAddNew(safeId){
 
 /* ── 단원 삭제 ── */
 async function unitDeleteRow(safeId, idx){
-  const r=window._unitMap[safeId]; if(!r) return;
+  const r=window._unitMap[safeId]; if(!r){ toast('단원 정보를 찾을 수 없습니다. 새로고침해주세요.', true); return; }
   const {sid,tbId}=r;
   const key=sid+'_'+tbId;
   const units=JSON.parse(JSON.stringify(textbookUnits[key]||[]));
