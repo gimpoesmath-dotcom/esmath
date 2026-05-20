@@ -5918,10 +5918,21 @@ function buildProfileHTML(sid){
   h+='<div class="profile-section">';
   h+='<div class="profile-section-title" style="display:flex;align-items:center;justify-content:space-between">📚 교재 &amp; 전범위 시험<button class="btn btn-sm btn-primary" onclick="openM(\'assignTextbook\',\''+sid+'\')" style="font-size:11px">+ 교재 배정</button></div>';
 
-  if(!sTbs.length){
+  if(!sTbs.length && !Object.keys(myTests).length){
     h+='<div style="color:var(--text3);font-size:13px">배정된 교재 없음</div>';
   } else {
-    sTbs.forEach(function(t){
+    // 배정된 교재 + 배정 해제됐지만 시험 기록 있는 교재 모두 표시
+    const assignedTbIds=new Set(sTbs.map(t=>t.tbId||('p_'+sid+'_'+encodeURIComponent(t.name||''))));
+    // 시험 기록이 있는데 배정 목록에 없는 교재 (완료 후 삭제된 경우)
+    const extraTbIds=Object.keys(myTests).filter(tbId=>!assignedTbIds.has(tbId));
+    const extraTbs=extraTbIds.map(tbId=>{
+      const bk=(cfg.textbooks||[]).find(b=>b.id===tbId);
+      return {tbId, name:bk?bk.name:tbId, _fromHistory:true};
+    });
+    const allTbsToShow=[...sTbs, ...extraTbs];
+
+    allTbsToShow.forEach(function(t){
+      const fromHistory=!!t._fromHistory;
       const bk=t.tbId?(books.find(function(b){return b.id===t.tbId;})||null):null;
       const tbName=bk?bk.name:(t.name||'교재');
       const tbId=t.tbId||('p_'+sid+'_'+encodeURIComponent(t.name||''));
@@ -5933,22 +5944,25 @@ function buildProfileHTML(sid){
       const isManuallyComplete=passed && attempts.find(function(a){return a.passed;})?.manualComplete;
       const passAttemptProf=attempts.find(function(a){return a.passed;});
       const passDate=passAttemptProf?.date||'';
-      // 완료된 교재: 시작일→완료일 + 소요 기간 / 진행 중: 시작일부터 오늘까지
-      const dur=passed
-        ? durationLabel(startDate)  // 표시용으로 남기되 아래 별도 처리
-        : (startDate?durationLabel(startDate):'');
       const elapsed=passed ? durationBetweenLabel(startDate, passDate) : '';
 
-      h+='<div class="tb-test-block">';
+      h+='<div class="tb-test-block"'+(fromHistory?' style="opacity:0.85;border-left:3px solid var(--green)"':passed?' style="border-left:3px solid var(--green)"':'')+'>';
       h+='<div class="tb-test-block-hdr">';
-      h+='<span class="'+(isPersonal?'tb-badge tb-badge-personal':'tb-badge')+'">'+(isPersonal?'개인':'공통')+'</span>';
+      if(fromHistory){
+        h+='<span class="tb-badge" style="background:#e2f2e9;color:#1e6e3a">완료</span>';
+      } else {
+        h+='<span class="'+(isPersonal?'tb-badge tb-badge-personal':'tb-badge')+'">'+(isPersonal?'개인':'공통')+'</span>';
+      }
       h+='<b style="font-size:13px;flex:1">'+esc(tbName)+'</b>';
       if(passed && isManuallyComplete) h+='<span class="final-status status-pass">✅ 완료</span>';
       else if(passed) h+='<span class="final-status status-pass">✅ 통과</span>';
       else if(attempts.length) h+='<span class="final-status status-fail">재시험 필요</span>';
       else h+='<span class="final-status status-none">미응시</span>';
       h+='<button class="btn btn-sm" onclick="openM(\'addTest\',\''+sid+'\',\''+tbId+'\')">✱ 시험 입력</button>';
-      h+='<button class="btn btn-sm" style="color:var(--red);border-color:#e0a0a0" onclick="removeStuTextbook(\''+sid+'\',\''+tbId+'\')">× 삭제</button>';
+      // 완료된 교재나 기록만 남은 교재는 삭제 버튼 숨김
+      if(!passed && !fromHistory){
+        h+='<button class="btn btn-sm" style="color:var(--red);border-color:#e0a0a0" onclick="removeStuTextbook(\''+sid+'\',\''+tbId+'\')">× 삭제</button>';
+      }
       h+='</div>';
 
       if(passed && startDate && passDate){
@@ -7432,7 +7446,17 @@ function rModal(){
   else if(st.modal==='studentProfile'){
     const sid=st.modalArg1;
     if(!cfg.students.find(x=>x.id===sid)){ closeM(); return; }
-    div.innerHTML=buildProfileHTML(sid);
+    // 교재/시험 데이터 로드 보장 후 프로필 렌더
+    if(!_loaded.textbookProgress || !_loaded.textbookTests || !_loaded.textbookUnits){
+      div.innerHTML='<div class="modal"><div style="padding:30px;text-align:center;color:var(--text3)">데이터 불러오는 중...</div></div>';
+      Promise.all([
+        _loaded.textbookProgress ? Promise.resolve() : loadTextbookProgress(),
+        _loaded.textbookTests    ? Promise.resolve() : loadTextbookTests(),
+        _loaded.textbookUnits    ? Promise.resolve() : loadTextbookUnits(),
+      ]).then(()=>{ div.innerHTML=buildProfileHTML(sid); });
+    } else {
+      div.innerHTML=buildProfileHTML(sid);
+    }
   }
   else if(st.modal==='addTest'){
     const sid=st.modalArg1;
