@@ -4351,7 +4351,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
     <div style="margin-bottom:6px"><div class="field-lbl">목표진도</div><input type="text" class="sinp-full" value="${esc(l.targetProgress||'')}" placeholder="이번 수업 목표 진도를 입력하세요" onblur="tSave('${s.id}','${dateStr}','${s.classType}','targetProgress',this.value)"></div>
     <div class="score-row">
       <div><div class="field-lbl">과제점수</div><input class="sinp-full" type="text" value="${esc(l.homeworkScore||'')}" placeholder="-" onblur="tSave('${s.id}','${dateStr}','${s.classType}','homeworkScore',this.value)"></div>
-      <div><div class="field-lbl">시험점수${l.testIsFullRange&&l.testScore?` <span style="color:var(--amber);font-weight:700" title="전범위 시험 (평균에서 제외)">*</span>`:''}</div><input class="sinp-full" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="tSave('${s.id}','${dateStr}','${s.classType}','testScore',this.value)"></div>
+      <div><div class="field-lbl">시험점수${l.testIsFullRange&&l.testScore?` <span style="color:var(--amber);font-weight:700" title="전범위 시험 (평균에서 제외)">*</span>`:''}</div><input id="testScoreInp_${s.id}_${dateStr}" class="sinp-full" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="tSave('${s.id}','${dateStr}','${s.classType}','testScore',this.value)"></div>
     </div>
     <div style="margin-bottom:6px"><div class="field-lbl">오늘 진도</div><textarea class="tarea" onblur="tSave('${s.id}','${dateStr}','${s.classType}','progress',this.value)">${esc(l.progress||'')}</textarea></div>
     <div style="margin-bottom:6px"><div class="field-lbl">오늘 과제</div>
@@ -4472,13 +4472,6 @@ function buildUnitRows(sid, tbId, safeId, units, isFriday){
       </div>`;
     });
   }
-  inner+=`<div class="unit-add-row">
-    <input type="text" class="unit-add-inp" id="uinp_${safeId}"
-      placeholder="단원명 입력 후 Enter"
-      onkeydown="if(event.key==='Enter'){unitAddNew('${safeId}');event.preventDefault()}">
-    <button class="btn btn-sm btn-primary" style="white-space:nowrap;flex-shrink:0"
-      onclick="unitAddNew('${safeId}')">+ 추가</button>
-  </div>`;
   return inner;
 }
 
@@ -4555,6 +4548,21 @@ async function unitSaveScore(safeId, idx, val){
   try{
     await saveTbUnits(sid,tbId,units);
     refreshUnitPanelById(sid,tbId,safeId);
+    // 시험점수 input에도 동일한 값 반영 (오늘 날짜 기준)
+    // 단, 전범위 시험이 이미 입력된 경우는 덮어쓰지 않음
+    if(next!==null){
+      const dateStr=dk(st.todayDate instanceof Date ? st.todayDate : new Date());
+      const existingLesson=getLesson(sid,dateStr);
+      if(!existingLesson?.testIsFullRange){
+        const scoreInp=document.getElementById('testScoreInp_'+sid+'_'+dateStr);
+        if(scoreInp){
+          scoreInp.value=String(next);
+          // lesson에도 저장
+          const cls=(cfg.students||[]).find(x=>x.id===sid)?.classType||'';
+          tSave(sid,dateStr,cls,'testScore',String(next));
+        }
+      }
+    }
   }catch(e){ toast('저장 실패: '+e.message,true); }
 }
 
