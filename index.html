@@ -1708,13 +1708,11 @@ function prevHwInMonth(sid,dateStr,classType,year,month){
   if(curL && curL.homeworkScore && String(curL.homeworkScore).trim()!=='') return null;
 
   // 로직:
-  // 과거 수업을 최근순으로 탐색
-  // 1) 결석인 수업은 건너뜀 (과제가 다음 수업으로 이월됨)
-  // 2) 출석/지각 수업을 만나면:
-  //    - 그 수업에 과제가 있으면 → 표시 (바로 다음 수업 = 현재 수업이 받을 과제)
-  //    - 그 수업에 과제가 없으면 → null (이전 과제 없음, 한없이 소급 금지)
-  // 3) 결석이 연속되면 가장 최근 출석 수업의 과제를 이월해서 표시
-  //    단, 이월된 과제는 "직전 출석 수업"에서만 가져옴 (더 이전 소급 없음)
+  // 이 학생의 정규 수업일 목록을 역순으로 탐색
+  // - 결석(absent)이면 건너뜀 → 이월
+  // - 출석/지각/미입력 수업을 만나면:
+  //   - 과제가 있으면 → 표시 (딱 한 번만)
+  //   - 과제가 없으면 → null (더 이전 소급 금지)
 
   const dateY = parseInt(dateStr.slice(0,4));
   const dateM = parseInt(dateStr.slice(5,7));
@@ -1726,22 +1724,25 @@ function prevHwInMonth(sid,dateStr,classType,year,month){
   const curCacheLessons = prevMonthLessonsCache[curKey]||{};
   const merged = {...prevLessons, ...curCacheLessons, ...(mdb.lessons||{})};
 
-  const allLessons = Object.values(merged)
-    .filter(l=>l.studentId===sid && l.date && l.date<dateStr)
-    .sort((a,b)=>b.date.localeCompare(a.date)); // 최근순
+  // 이 학생이 수업 있는 모든 날짜(정규) — 현재 날짜 이전
+  // classType의 수업일 전체에서 이 학생 기준으로 수업 있는 날 추출
+  const ct = CT()[classType];
+  const allSessionDates = ct ? _getAllSessionDates(classType).filter(d=>d<dateStr) : [];
+  // 역순 (최근순)
+  const sortedDates = [...allSessionDates].sort((a,b)=>b.localeCompare(a));
 
-  // 결석을 건너뛰며 가장 최근 출석/지각 수업을 찾음
-  for(const l of allLessons){
-    const isAbsent = l.attendance==='absent';
-    if(isAbsent) continue; // 결석 → 이월, 계속 탐색
+  for(const d of sortedDates){
+    const l = merged[lk(sid,d)];
+    const att = l ? l.attendance : ''; // lesson 없으면 미입력
+    const isAbsent = att==='absent';
+    if(isAbsent) continue; // 결석 → 이월
 
-    // 출석/지각 수업 발견 → 이 수업의 과제만 확인 (더 이전 소급 없음)
-    const hasHw = l.homework && String(l.homework).trim()!=='';
-    if(hasHw) return {hw:l.homework, date:l.date};
-    return null; // 출석했는데 과제 없음 → 표시 없음
+    // 출석/지각/미입력 → 이 날의 과제 확인 후 중단
+    const hw = l ? (l.homework||'') : '';
+    if(hw.trim()) return {hw:hw.trim(), date:d};
+    return null; // 과제 없음 → 더 이전 소급 금지
   }
 
-  // 과거 수업이 아예 없거나 전부 결석인 경우 carryIn 확인
   if(mdb.carryIn&&mdb.carryIn[sid]) return {hw:mdb.carryIn[sid], date:''};
   return null;
 }
