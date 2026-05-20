@@ -4397,13 +4397,16 @@ function renderUnitCheckPanels(sid, tbs, dow, dateStr){
     const key=sid+'_'+tbId;
     let units=textbookUnits[key]||[];
 
-    // 오늘 입력에서만: 전범위 완료처리(모든 단원 manualComplete) 또는 전범위 시험 통과된 교재는 패널 숨김
+    // 오늘 입력에서만: 전범위 시험 통과 또는 모든 단원을 명시적으로 완료처리한 경우 패널 숨김
+    // 단순 체크박스 체크는 숨김 조건 아님 — manualComplete만 해당
     if(dateStr){
       const myTests=textbookTests[sid]||{};
       const attempts=myTests[tbId]||[];
       const tbPassed=attempts.some(function(a){return a.passed;});
-      const allUnitsComplete=units.length>0 && units.every(function(u){return !!u.manualComplete;});
-      if(tbPassed || allUnitsComplete) return;
+      // 모든 단원이 명시적 완료처리(manualComplete===true)인 경우만 숨김
+      const hasUnits=units.length>0;
+      const allManualComplete=hasUnits && units.every(function(u){return u.manualComplete===true;});
+      if(tbPassed || allManualComplete) return;
     }
     anyPanel=true;
 
@@ -4604,8 +4607,14 @@ async function unitMarkComplete(safeId, idx, complete){
   }
   try{
     await saveTbUnits(sid,tbId,units);
-    refreshUnitPanelById(sid,tbId,safeId);
-    toast(complete?'단원 완료 처리됐습니다.':'완료가 취소됐습니다.');
+    if(!complete){
+      // 완료 취소 시 — 패널이 다시 나타나도록 전체 재렌더
+      render();
+      toast('완료가 취소됐습니다.');
+    } else {
+      refreshUnitPanelById(sid,tbId,safeId);
+      toast('단원 완료 처리됐습니다.');
+    }
   }catch(e){ toast('저장 실패: '+e.message,true); }
 }
 
