@@ -4403,10 +4403,14 @@ function renderUnitCheckPanels(sid, tbs, dow){
     const checkedCount=units.filter(u=>u.checked||u.manualComplete).length;
     const scoredCount=units.filter(u=>u.checked&&u.score!==null&&u.score!==undefined&&u.score!=='').length;
     const completeCount=units.filter(u=>u.manualComplete).length;
+    const needsTestNames=units.filter(u=>u.checked&&!u.manualComplete&&(u.score===null||u.score===undefined||u.score==='')).map(u=>u.name||'').filter(Boolean);
 
-    // 금요일 알림 배지
+    // 금요일 알림 배지 — 시험 필요한 단원명 직접 표시
+    const friBadgeLabel=needsTestNames.length
+      ? needsTestNames.join(', ')+'  시험'
+      : '';
     const friBadge=isFriday&&needsTestCount>0
-      ?`<span class="unit-fri-badge">🔔 시험 ${needsTestCount}단원</span>`:'';
+      ?`<span class="unit-fri-badge">🔔 ${friBadgeLabel}</span>`:'';
 
     // 금요일 알림 배지 (패널은 항상 닫힌 채로 시작 — 배지로만 알림)
     const autoOpen=false;
@@ -4500,11 +4504,13 @@ function refreshUnitPanelById(sid, tbId, safeId){
   const checkedCount=units.filter(u=>u.checked||u.manualComplete).length;
   const scoredCount=units.filter(u=>u.checked&&u.score!==null&&u.score!==undefined&&u.score!=='').length;
   const completeCount=units.filter(u=>u.manualComplete).length;
+  const needsTestNames2=units.filter(u=>u.checked&&!u.manualComplete&&(u.score===null||u.score===undefined||u.score==='')).map(u=>u.name||'').filter(Boolean);
 
   // 통계 배지 업데이트
   const statEl=document.getElementById('ustat_'+safeId);
   if(statEl){
-    const friBadge=isFriday&&needsTestCount>0?`<span class="unit-fri-badge">🔔 시험 ${needsTestCount}단원</span>`:'';
+    const friBadgeLabel2=needsTestNames2.length ? needsTestNames2.join(', ')+'  시험' : '';
+    const friBadge=isFriday&&needsTestCount>0?`<span class="unit-fri-badge">🔔 ${friBadgeLabel2}</span>`:'';
     statEl.innerHTML=`${friBadge}<span style="font-size:10px;color:var(--text2)">${checkedCount}/${units.length}완료${scoredCount?` · ${scoredCount}점수`:''}${completeCount?` · ${completeCount}완료처리`:''}</span>`;
   }
   // 바디 재렌더
