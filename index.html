@@ -4392,11 +4392,20 @@ function renderUnitCheckPanels(sid, tbs, dow, dateStr){
     const bk=t.tbId?(books.find(function(b){return b.id===t.tbId;})||null):null;
     // unitCount가 설정된 교재에만 단원 패널 표시
     if(!bk || !bk.unitCount || bk.unitCount<=0) return;
-    anyPanel=true;
     const tbName=bk?bk.name:(t.name||'교재');
     const tbId=t.tbId||('p_'+sid+'_'+encodeURIComponent(t.name||''));
     const key=sid+'_'+tbId;
     let units=textbookUnits[key]||[];
+
+    // 오늘 입력에서만: 전범위 완료처리(모든 단원 manualComplete) 또는 전범위 시험 통과된 교재는 패널 숨김
+    if(dateStr){
+      const myTests=textbookTests[sid]||{};
+      const attempts=myTests[tbId]||[];
+      const tbPassed=attempts.some(function(a){return a.passed;});
+      const allUnitsComplete=units.length>0 && units.every(function(u){return !!u.manualComplete;});
+      if(tbPassed || allUnitsComplete) return;
+    }
+    anyPanel=true;
 
     // 단원이 없고 교재에 unitCount가 설정된 경우 자동 초기화
     // 단, textbookUnits가 아직 로드 중이면 절대 초기화하지 않음 (기존 데이터 덮어쓰기 방지)
