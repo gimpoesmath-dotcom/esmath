@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ES 수학 </title>
+<title>ES 수학 통합관리</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -345,7 +345,7 @@ window._fbReady = true;
 <!-- ══ LOGIN ══ -->
 <div id="login-screen">
   <div class="login-box">
-    <h1>📚 ES 수학 통합관리 </h1>
+    <h1>📚 ES 수학 </h1>
     <p class="sub">아이디를 입력하세요</p>
     <div class="frow">
       <label>아이디</label>
@@ -360,7 +360,7 @@ window._fbReady = true;
 <!-- ══ APP ══ -->
 <div id="app-screen">
   <div class="topbar">
-    <div class="logo">📚 ES 수학 </div>
+    <div class="logo">📚 ES 수학 통합관리 </div>
     <div class="month-sel">
       <button class="btn btn-sm" onclick="chgMonth(-1)">◀</button>
       <select id="yearSel" onchange="onMonthChange()"></select>
@@ -4392,9 +4392,10 @@ function renderUnitCheckPanels(sid, tbs, dow){
     if(!window._unitMap) window._unitMap={};
     window._unitMap[safeId]={sid, tbId};
 
-    const needsTestCount=units.filter(u=>u.checked&&(u.score===null||u.score===undefined||u.score==='')).length;
-    const checkedCount=units.filter(u=>u.checked).length;
+    const needsTestCount=units.filter(u=>u.checked&&!u.manualComplete&&(u.score===null||u.score===undefined||u.score==='')).length;
+    const checkedCount=units.filter(u=>u.checked||u.manualComplete).length;
     const scoredCount=units.filter(u=>u.checked&&u.score!==null&&u.score!==undefined&&u.score!=='').length;
+    const completeCount=units.filter(u=>u.manualComplete).length;
 
     // 금요일 알림 배지
     const friBadge=isFriday&&needsTestCount>0
@@ -4409,7 +4410,7 @@ function renderUnitCheckPanels(sid, tbs, dow){
         <span style="display:flex;align-items:center;gap:5px;flex-shrink:0">
           <span id="ustat_${safeId}" style="display:flex;align-items:center;gap:5px">
             ${friBadge}
-            <span style="font-size:10px;color:var(--text2)">${checkedCount}/${units.length}완료${scoredCount?` · ${scoredCount}점수`:''}</span>
+            <span style="font-size:10px;color:var(--text2)">${checkedCount}/${units.length}완료${scoredCount?` · ${scoredCount}점수`:''}${completeCount?` · ${completeCount}완료처리`:''}</span>
           </span>
           <span id="uarrow_${safeId}" style="font-size:10px;color:var(--text3)">${autoOpen?'▲':'▼'}</span>
         </span>
@@ -4438,16 +4439,22 @@ function buildUnitRows(sid, tbId, safeId, units, isFriday){
   } else {
     units.forEach(function(u,ui){
       const hasScore=(u.score!==null&&u.score!==undefined&&u.score!=='');
-      const needsTest=isFriday&&u.checked&&!hasScore;
+      const isComplete=(u.manualComplete===true);
+      const needsTest=isFriday&&u.checked&&!hasScore&&!isComplete;
       inner+=`<div class="unit-row" id="urow_${safeId}_${ui}">
-        <input type="checkbox" class="unit-chk" ${u.checked?'checked':''}
+        <input type="checkbox" class="unit-chk" ${u.checked||isComplete?'checked':''}
           onchange="unitToggleCheck('${safeId}',${ui},this.checked)">
-        <span class="unit-name" style="${u.checked?'text-decoration:line-through;color:var(--text3)':'color:var(--text)'}">${esc(u.name||'단원 '+(ui+1))}</span>
-        <input type="text" class="unit-score-inp${needsTest?' needs-test':''}"
-          value="${hasScore?esc(String(u.score)):''}"
-          placeholder="${needsTest?'🔔점수':'점수'}"
-          title="${needsTest?'금요일 시험 예정':''}"
-          onblur="unitSaveScore('${safeId}',${ui},this.value)">
+        <span class="unit-name" style="${u.checked||isComplete?'text-decoration:line-through;color:var(--text3)':'color:var(--text)'}">${esc(u.name||'단원 '+(ui+1))}</span>
+        ${isComplete
+          ? `<span style="font-size:10px;color:var(--green);font-weight:700;padding:2px 6px;background:var(--green-bg);border-radius:4px;border:1px solid #80c090">✅ 완료</span>
+             <button onclick="unitMarkComplete('${safeId}',${ui},false)" style="flex-shrink:0;padding:1px 6px;font-size:10px;border:1px solid var(--border2);border-radius:4px;background:transparent;color:var(--text3);cursor:pointer">취소</button>`
+          : `<input type="text" class="unit-score-inp${needsTest?' needs-test':''}"
+              value="${hasScore?esc(String(u.score)):''}"
+              placeholder="${needsTest?'🔔점수':'점수'}"
+              title="${needsTest?'금요일 시험 예정':''}"
+              onblur="unitSaveScore('${safeId}',${ui},this.value)">
+             <button onclick="unitMarkComplete('${safeId}',${ui},true)" style="flex-shrink:0;padding:1px 6px;font-size:10px;border:1px solid #80c090;border-radius:4px;background:var(--green-bg);color:var(--green);cursor:pointer;white-space:nowrap" title="시험 없이 완료 처리">완료</button>`
+        }
       </div>`;
     });
   }
@@ -4482,15 +4489,16 @@ function refreshUnitPanelById(sid, tbId, safeId){
   const isFriday=(d.getDay()===5);
   const key=sid+'_'+tbId;
   const units=textbookUnits[key]||[];
-  const needsTestCount=units.filter(u=>u.checked&&(u.score===null||u.score===undefined||u.score==='')).length;
-  const checkedCount=units.filter(u=>u.checked).length;
+  const needsTestCount=units.filter(u=>u.checked&&!u.manualComplete&&(u.score===null||u.score===undefined||u.score==='')).length;
+  const checkedCount=units.filter(u=>u.checked||u.manualComplete).length;
   const scoredCount=units.filter(u=>u.checked&&u.score!==null&&u.score!==undefined&&u.score!=='').length;
+  const completeCount=units.filter(u=>u.manualComplete).length;
 
   // 통계 배지 업데이트
   const statEl=document.getElementById('ustat_'+safeId);
   if(statEl){
     const friBadge=isFriday&&needsTestCount>0?`<span class="unit-fri-badge">🔔 시험 ${needsTestCount}단원</span>`:'';
-    statEl.innerHTML=`${friBadge}<span style="font-size:10px;color:var(--text2)">${checkedCount}/${units.length}완료${scoredCount?` · ${scoredCount}점수`:''}</span>`;
+    statEl.innerHTML=`${friBadge}<span style="font-size:10px;color:var(--text2)">${checkedCount}/${units.length}완료${scoredCount?` · ${scoredCount}점수`:''}${completeCount?` · ${completeCount}완료처리`:''}</span>`;
   }
   // 바디 재렌더
   const bodyEl=document.getElementById('ubody_'+safeId);
@@ -4527,6 +4535,28 @@ async function unitSaveScore(safeId, idx, val){
   try{
     await saveTbUnits(sid,tbId,units);
     refreshUnitPanelById(sid,tbId,safeId);
+  }catch(e){ toast('저장 실패: '+e.message,true); }
+}
+
+/* ── 단원 시험 없이 완료 처리 ── */
+async function unitMarkComplete(safeId, idx, complete){
+  const r=window._unitMap[safeId]; if(!r) return;
+  const {sid,tbId}=r;
+  const key=sid+'_'+tbId;
+  const units=JSON.parse(JSON.stringify(textbookUnits[key]||[]));
+  if(!units[idx]) return;
+  units[idx].manualComplete=complete;
+  if(complete){
+    units[idx].checked=true;
+    units[idx].checkedDate=units[idx].checkedDate||dk(new Date());
+    units[idx].score=null; // 점수 없음
+  } else {
+    units[idx].manualComplete=false;
+  }
+  try{
+    await saveTbUnits(sid,tbId,units);
+    refreshUnitPanelById(sid,tbId,safeId);
+    toast(complete?'단원 완료 처리됐습니다.':'완료가 취소됐습니다.');
   }catch(e){ toast('저장 실패: '+e.message,true); }
 }
 
@@ -4759,10 +4789,13 @@ function rToday(){
       </div>`;
       h+=`<div class="student-grid">`;
       glist.forEach(s=>{
-        // 학생별 회차 번호 계산
-        const monthInfos=sessionsForMonthWithCycle(s.classType,dy,dm);
-        const found=monthInfos.find(x=>x.dateStr===dateStr);
-        const sn=found?found.sessionNo:null;
+        // 학생별 회차 번호 계산 — 날짜가 속한 사이클을 전체에서 직접 검색 (월 귀속 불일치 방지)
+        const allCycleInfos = _getAllCycles(s.classType);
+        let sn = null;
+        for(const cycle of allCycleInfos){
+          const idx = cycle.dates.indexOf(dateStr);
+          if(idx !== -1){ sn = idx + 1; break; }
+        }
         h+=renderStudentCard(s,dateStr,dy,dm,sn,s.classType);
       });
       h+=`</div>`;
@@ -4779,9 +4812,12 @@ function rToday(){
       <span style="font-size:11px;color:var(--text3);margin-left:6px">학생 관리에서 ${isFriday?'금요일':'월~목'} 교시를 지정해주세요</span>
     </div><div class="timeslot-body"><div class="student-grid">`;
     noTime.forEach(s=>{
-      const monthInfos=sessionsForMonthWithCycle(s.classType,dy,dm);
-      const found=monthInfos.find(x=>x.dateStr===dateStr);
-      const sn=found?found.sessionNo:null;
+      const allCycleInfos2 = _getAllCycles(s.classType);
+      let sn = null;
+      for(const cycle of allCycleInfos2){
+        const idx = cycle.dates.indexOf(dateStr);
+        if(idx !== -1){ sn = idx + 1; break; }
+      }
       h+=renderStudentCard(s,dateStr,dy,dm,sn,s.classType);
     });
     h+=`</div></div>`;
