@@ -1696,57 +1696,46 @@ function sessionsForMonthWithCycle(classType, year, month){
 }
 
 function prevHwInMonth(sid,dateStr,classType,year,month){
-  // 현재 회차에 이미 점수가 입력됐으면 표시 안 함 (이미 채점했으니)
+  // 현재 회차에 이미 점수가 입력됐으면 표시 안 함
   const curL=mdb.lessons[lk(sid,dateStr)];
   if(curL && curL.homeworkScore && String(curL.homeworkScore).trim()!=='') return null;
 
-  // 규칙: "지난 과제"는 딱 한 번만 표시.
-  //  - 학생의 모든 수업(정규 + 토요보강)을 시간 역순으로 검사
-  //  - homework가 있는 가장 최근 수업 → 그 과제 반환
-  //  - homework는 없지만 결석이 아닌 수업을 먼저 만나면 → 차단 (이미 처리됨)
-  //  - 결석이면 건너뜀
-  //  - homeworkScore가 채워진 수업을 먼저 만나면 → 차단 (이전 과제는 채점됨)
-  // mdb.lessons(현재 선택 달) + 이전 달 캐시 + 오늘 날짜 달 캐시를 모두 합쳐 검색
-  // dateStr에서 연월 추출
+  // 로직:
+  // 과거 수업을 최근순으로 탐색
+  // 1) 결석인 수업은 건너뜀 (과제가 다음 수업으로 이월됨)
+  // 2) 출석/지각 수업을 만나면:
+  //    - 그 수업에 과제가 있으면 → 표시 (바로 다음 수업 = 현재 수업이 받을 과제)
+  //    - 그 수업에 과제가 없으면 → null (이전 과제 없음, 한없이 소급 금지)
+  // 3) 결석이 연속되면 가장 최근 출석 수업의 과제를 이월해서 표시
+  //    단, 이월된 과제는 "직전 출석 수업"에서만 가져옴 (더 이전 소급 없음)
+
   const dateY = parseInt(dateStr.slice(0,4));
   const dateM = parseInt(dateStr.slice(5,7));
   const pm = dateM===1?12:dateM-1;
   const py = dateM===1?dateY-1:dateY;
   const prevKey = `${py}-${String(pm).padStart(2,'0')}`;
   const curKey  = `${dateY}-${String(dateM).padStart(2,'0')}`;
-  // prevMonthLessonsCache에는 이전 달뿐 아니라 ensureMonthLoaded로 로드된 달도 있을 수 있음
-  const prevLessons  = prevMonthLessonsCache[prevKey]||{};
+  const prevLessons = prevMonthLessonsCache[prevKey]||{};
   const curCacheLessons = prevMonthLessonsCache[curKey]||{};
-  // mdb.lessons를 기준으로, 캐시 데이터로 보완 (mdb.lessons 우선)
   const merged = {...prevLessons, ...curCacheLessons, ...(mdb.lessons||{})};
-  const allLessons=Object.values(merged)
+
+  const allLessons = Object.values(merged)
     .filter(l=>l.studentId===sid && l.date && l.date<dateStr)
-    .sort((a,b)=>b.date.localeCompare(a.date)); // 시간 역순
+    .sort((a,b)=>b.date.localeCompare(a.date)); // 최근순
 
+  // 결석을 건너뛰며 가장 최근 출석/지각 수업을 찾음
   for(const l of allLessons){
+    const isAbsent = l.attendance==='absent';
+    if(isAbsent) continue; // 결석 → 이월, 계속 탐색
+
+    // 출석/지각 수업 발견 → 이 수업의 과제만 확인 (더 이전 소급 없음)
     const hasHw = l.homework && String(l.homework).trim()!=='';
-    const hasScore = l.homeworkScore && String(l.homeworkScore).trim()!=='';
-    const att = l.attendance;
-    const isAbsent = (att==='absent');
-
-    // 점수가 입력됐으면 → 그 시점에 과제가 처리된 거니, 그 이전은 안 본다 (차단)
-    // 단, 그 수업 자체가 새 과제(hasHw)를 갖고 있다면 그건 다음 수업의 "지난 과제"
-    if(hasScore){
-      if(hasHw) return {hw:l.homework, date:l.date};
-      return null; // 점수만 있고 새 과제 없음 → 처리 완료, 차단
-    }
-
-    // homework가 있는 수업을 만나면 → 그게 표시될 과제
     if(hasHw) return {hw:l.homework, date:l.date};
-
-    // 결석이면 건너뜀 (다음 수업으로 이월)
-    if(isAbsent) continue;
-
-    // 결석도 아니고 homework도 score도 없음 → 차단 (그 수업에서 처리됐다고 봄)
-    return null;
+    return null; // 출석했는데 과제 없음 → 표시 없음
   }
 
-  if(mdb.carryIn&&mdb.carryIn[sid])return {hw:mdb.carryIn[sid], date:''};
+  // 과거 수업이 아예 없거나 전부 결석인 경우 carryIn 확인
+  if(mdb.carryIn&&mdb.carryIn[sid]) return {hw:mdb.carryIn[sid], date:''};
   return null;
 }
 
@@ -2368,7 +2357,7 @@ function renderTextbookStudentCard(s, activeTbs){
       h+=`<div style="display:flex;align-items:center;gap:5px;padding:3px 0;border-bottom:1px solid var(--border)">`;
       h+=`<span style="font-size:10px;flex-shrink:0" title="${dotTitle}">${dot}</span>`;
       h+=`<span style="font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="openM('editProgress','${s.id}','${tbId}')" title="${esc(tbName)}">${esc(tbName)}</span>`;
-      h+=`<button style="border:none;background:none;color:var(--text3);cursor:pointer;font-size:11px;padding:0 2px;flex-shrink:0" onclick="removeStuTextbook('${s.id}',${origIdx>=0?origIdx:0})" title="삭제">×</button>`;
+      h+=`<button style="border:none;background:none;color:var(--text3);cursor:pointer;font-size:11px;padding:0 2px;flex-shrink:0" onclick="removeStuTextbook('${s.id}','${tbId}')" title="삭제">×</button>`;
       h+=`</div>`;
     });
   }
@@ -4399,6 +4388,9 @@ function renderUnitCheckPanels(sid, tbs, dow){
       textbookUnits[key]=units;
     }
     const safeId='up_'+sid.replace(/[^a-z0-9]/gi,'_')+'__'+tbId.replace(/[^a-z0-9]/gi,'_');
+    // 패널이 닫혀 있어도 _unitMap에 항상 등록 (저장 함수가 찾을 수 있도록)
+    if(!window._unitMap) window._unitMap={};
+    window._unitMap[safeId]={sid, tbId};
 
     const needsTestCount=units.filter(u=>u.checked&&(u.score===null||u.score===undefined||u.score==='')).length;
     const checkedCount=units.filter(u=>u.checked).length;
@@ -4486,7 +4478,7 @@ function toggleUnitPanel(bodyId, arrowId){
 
 /* ── 공통 리프레시 ── */
 function refreshUnitPanelById(sid, tbId, safeId){
-  const d=parseDate(st.todayDate||dk(new Date()));
+  const d = st.todayDate instanceof Date ? st.todayDate : parseDate(dk(new Date()));
   const isFriday=(d.getDay()===5);
   const key=sid+'_'+tbId;
   const units=textbookUnits[key]||[];
@@ -5419,7 +5411,7 @@ function rStudents(){
             card+=`<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;flex-wrap:wrap">`;
             card+=`<span style="font-size:11px;flex:1;min-width:60px;font-weight:500">${esc(name)}</span>`;
             if(startDate) card+=`<span style="font-size:10px;color:var(--blue)">${dur}</span>`;
-            card+=`<button class="btn btn-sm" style="font-size:10px;padding:2px 6px" onclick="removeStuTextbook('${s.id}',${ti})">×</button>`;
+            card+=`<button class="btn btn-sm" style="font-size:10px;padding:2px 6px" onclick="removeStuTextbook('${s.id}','${tbId}')">×</button>`;
             card+=`</div>`;
           });
         } else {
@@ -5890,6 +5882,7 @@ function buildProfileHTML(sid){
       else if(attempts.length) h+='<span class="final-status status-fail">재시험 필요</span>';
       else h+='<span class="final-status status-none">미응시</span>';
       h+='<button class="btn btn-sm" onclick="openM(\'addTest\',\''+sid+'\',\''+tbId+'\')">✱ 시험 입력</button>';
+      h+='<button class="btn btn-sm" style="color:var(--red);border-color:#e0a0a0" onclick="removeStuTextbook(\''+sid+'\',\''+tbId+'\')">× 삭제</button>';
       h+='</div>';
 
       if(passed && startDate && passDate){
@@ -7675,12 +7668,25 @@ async function saveTbStartDate(sid, tbId, dateVal){
   } catch(e){ toast('저장 실패: '+e.message, true); }
 }
 
-async function removeStuTextbook(sid, idx){
+async function removeStuTextbook(sid, tbId){
   const s=cfg.students.find(x=>x.id===sid); if(!s) return;
+  if(!s.textbooks){ toast('교재를 찾을 수 없습니다.', true); return; }
   if(!confirm('교재 배정을 제거합니다. 계속하시겠어요?')) return;
-  s.textbooks.splice(idx,1);
-  await gasCall('saveConfig',{config:cfg});
-  render();
+  // tbId 기준으로 삭제 (인덱스 불일치 방지)
+  const before = s.textbooks.length;
+  s.textbooks = s.textbooks.filter(t=>{
+    const id = t.tbId||('p_'+sid+'_'+encodeURIComponent(t.name||''));
+    return id !== String(tbId);
+  });
+  if(s.textbooks.length === before){ toast('삭제할 교재를 찾을 수 없습니다.', true); return; }
+  try{
+    await gasCall('saveConfig',{config:cfg});
+    closeM();
+    render();
+    toast('교재가 제거됐습니다.');
+  }catch(e){
+    toast('저장 실패: '+e.message, true);
+  }
 }
 
 async function confEditProgress(sid, tbId){
