@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ES 수학 </title>
+<title>ES 수학 통합관리</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -360,7 +360,7 @@ window._fbReady = true;
 <!-- ══ APP ══ -->
 <div id="app-screen">
   <div class="topbar">
-    <div class="logo">📚 ES 수학 </div>
+    <div class="logo">📚 ES 수학 통합관리 </div>
     <div class="month-sel">
       <button class="btn btn-sm" onclick="chgMonth(-1)">◀</button>
       <select id="yearSel" onchange="onMonthChange()"></select>
@@ -4305,7 +4305,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
   const scheduleChips = studentScheduleChips(s);
   const specialNote=s.specialNote||''; // 학생 기본 특이사항
 
-  // 보조 선생님: 출결 + 이전 과제 확인 + 당일 과제점수만 입력 가능한 간소화 카드
+  // 보조 선생님: 출결 + 이전 과제 확인 + 과제점수 + 시험점수 입력 + 클립보드 복사
   if(session?.role==='assistant'){
     const attLabel = att==='attend'?'✅ 출석':att==='late'?'⏰ 지각':att==='absent'?'❌ 결석':'';
     return `<div class="today-card" style="border-left:3px solid var(--blue)">
@@ -4324,9 +4324,19 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
         <div class="field-lbl">지난 시간 과제</div>
         <div class="prev-box" style="user-select:text;cursor:default">📋 ${ph.date?`<span style="font-size:10px;color:var(--text3)">[${ph.date}]</span> `:''}${esc(ph.hw)}</div>
       </div>`:''}
-      <div style="margin-bottom:2px">
-        <div class="field-lbl">과제 점수</div>
-        <input class="sinp-full" type="text" value="${esc(l.homeworkScore||'')}" placeholder="점수 입력 (예: 85, A+)" onblur="tSave('${s.id}','${dateStr}','${s.classType}','homeworkScore',this.value)" style="font-size:13px;font-weight:600;text-align:center">
+      <div class="score-row" style="margin-bottom:8px">
+        <div>
+          <div class="field-lbl">과제 점수</div>
+          <input class="sinp-full" type="text" value="${esc(l.homeworkScore||'')}" placeholder="-" onblur="tSave('${s.id}','${dateStr}','${s.classType}','homeworkScore',this.value)" style="font-size:13px;font-weight:600;text-align:center">
+        </div>
+        <div>
+          <div class="field-lbl">시험 점수</div>
+          <input id="testScoreInp_${s.id}_${dateStr}" class="sinp-full" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="tSave('${s.id}','${dateStr}','${s.classType}','testScore',this.value)" style="font-size:13px;font-weight:600;text-align:center">
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button onclick="copyScoreClip('${s.id}','${dateStr}')" style="flex:1;min-width:0;padding:5px 8px;font-size:11px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:4px">📋 점수 복사</button>
+        <button onclick="copyProgressClip('${s.id}','${dateStr}')" style="flex:1;min-width:0;padding:5px 8px;font-size:11px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:4px">📋 진도/과제 복사</button>
       </div>
     </div>`;
   }
