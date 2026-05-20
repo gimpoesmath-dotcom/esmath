@@ -992,8 +992,15 @@ async function persistLessonFb(lesson, knownUpdatedAt, forceOverwrite=false){
     if(snap.exists()){
       const cur=snap.data();
       if(cur.updatedAt&&cur.updatedAt!==knownUpdatedAt&&cur.updatedBy!==session?.username){
-        return {ok:false,conflict:true,
-          conflictedBy:cur.updatedBy,conflictedAt:cur.updatedAt,currentRecord:cur};
+        // 실제 내용이 같으면 충돌 아님 — 타임스탬프만 다른 경우 조용히 통과
+        const fields=['attendance','homeworkScore','testScore','progress','homework','note','makeupClass','targetProgress','testIsFullRange'];
+        const isSameContent=fields.every(f=>String(cur[f]??'')===String(lesson[f]??''));
+        if(!isSameContent){
+          return {ok:false,conflict:true,
+            conflictedBy:cur.updatedBy,conflictedAt:cur.updatedAt,currentRecord:cur};
+        }
+        // 내용 동일 → 버전만 동기화하고 저장 진행
+        lessonVersions[key]=cur.updatedAt;
       }
     }
   }
@@ -4401,8 +4408,8 @@ function renderUnitCheckPanels(sid, tbs, dow){
     const friBadge=isFriday&&needsTestCount>0
       ?`<span class="unit-fri-badge">🔔 시험 ${needsTestCount}단원</span>`:'';
 
-    // 금요일에 시험 단원 있으면 자동 오픈
-    const autoOpen=isFriday&&needsTestCount>0;
+    // 금요일 알림 배지 (패널은 항상 닫힌 채로 시작 — 배지로만 알림)
+    const autoOpen=false;
 
     html+=`<div class="unit-panel" id="upanel_${safeId}">
       <div class="unit-panel-hdr" onclick="toggleUnitPanel('ubody_${safeId}','uarrow_${safeId}')">
@@ -4439,7 +4446,7 @@ function buildUnitRows(sid, tbId, safeId, units, isFriday){
   } else {
     units.forEach(function(u,ui){
       const hasScore=(u.score!==null&&u.score!==undefined&&u.score!=='');
-      const isComplete=(u.manualComplete===true);
+      const isComplete=!!u.manualComplete;
       const needsTest=isFriday&&u.checked&&!hasScore&&!isComplete;
       inner+=`<div class="unit-row" id="urow_${safeId}_${ui}">
         <input type="checkbox" class="unit-chk" ${u.checked||isComplete?'checked':''}
@@ -4514,6 +4521,8 @@ async function unitToggleCheck(safeId, idx, checked){
   if(!units[idx]) return;
   units[idx].checked=checked;
   units[idx].checkedDate=checked?dk(new Date()):'';
+  // 체크 해제 시 완료처리도 함께 해제
+  if(!checked) units[idx].manualComplete=false;
   try{
     await saveTbUnits(sid,tbId,units);
     refreshUnitPanelById(sid,tbId,safeId);
