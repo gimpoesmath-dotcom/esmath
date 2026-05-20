@@ -4104,17 +4104,6 @@ function rMatrix(){
   if(absentCnt0) filterBar+=`<span onclick="st.studentAttFilter=st.studentAttFilter==='absent'?'':'absent';render()" style="display:inline-flex;align-items:center;gap:3px;background:var(--red-bg);color:var(--red);border:1px solid #e0a0a0;border-radius:20px;padding:3px 10px;font-weight:700;font-size:11px;cursor:pointer;${_attF0==='absent'?'outline:2px solid var(--red);outline-offset:1px;':''}">결석 <b>${absentCnt0}</b></span>`;
   if(lateCnt0) filterBar+=`<span onclick="st.studentAttFilter=st.studentAttFilter==='late'?'':'late';render()" style="display:inline-flex;align-items:center;gap:3px;background:var(--amber-bg);color:var(--amber);border:1px solid #e0c060;border-radius:20px;padding:3px 10px;font-weight:700;font-size:11px;cursor:pointer;${_attF0==='late'?'outline:2px solid var(--amber);outline-offset:1px;':''}">지각 <b>${lateCnt0}</b></span>`;
   if(gradeSet.length){ if(absentCnt0||lateCnt0) filterBar+=`<span style="color:var(--border2);font-size:14px">│</span>`; filterBar+=renderGradeGroup('초등','#5a3c00','#fef3e2','#e8c87a',elems0); filterBar+=renderGradeGroup('중등','#1e4a80','#e5effc','#90b8e8',middle0); filterBar+=renderGradeGroup('고등','#3a1e6e','#f0e8fc','#c090e0',high0); }
-  // 선생님 필터 버튼 (원장만)
-  if(isPrin){
-    const teachers=allTeachers();
-    if(teachers.length){
-      filterBar+=`<span style="color:var(--border2);font-size:14px">│</span>`;
-      teachers.forEach(t=>{
-        const active=_teacherF0===t;
-        filterBar+=`<span onclick="st.studentTeacherFilter=st.studentTeacherFilter==='${esc(t)}'?'':'${esc(t)}';render()" style="display:inline-flex;align-items:center;gap:3px;background:${active?'#1a1a1a':'var(--bg2)'};color:${active?'#fff':'var(--text2)'};border:1px solid ${active?'#1a1a1a':'var(--border2)'};border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer;">${esc(t)}</span>`;
-      });
-    }
-  }
   if(isFiltered0) filterBar+=`<button class="btn btn-sm" onclick="st.studentAttFilter='';st.studentGradeFilter='';st.studentLevelFilter='';st.studentTeacherFilter='';render()" style="font-size:11px">✕ 필터 초기화</button>`;
   filterBar+=`</div>`;
 
@@ -4375,6 +4364,10 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer"><input type="checkbox" ${l.makeupClass?'checked':''} onchange="tSave('${s.id}','${dateStr}','${s.classType}','makeupClass',this.checked)"> 보강</label>
       <input type="text" placeholder="특이사항" value="${esc(l.note||'')}" onblur="tSave('${s.id}','${dateStr}','${s.classType}','note',this.value)" style="flex:1;min-width:0;padding:4px 7px;border:1px solid var(--border);border-radius:var(--r);font-size:11px;font-family:inherit">
+    </div>
+    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+      <button onclick="copyScoreClip('${s.id}','${dateStr}')" style="flex:1;min-width:0;padding:5px 8px;font-size:11px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:4px" title="과제점수·시험점수 복사">📋 점수 복사</button>
+      <button onclick="copyProgressClip('${s.id}','${dateStr}')" style="flex:1;min-width:0;padding:5px 8px;font-size:11px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:4px" title="진도·과제 복사">📋 진도/과제 복사</button>
     </div>
   </div>`;
 }
@@ -8744,6 +8737,38 @@ function exportExcel(){
   const aws=XLSX.utils.aoa_to_sheet(arows);aws['!cols']=[{wch:12},{wch:12},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8}];
   XLSX.utils.book_append_sheet(wb,aws,'출결요약');
   XLSX.writeFile(wb,`학원기록_${st.year}${String(st.month).padStart(2,'0')}.xlsx`);toast('엑셀 다운로드 완료');
+}
+
+/* ── 클립보드 복사 ── */
+function copyScoreClip(sid, dateStr){
+  const l = getLesson(sid, dateStr) || {};
+  const parts = [];
+  if(l.homeworkScore || l.homeworkScore===0) parts.push('과제 ' + l.homeworkScore + '점');
+  if(l.testScore || l.testScore===0){
+    const fullRange = l.testIsFullRange ? '(전범위)' : '';
+    parts.push('시험 ' + l.testScore + '점' + fullRange);
+  }
+  if(!parts.length){ toast('점수 데이터가 없습니다.', true); return; }
+  const text = parts.join(', ');
+  navigator.clipboard.writeText(text).then(()=>toast('📋 점수 복사됨: ' + text)).catch(()=>{
+    const ta=document.createElement('textarea'); ta.value=text;
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta); toast('📋 점수 복사됨: ' + text);
+  });
+}
+
+function copyProgressClip(sid, dateStr){
+  const l = getLesson(sid, dateStr) || {};
+  const parts = [];
+  if(l.progress && l.progress.trim()) parts.push('진도: ' + l.progress.trim());
+  if(l.homework && l.homework.trim()) parts.push('과제: ' + l.homework.trim());
+  if(!parts.length){ toast('진도/과제 데이터가 없습니다.', true); return; }
+  const text = parts.join(' / ');
+  navigator.clipboard.writeText(text).then(()=>toast('📋 진도/과제 복사됨')).catch(()=>{
+    const ta=document.createElement('textarea'); ta.value=text;
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta); toast('📋 진도/과제 복사됨');
+  });
 }
 
 function toast(msg,isErr=false){
