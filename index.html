@@ -1011,6 +1011,8 @@ async function persistLessonFb(lesson, knownUpdatedAt, forceOverwrite=false){
   await setDoc(ref, data);
   lessonVersions[key]=now;
   mdb.lessons[key]=data;
+  // 저장 완료 syncBar 표시
+  setSyncState('ok', new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' 저장됨');
   return {ok:true,updatedAt:now};
 }
 
@@ -8310,10 +8312,10 @@ async function mSave(sid,d,f,v){
   const l=getOrCreate(sid,d);
   const oldV=l[f];
   l[f]=v;
-  // testScore가 빈 값이면 전범위 플래그도 제거
   if(f==='testScore' && (!v || String(v).trim()==='')){
     delete l.testIsFullRange;
   }
+  setSyncState('syncing','저장 중...');
   await persistLesson(l);render();
   logActivity('edit',sid,d,f,oldV,v);
 }
@@ -8321,6 +8323,7 @@ async function mSaveHw(sid,d,cls,v){
   const l=getOrCreate(sid,d);
   const oldV=l.homework;
   l.homework=v;
+  setSyncState('syncing','저장 중...');
   await persistLesson(l);render();
   logActivity('edit',sid,d,'homework',oldV,v);
 }
@@ -8352,8 +8355,8 @@ async function tSave(sid,d,cls,f,v){
   if(f==='testScore' && (!v || String(v).trim()==='')){
     delete l.testIsFullRange;
   }
+  setSyncState('syncing','저장 중...');
   await persistLesson(l);
-  // 오늘입력 탭에서는 render() 생략 (커서 유지)
   if(st.tab!=='today') render();
   logActivity('edit',sid,d,f,oldV,v);
 }
@@ -8367,6 +8370,7 @@ async function tSaveHw(sid,d,cls,v){
   const l=getOrCreate(sid,d);
   const oldV=l.homework;
   l.homework=v;
+  setSyncState('syncing','저장 중...');
   await persistLesson(l);
   if(st.tab!=='today') render();
   logActivity('edit',sid,d,'homework',oldV,v);
