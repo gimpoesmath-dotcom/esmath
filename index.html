@@ -1676,8 +1676,10 @@ function _getAllSessionDates(classType){
   if(_allDatesCache.has(classType)) return _allDatesCache.get(classType);
   const ct=CT()[classType]; if(!ct) return [];
   const {days}=ct;
-  const start=new Date(2026,0,1);
-  const end=new Date(2027,11,31); // 2년치
+  const _now = new Date();
+  const _curYear = _now.getFullYear();
+  const start=new Date(_curYear-2,0,1);  // 현재 연도 기준 2년 전부터
+  const end=new Date(_curYear+2,11,31);  // 현재 연도 기준 2년 후까지
   const result=[];
   const cur=new Date(start);
   while(cur<=end){
@@ -1744,10 +1746,6 @@ function sessionsForMonthWithCycle(classType, year, month){
 }
 
 function prevHwInMonth(sid,dateStr,classType,year,month){
-  // 현재 회차에 이미 점수가 입력됐으면 표시 안 함
-  const curL=mdb.lessons[lk(sid,dateStr)];
-  if(curL && curL.homeworkScore && String(curL.homeworkScore).trim()!=='') return null;
-
   // 로직:
   // 이 학생의 정규 수업일 목록을 역순으로 탐색
   // - 결석(absent)이면 건너뜀 → 이월
