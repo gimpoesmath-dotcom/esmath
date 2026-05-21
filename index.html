@@ -718,14 +718,39 @@ async function firebaseAction(action, body){
   const {getDoc,setDoc,getDocs,addDoc,deleteDoc,collection,query,where,doc}=fb();
 
   if(action==='saveConfig'){
-    // 휴일/반설정 변경 가능성 → 회차 캐시 비우기
     clearSessionsCache();
-    const toSave=Object.fromEntries(
-      Object.entries(body.config||cfg).filter(([k])=>!k.startsWith('_'))
+    const localCfg = body.config||cfg;
+
+    // ── 저장 전 Firestore 최신본 읽기 (다른 탭/사용자가 변경한 내용 보호) ──
+    let latestCfg = {};
+    try{
+      const snap = await getDoc(configDocRef());
+      if(snap.exists()) latestCfg = snap.data();
+    }catch(e){ console.warn('최신 cfg 읽기 실패, 로컬 기준으로 저장:', e); }
+
+    // 핵심 배열: 로컬에 없고 Firestore에만 있는 항목 보호
+    // (교재/학생/선생님 등이 다른 탭에서 추가된 경우 유지)
+    const mergeArrayById = (localArr, remoteArr, idKey='id') => {
+      const localIds = new Set((localArr||[]).map(x=>x[idKey]).filter(Boolean));
+      const remoteOnly = (remoteArr||[]).filter(x=>!localIds.has(x[idKey]));
+      return [...(localArr||[]), ...remoteOnly];
+    };
+
+    const toSave = Object.fromEntries(
+      Object.entries(localCfg).filter(([k])=>!k.startsWith('_'))
     );
-    // 선생님/보조도 로컬 cfg 기준으로 저장 (이미 최신 cfg가 메모리에 있음 → 추가 읽기 불필요)
+
+    // textbooks: 로컬에 없는 원격 교재 병합 보호
+    if(latestCfg.textbooks?.length){
+      toSave.textbooks = mergeArrayById(toSave.textbooks, latestCfg.textbooks);
+    }
+    // students: 로컬에 없는 원격 학생 병합 보호
+    if(latestCfg.students?.length){
+      toSave.students = mergeArrayById(toSave.students, latestCfg.students);
+    }
+
     await setDoc(configDocRef(), toSave);
-    cfg=Object.assign({},toSave,{_myRole:session?.role,_myName:session?.displayName});
+    cfg = Object.assign({}, toSave, {_myRole:session?.role, _myName:session?.displayName});
     return {ok:true};
   }
 
@@ -3698,15 +3723,32 @@ function rPoints(){
         const EXAM_ORDER = ['s1_mid','s1_fin','s2_mid','s2_fin'];
         const EXAM_LABELS = {s1_mid:'1학기 중간',s1_fin:'1학기 기말',s2_mid:'2학기 중간',s2_fin:'2학기 기말'};
         const PREV_MAP = {s1_fin:'s1_mid',s2_mid:'s1_fin',s2_fin:'s2_mid'};
+        // 학년 순서 (직전 학년 참조용)
+        const GRADE_ORDER_LIST=['초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
 
         gExams.forEach(ex=>{
           if(!ex.certified || ex.score===null || ex.score===undefined) return;
           const sc = ex.score;
-          // growth 계산 (직전 인증 시험 자동 참조)
+          // growth 계산: 같은 학년 직전 시험 → 없으면 직전 학년 s2_fin 참조
           const prevKey = PREV_MAP[ex.key];
           let prevSc = ex.prevScore;
+          // ① 같은 학년 내 직전 시험 참조
           if((prevSc===null||prevSc===undefined) && prevKey && examMapG[prevKey] && examMapG[prevKey].certified){
             prevSc = examMapG[prevKey].score;
+          }
+          // ② s1_mid인 경우: 직전 학년의 s2_fin 참조 (학년 간 growth)
+          if((prevSc===null||prevSc===undefined) && ex.key==='s1_mid'){
+            const glIdx = GRADE_ORDER_LIST.indexOf(gl);
+            if(glIdx > 0){
+              const prevGrade = GRADE_ORDER_LIST[glIdx-1];
+              // 직전 학년 시험 데이터에서 s2_fin 찾기
+              const prevGradeExams = (sDb.exams||[]).filter(e=>
+                e.type==='school' && (e.gradeLabel===prevGrade) && e.key==='s2_fin' && e.certified
+              );
+              if(prevGradeExams.length && prevGradeExams[0].score!==null && prevGradeExams[0].score!==undefined){
+                prevSc = prevGradeExams[0].score;
+              }
+            }
           }
           const growth = (prevSc!==null&&prevSc!==undefined&&!isNaN(sc)&&!isNaN(prevSc))?(sc-prevSc):null;
 
@@ -3723,11 +3765,12 @@ function rPoints(){
             else if(growth>=10) candidates.push({type:'GROWTH_10',label:'Growth+10',points:5000,note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} +${growth}점`});
           }
           if(!candidates.length) return;
-          // 중복 적립 방지: 같은 type+gradeLabel+key 이미 적립됐는지 확인
+          // 이미 적립된 항목은 목록에서 완전히 제외
           candidates.forEach(c=>{
             const settleId = `${c.type}__${gl}__${ex.key}`;
             const alreadyDone = (pointsData[s.id]?.history||[]).some(hh=>hh.settleId===settleId);
-            schoolPtRows.push({s, c, ex, gl, settleId, alreadyDone});
+            if(alreadyDone) return; // 적립 완료 → 노출 안 함
+            schoolPtRows.push({s, c, ex, gl, settleId, alreadyDone:false});
           });
         });
       });
@@ -4809,6 +4852,66 @@ function buildUnitRows(sid, tbId, safeId, units, isFriday){
     });
   }
   return inner;
+}
+
+/* ── 교재 설정에서 전체 학생 단원 일괄 초기화 ── */
+async function unitResetAllStudents(tbId, count){
+  if(!count||count<=0){ toast('단원 수가 설정되지 않았습니다.', true); return; }
+  // 이 교재를 배정받은 학생 목록
+  const assigned = (cfg.students||[]).filter(s=>(s.textbooks||[]).some(t=>t.tbId===tbId));
+  if(!assigned.length){ toast('이 교재를 배정받은 학생이 없습니다.', true); return; }
+  if(!confirm(`${count}단원 기준으로 ${assigned.length}명 학생의 단원 목록을 초기화합니다.
+기존 체크/점수는 유지됩니다.
+계속하시겠어요?`)) return;
+
+  let ok=0, fail=0;
+  for(const s of assigned){
+    const key=s.id+'_'+tbId;
+    const existing=JSON.parse(JSON.stringify(textbookUnits[key]||[]));
+    const existingMap={};
+    existing.forEach(u=>{ if(u.name) existingMap[u.name]=u; });
+    const newUnits=[];
+    for(let i=1;i<=count;i++){
+      const name=`${i}단원`;
+      newUnits.push(existingMap[name]||{name,checked:false,score:null,checkedDate:'',addedDate:dk(new Date())});
+    }
+    try{
+      await saveTbUnits(s.id,tbId,newUnits);
+      ok++;
+    }catch(e){ fail++; }
+  }
+  toast(`단원 초기화 완료: ${ok}명 성공${fail?` · ${fail}명 실패`:''}`);
+  render();
+}
+
+/* ── 단원 강제 초기화 (unitCount 기준, 기존 데이터 병합) ── */
+async function unitResetToCount(safeId, count){
+  const r=window._unitMap[safeId];
+  if(!r){ toast('단원 정보를 찾을 수 없습니다.', true); return; }
+  const {sid, tbId}=r;
+  const key=sid+'_'+tbId;
+  const existing=JSON.parse(JSON.stringify(textbookUnits[key]||[]));
+
+  // 기존 단원명 맵 (이름 기준으로 체크/점수 유지)
+  const existingMap={};
+  existing.forEach(u=>{ if(u.name) existingMap[u.name]=u; });
+
+  // unitCount 기준으로 1~N단원 생성, 기존 데이터 있으면 병합
+  const newUnits=[];
+  for(let i=1;i<=count;i++){
+    const name=`${i}단원`;
+    if(existingMap[name]){
+      newUnits.push(existingMap[name]); // 기존 데이터 유지
+    } else {
+      newUnits.push({name,checked:false,score:null,checkedDate:'',addedDate:dk(new Date())});
+    }
+  }
+
+  try{
+    await saveTbUnits(sid,tbId,newUnits);
+    refreshUnitPanelById(sid,tbId,safeId);
+    toast(`${count}단원 기준으로 초기화 완료 (기존 체크/점수 유지)`);
+  }catch(e){ toast('초기화 실패: '+e.message, true); }
 }
 
 /* ── 단원 패널 토글 ── */
@@ -6061,6 +6164,7 @@ function rSettings(){
               <span style="font-size:11px;color:${cnt?'var(--blue)':'var(--text3)'};cursor:${cnt?'pointer':'default'};text-decoration:${cnt?'underline':'none'}" onclick="${cnt?`showTbAssignedStudents('${bk.id}')`:''}" title="${cnt?'클릭하여 배정 학생 보기':''}">${cnt}명 배정</span>
             </div>
             <div style="display:flex;gap:4px">
+              ${isPrincipal&&bk.unitCount?`<button class="btn btn-sm" style="color:var(--blue);border-color:#90b8e8" onclick="unitResetAllStudents('${bk.id}',${bk.unitCount})" title="이 교재를 배정받은 모든 학생의 단원을 ${bk.unitCount||0}단원 기준으로 초기화">🔄 단원 초기화</button>`:''}
               ${isPrincipal?`<button class="btn btn-sm" onclick="openM('editTextbook','${bk.id}')">✎ 수정</button>
               <button class="btn btn-sm" onclick="delTextbook('${bk.id}')">삭제</button>`:''}
             </div>
@@ -6082,6 +6186,7 @@ function rSettings(){
               <span style="font-size:11px;color:var(--text3);margin-left:8px">${cnt}명 배정</span>
             </div>
             <div style="display:flex;gap:4px">
+              ${isPrincipal&&bk.unitCount?`<button class="btn btn-sm" style="color:var(--blue);border-color:#90b8e8" onclick="unitResetAllStudents('${bk.id}',${bk.unitCount})" title="이 교재를 배정받은 모든 학생의 단원을 ${bk.unitCount||0}단원 기준으로 초기화">🔄 단원 초기화</button>`:''}
               ${isPrincipal?`<button class="btn btn-sm" onclick="openM('editTextbook','${bk.id}')">✎ 수정</button>
               <button class="btn btn-sm" onclick="delTextbook('${bk.id}')">삭제</button>`:''}
             </div>
@@ -6591,12 +6696,28 @@ function renderSchoolExamSection(sid, s, exams, isPrin){
     const certified = ex ? ex.certified : false;
     const certFile  = ex ? (ex.certFileName||'') : '';
 
-    // 성장 계산: prevScore 필드 우선, 없으면 직전 시험 점수 자동 참조
+    // 성장 계산: 같은 학년 직전 시험 → 없으면 직전 학년 s2_fin 참조
     let prevScore = ex ? ex.prevScore : null;
+    // ① 같은 학년 내 직전 시험
     if((prevScore===null||prevScore===undefined) && def.prevKey && examMap[def.prevKey]){
       const prevEx = examMap[def.prevKey];
       if(prevEx && prevEx.score!==null && prevEx.score!==undefined && prevEx.certified){
         prevScore = prevEx.score;
+      }
+    }
+    // ② s1_mid이면 직전 학년 s2_fin 참조 (학년 간 growth)
+    if((prevScore===null||prevScore===undefined) && def.key==='s1_mid'){
+      const gradeOrderX=['초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
+      const glIdx = gradeOrderX.indexOf(selectedGrade);
+      if(glIdx > 0){
+        const prevGradeX = gradeOrderX[glIdx-1];
+        const examDbX = schoolExamData[sid]||{exams:[]};
+        const prevGradeFinEx = (examDbX.exams||[]).find(e=>
+          e.type==='school' && e.key==='s2_fin' &&
+          (e.gradeLabel===prevGradeX) && e.certified &&
+          e.score!==null && e.score!==undefined
+        );
+        if(prevGradeFinEx) prevScore = prevGradeFinEx.score;
       }
     }
     const growth = (score!==null && prevScore!==null && !isNaN(score) && !isNaN(prevScore)) ? (score - prevScore) : null;
@@ -6697,7 +6818,7 @@ function openSchoolExamInput(sid, examKey, examLabel, isHighNum, gradeLabel){
   const existing = (examDb.exams||[]).find(e=>e.key===examKey&&e.type==='school'&&(gl?e.gradeLabel===gl:!e.gradeLabel))||
                    (gl?(examDb.exams||[]).find(e=>e.key===examKey&&e.type==='school'&&!e.gradeLabel):null)||null;
   const score = existing ? (existing.score??'') : '';
-  const prevScore = existing ? (existing.prevScore??'') : '';
+  // prevScore는 자동 참조 — 입력란 불필요
   const isHigh = isHighNum===1||isHighNum===true;
 
   const overlay=document.createElement('div');
@@ -6710,10 +6831,8 @@ function openSchoolExamInput(sid, examKey, examLabel, isHighNum, gradeLabel){
       <label>점수 ${isHigh?'(1등급은 -1 입력)':''}</label>
       <input type="number" id="examScoreInp" value="${score}" min="${isHigh?-1:0}" max="100" step="0.1" style="width:100%" placeholder="0~100">
     </div>
-    <div class="frow">
-      <label>직전 시험 점수 (성적 향상 계산용, 최초 입력시 공란)</label>
-      <input type="number" id="examPrevScoreInp" value="${prevScore}" min="0" max="100" step="0.1" style="width:100%" placeholder="공란이면 향상 계산 안 함">
-    </div>
+    <!-- 직전 시험 점수: 같은 학년 직전 인증 시험에서 자동 참조 -->
+    <input type="hidden" id="examPrevScoreInp" value="">
     <div class="frow">
       <label>성적표 인증 파일 업로드</label>
       <input type="file" id="examCertFile" accept="image/*,.pdf" style="width:100%;font-size:12px" onchange="previewCertFile('examCertFile','examPastePreview')">
