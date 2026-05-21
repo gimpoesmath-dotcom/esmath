@@ -5235,18 +5235,19 @@ function rToday(){
   // 금요일이면 fridayTime, 그 외엔 weekdayTime 기준
   // 같은 타임 안에서는 담당 선생님별 부그룹으로 나눠서 표시
   const isFriday = (dow===5);
-  const timeCount = isFriday ? 4 : 3;
   const timeGroups = {}; // {1: [...], 2: [...], ...}
   const noTime = []; // 교시 미지정 학생
 
   allStudsToday.forEach(s=>{
     const t = isFriday ? s.fridayTime : s.weekdayTime;
-    if(!t || !timeGroups[t]) {
-      if(!t) { noTime.push(s); return; }
-      timeGroups[t]=[];
-    }
+    if(!t) { noTime.push(s); return; }
+    if(!timeGroups[t]) timeGroups[t]=[];
     timeGroups[t].push(s);
   });
+
+  // 실제 학생 데이터 기준 최대 교시 (하드코딩 제거)
+  const usedTimes = Object.keys(timeGroups).map(Number).filter(n=>!isNaN(n)&&n>0);
+  const timeCount = usedTimes.length ? Math.max(...usedTimes) : (isFriday ? 4 : 3);
 
   // 각 타임마다 렌더링
   for(let t=1; t<=timeCount; t++){
