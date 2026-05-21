@@ -647,10 +647,27 @@ async function loadConfig(){
   if(!cfg.specialClasses) cfg.specialClasses=[];
 
   // ── 학년 자동 증가: 년도가 바뀌면 학생 학년 올리기 (원장만) ──
+  // gradeUpYear가 현재 연도와 같으면 절대 실행 안 함 (중복 방지)
   if(session?.role==='principal' && cfg.students?.length){
     const curYear = new Date().getFullYear();
-    const lastYear = cfg.gradeUpYear||0;
+    const lastYear = parseInt(cfg.gradeUpYear)||0;
     if(lastYear < curYear){
+      // Firestore 최신값 재확인 (다른 탭에서 이미 업그레이드했을 수 있음)
+      try{
+        const {getDoc}=fb();
+        const freshSnap = await getDoc(configDocRef());
+        if(freshSnap.exists()){
+          const freshData = freshSnap.data();
+          const freshYear = parseInt(freshData.gradeUpYear)||0;
+          if(freshYear >= curYear){
+            // 이미 다른 탭/세션에서 업그레이드 완료 → 로컬 cfg만 동기화
+            cfg.students = freshData.students || cfg.students;
+            cfg.gradeUpYear = freshData.gradeUpYear;
+            return; // 업그레이드 스킵
+          }
+        }
+      }catch(e){}
+
       const GRADE_UP = {
         '초3':'초4','초4':'초5','초5':'초6','초6':'중1',
         '중1':'중2','중2':'중3','중3':'고1',
@@ -664,20 +681,13 @@ async function loadConfig(){
         }
       });
       cfg.gradeUpYear = curYear;
-      if(upgraded > 0){
-        try{
-          const {setDoc}=fb();
-          const toSave=Object.fromEntries(Object.entries(cfg).filter(([k])=>!k.startsWith('_')));
-          await setDoc(configDocRef(), toSave);
+      // gasCall('saveConfig') 사용 → 병합 로직 적용 (다른 탭의 교재 등 보호)
+      try{
+        await gasCall('saveConfig', {config:cfg});
+        if(upgraded > 0){
           toast(`🎓 ${curYear}년 새해! 학생 ${upgraded}명 학년이 자동으로 올라갔습니다.`);
-        }catch(e){ console.warn('학년 자동 업그레이드 저장 실패:', e); }
-      } else {
-        try{
-          const {setDoc}=fb();
-          const toSave=Object.fromEntries(Object.entries(cfg).filter(([k])=>!k.startsWith('_')));
-          await setDoc(configDocRef(), toSave);
-        }catch(e){}
-      }
+        }
+      }catch(e){ console.warn('학년 자동 업그레이드 저장 실패:', e); }
     }
   }
   const keys=Object.keys(CT());
@@ -3729,28 +3739,33 @@ function rPoints(){
         gExams.forEach(ex=>{
           if(!ex.certified || ex.score===null || ex.score===undefined) return;
           const sc = ex.score;
-          // growth 계산: 같은 학년 직전 시험 → 없으면 직전 학년 s2_fin 참조
+          // growth 계산: 바로 앞 순서 시험만 참조, 건너뛰기 없음
+          // 직전 시험이 미입력/미인증이면 growth = null (끝)
           const prevKey = PREV_MAP[ex.key];
-          let prevSc = ex.prevScore;
-          // ① 같은 학년 내 직전 시험 참조
-          if((prevSc===null||prevSc===undefined) && prevKey && examMapG[prevKey] && examMapG[prevKey].certified){
-            prevSc = examMapG[prevKey].score;
-          }
-          // ② s1_mid인 경우: 직전 학년의 s2_fin 참조 (학년 간 growth)
-          if((prevSc===null||prevSc===undefined) && ex.key==='s1_mid'){
+          let prevSc = null;
+          if(ex.key==='s1_mid'){
+            // s1_mid: 직전 학년 s2_fin만 참조 (인증+점수 있어야 함)
             const glIdx = GRADE_ORDER_LIST.indexOf(gl);
             if(glIdx > 0){
               const prevGrade = GRADE_ORDER_LIST[glIdx-1];
-              // 직전 학년 시험 데이터에서 s2_fin 찾기
-              const prevGradeExams = (sDb.exams||[]).filter(e=>
-                e.type==='school' && (e.gradeLabel===prevGrade) && e.key==='s2_fin' && e.certified
+              const prevGradeEx = (sDb.exams||[]).find(e=>
+                e.type==='school' && e.gradeLabel===prevGrade && e.key==='s2_fin'
               );
-              if(prevGradeExams.length && prevGradeExams[0].score!==null && prevGradeExams[0].score!==undefined){
-                prevSc = prevGradeExams[0].score;
+              // 직전 학년 s2_fin이 인증+점수 있을 때만
+              if(prevGradeEx && prevGradeEx.certified && prevGradeEx.score!==null && prevGradeEx.score!==undefined){
+                prevSc = prevGradeEx.score;
               }
+              // 직전 학년 s2_fin이 미입력/미인증이면 → growth 없음 (건너뛰기 금지)
             }
+          } else if(prevKey){
+            // 같은 학년 내 직전 시험: 해당 시험이 인증+점수 있을 때만
+            const prevEx = examMapG[prevKey];
+            if(prevEx && prevEx.certified && prevEx.score!==null && prevEx.score!==undefined){
+              prevSc = prevEx.score;
+            }
+            // 직전 시험이 미입력/미인증이면 → growth 없음 (건너뛰기 금지)
           }
-          const growth = (prevSc!==null&&prevSc!==undefined&&!isNaN(sc)&&!isNaN(prevSc))?(sc-prevSc):null;
+          const growth = (prevSc!==null&&!isNaN(sc)&&!isNaN(prevSc))?(sc-prevSc):null;
 
           // 포인트 계산
           const candidates = [];
@@ -4688,6 +4703,18 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
           <div class="field-lbl">시험 점수</div>
           <input id="testScoreInp_${s.id}_${dateStr}" class="sinp-full" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="tSave('${s.id}','${dateStr}','${s.classType}','testScore',this.value)" style="font-size:13px;font-weight:600;text-align:center">
         </div>
+      </div>
+      <div style="margin-bottom:8px">
+        <div class="field-lbl">오늘 진도</div>
+        <textarea class="tarea" onblur="tSave('${s.id}','${dateStr}','${s.classType}','progress',this.value)">${esc(l.progress||'')}</textarea>
+      </div>
+      <div style="margin-bottom:8px">
+        <div class="field-lbl">오늘 과제</div>
+        <textarea class="tarea" oninput="tUpdateHwMem('${s.id}','${dateStr}',this.value)" onblur="tSaveHw('${s.id}','${dateStr}','${s.classType}',this.value)">${esc(l.homework||'')}</textarea>
+      </div>
+      <div style="margin-bottom:8px">
+        <div class="field-lbl">특이사항</div>
+        <input type="text" class="tarea" style="min-height:unset;padding:5px 8px" value="${esc(l.note||'')}" placeholder="" onblur="tSave('${s.id}','${dateStr}','${s.classType}','note',this.value)">
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button onclick="copyScoreClip('${s.id}','${dateStr}')" style="flex:1;min-width:0;padding:5px 8px;font-size:11px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:4px">📋 점수 복사</button>
@@ -6696,29 +6723,32 @@ function renderSchoolExamSection(sid, s, exams, isPrin){
     const certified = ex ? ex.certified : false;
     const certFile  = ex ? (ex.certFileName||'') : '';
 
-    // 성장 계산: 같은 학년 직전 시험 → 없으면 직전 학년 s2_fin 참조
-    let prevScore = ex ? ex.prevScore : null;
-    // ① 같은 학년 내 직전 시험
-    if((prevScore===null||prevScore===undefined) && def.prevKey && examMap[def.prevKey]){
-      const prevEx = examMap[def.prevKey];
-      if(prevEx && prevEx.score!==null && prevEx.score!==undefined && prevEx.certified){
-        prevScore = prevEx.score;
-      }
-    }
-    // ② s1_mid이면 직전 학년 s2_fin 참조 (학년 간 growth)
-    if((prevScore===null||prevScore===undefined) && def.key==='s1_mid'){
-      const gradeOrderX=['초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
+    // 성장 계산: 바로 앞 순서 시험만 참조, 건너뛰기 없음
+    // 직전 시험이 미입력/미인증이면 growth = null (끝)
+    let prevScore = null;
+    const gradeOrderX=['초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
+    if(def.key==='s1_mid'){
+      // s1_mid: 직전 학년 s2_fin만 참조
       const glIdx = gradeOrderX.indexOf(selectedGrade);
       if(glIdx > 0){
         const prevGradeX = gradeOrderX[glIdx-1];
         const examDbX = schoolExamData[sid]||{exams:[]};
         const prevGradeFinEx = (examDbX.exams||[]).find(e=>
-          e.type==='school' && e.key==='s2_fin' &&
-          (e.gradeLabel===prevGradeX) && e.certified &&
-          e.score!==null && e.score!==undefined
+          e.type==='school' && e.key==='s2_fin' && e.gradeLabel===prevGradeX
         );
-        if(prevGradeFinEx) prevScore = prevGradeFinEx.score;
+        // 직전 학년 s2_fin 인증+점수 있을 때만
+        if(prevGradeFinEx && prevGradeFinEx.certified && prevGradeFinEx.score!==null && prevGradeFinEx.score!==undefined){
+          prevScore = prevGradeFinEx.score;
+        }
+        // 미입력/미인증이면 → growth 없음 (건너뛰기 금지)
       }
+    } else if(def.prevKey){
+      // 같은 학년 내 직전 시험
+      const prevEx = examMap[def.prevKey];
+      if(prevEx && prevEx.certified && prevEx.score!==null && prevEx.score!==undefined){
+        prevScore = prevEx.score;
+      }
+      // 미입력/미인증이면 → growth 없음 (건너뛰기 금지)
     }
     const growth = (score!==null && prevScore!==null && !isNaN(score) && !isNaN(prevScore)) ? (score - prevScore) : null;
 
