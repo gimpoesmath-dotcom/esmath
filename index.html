@@ -316,6 +316,7 @@ select,input[type=text],input[type=date],input[type=number]{padding:5px 9px;font
 <!-- Firebase SDK (Firestore only — Storage 미사용) -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app-check.js';
 import { getFirestore, doc, getDoc, setDoc, collection,
          query, where, orderBy, limit, getDocs, addDoc, deleteDoc, serverTimestamp }
   from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js';
@@ -334,6 +335,12 @@ const firebaseConfig = {
 
 
 const app = initializeApp(firebaseConfig);
+
+// App Check 초기화 (reCAPTCHA v3)
+const appCheck = initializeAppCheck(app, {
+  provider: new ReCaptchaV3Provider('6LetIP0sAAAAAOLYkVNNXK6RP07CnsN8qCT62uoQ'),
+  isTokenAutoRefreshEnabled: true
+});
 const db  = getFirestore(app);
 
 window._fb = { db, doc, getDoc, setDoc, collection,
