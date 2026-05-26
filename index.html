@@ -324,12 +324,12 @@ import { getFirestore, doc, getDoc, setDoc, collection,
    Firebase 설정 — 콘솔에서 복사한 값으로 교체
 ══════════════════════════════════════════ */
 const firebaseConfig = {
-  apiKey: "AIzaSyAmkZngN9qhqnhR1duqAGRVPV0V-z5_iIA",
-  authDomain: "esmath-8d508.firebaseapp.com",
-  projectId: "esmath-8d508",
-  storageBucket: "esmath-8d508.firebasestorage.app",
-  messagingSenderId: "1091541226398",
-  appId: "1:1091541226398:web:31a4c06c06f53f5e7f3c8f"
+  apiKey: "AIzaSyD8QW7ho0PavzdA5sb8H2GZzatakRRbDMw",
+  authDomain: "esmath-122f1.firebaseapp.com",
+  projectId: "esmath-122f1",
+  storageBucket: "esmath-122f1.firebasestorage.app",
+  messagingSenderId: "914321018838",
+  appId: "1:914321018838:web:452cd8d68446b1c6ec1e77"
 };
 
 
@@ -652,22 +652,6 @@ async function loadConfig(){
     const curYear = new Date().getFullYear();
     const lastYear = parseInt(cfg.gradeUpYear)||0;
     if(lastYear < curYear){
-      // Firestore 최신값 재확인 (다른 탭에서 이미 업그레이드했을 수 있음)
-      try{
-        const {getDoc}=fb();
-        const freshSnap = await getDoc(configDocRef());
-        if(freshSnap.exists()){
-          const freshData = freshSnap.data();
-          const freshYear = parseInt(freshData.gradeUpYear)||0;
-          if(freshYear >= curYear){
-            // 이미 다른 탭/세션에서 업그레이드 완료 → 로컬 cfg만 동기화
-            cfg.students = freshData.students || cfg.students;
-            cfg.gradeUpYear = freshData.gradeUpYear;
-            return; // 업그레이드 스킵
-          }
-        }
-      }catch(e){}
-
       const GRADE_UP = {
         '초3':'초4','초4':'초5','초5':'초6','초6':'중1',
         '중1':'중2','중2':'중3','중3':'고1',
@@ -731,33 +715,9 @@ async function firebaseAction(action, body){
     clearSessionsCache();
     const localCfg = body.config||cfg;
 
-    // ── 저장 전 Firestore 최신본 읽기 (다른 탭/사용자가 변경한 내용 보호) ──
-    let latestCfg = {};
-    try{
-      const snap = await getDoc(configDocRef());
-      if(snap.exists()) latestCfg = snap.data();
-    }catch(e){ console.warn('최신 cfg 읽기 실패, 로컬 기준으로 저장:', e); }
-
-    // 핵심 배열: 로컬에 없고 Firestore에만 있는 항목 보호
-    // (교재/학생/선생님 등이 다른 탭에서 추가된 경우 유지)
-    const mergeArrayById = (localArr, remoteArr, idKey='id') => {
-      const localIds = new Set((localArr||[]).map(x=>x[idKey]).filter(Boolean));
-      const remoteOnly = (remoteArr||[]).filter(x=>!localIds.has(x[idKey]));
-      return [...(localArr||[]), ...remoteOnly];
-    };
-
     const toSave = Object.fromEntries(
       Object.entries(localCfg).filter(([k])=>!k.startsWith('_'))
     );
-
-    // textbooks: 로컬에 없는 원격 교재 병합 보호
-    if(latestCfg.textbooks?.length){
-      toSave.textbooks = mergeArrayById(toSave.textbooks, latestCfg.textbooks);
-    }
-    // students: 로컬에 없는 원격 학생 병합 보호
-    if(latestCfg.students?.length){
-      toSave.students = mergeArrayById(toSave.students, latestCfg.students);
-    }
 
     await setDoc(configDocRef(), toSave);
     cfg = Object.assign({}, toSave, {_myRole:session?.role, _myName:session?.displayName});
@@ -3661,10 +3621,12 @@ function rPoints(){
     // 정산 기준월 데이터 사용 (캐시에 있으면 사용, 없으면 현재 mdb.lessons)
     const _settleLessons = prevMonthLessonsCache[`${settleYear}-${String(settleMonth).padStart(2,'0')}`] || mdb.lessons;
 
-    // 정산 기준월이 현재 보는 달과 다르고 캐시도 없으면 백그라운드 로드 후 재렌더
+    // 정산 기준월 캐시 없으면 백그라운드 로드 (render는 버튼 클릭 시에만)
     const _settleKey = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
     if((settleYear!==st.year||settleMonth!==st.month) && !prevMonthLessonsCache[_settleKey]){
-      _loadLessonsForMonth(settleYear, settleMonth).then(()=>render());
+      _loadLessonsForMonth(settleYear, settleMonth).then(data=>{
+        prevMonthLessonsCache[_settleKey]=data;
+      });
     }
 
     filtered.forEach((s,i)=>{
@@ -9507,27 +9469,32 @@ function _presenceDocRef(){
   return doc(fbDb(),'presence',_presenceDoc);
 }
 
-// focus 시: 읽기 1회(충돌 확인) + 쓰기 1회(내 셀 등록)
+// focus 시: 로컬 캐시 우선 사용, 캐시 만료(60초)된 경우에만 Firestore 읽기
+let _presenceLastFetch = 0;
 async function presenceFocus(cellKey){
   if(!session) return;
   try{
     const {getDoc,setDoc}=fb();
     const ref=_presenceDocRef();
-    // 1) 현재 상태 읽기 (읽기 1회)
-    const snap=await getDoc(ref);
-    const current=snap.exists()?snap.data():{};
-    // 만료된 항목 정리 (30초 초과)
     const now=Date.now();
+    let current = _presenceLocal;
+    // 60초 이상 지났을 때만 Firestore 읽기 (읽기 최소화)
+    if(now - _presenceLastFetch > 60000){
+      const snap=await getDoc(ref);
+      current=snap.exists()?snap.data():{};
+      _presenceLastFetch=now;
+    }
+    // 만료 항목 정리 (60초 초과)
     const cleaned={};
     Object.entries(current).forEach(([k,v])=>{
-      if(now-new Date(v.ts).getTime()<30000) cleaned[k]=v;
+      if(now-new Date(v.ts).getTime()<60000) cleaned[k]=v;
     });
-    // 충돌 확인
+    // 충돌 확인 (로컬 캐시 기준)
     if(cleaned[cellKey] && cleaned[cellKey].username!==session.username){
       const other=cleaned[cellKey];
       toastConflict(`${other.displayName||other.username}님이 현재 이 셀을 입력 중입니다.`);
     }
-    // 2) 내 셀 등록 (쓰기 1회)
+    // 내 셀 등록 (쓰기 1회)
     cleaned[cellKey]={username:session.username, displayName:session.displayName||session.username, ts:new Date().toISOString()};
     _presenceLocal=cleaned;
     _myActiveCells.add(cellKey);
