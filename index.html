@@ -729,7 +729,8 @@ async function firebaseAction(action, body){
       Object.entries(localCfg).filter(([k])=>!k.startsWith('_'))
     );
 
-    await setDoc(configDocRef(), toSave);
+    // merge:true → holidays, textbooks 등 다른 탭/도구에서 추가된 필드 보호
+    await setDoc(configDocRef(), toSave, {merge:true});
     cfg = Object.assign({}, toSave, {_myRole:session?.role, _myName:session?.displayName});
     return {ok:true};
   }
@@ -4764,9 +4765,16 @@ function renderUnitCheckPanels(sid, tbs, dow, dateStr){
     // 단원이 없고 교재에 unitCount가 설정된 경우 자동 초기화
     // 단, textbookUnits가 아직 로드 중이면 절대 초기화하지 않음 (기존 데이터 덮어쓰기 방지)
     if(!units.length && bk && bk.unitCount>0 && _loaded.textbookUnits){
+      // 교재 추가 시 저장된 템플릿 단원명 참조
+      const templateKey='__template___'+tbId;
+      const templateUnits=textbookUnits[templateKey]||[];
       units=[];
-      for(let i=1;i<=bk.unitCount;i++) units.push({name:`${i}단원`,checked:false,score:null,checkedDate:'',addedDate:dk(new Date())});
-      // 비동기 저장 (렌더 블로킹 없이)
+      for(let i=1;i<=bk.unitCount;i++){
+        units.push({
+          name: templateUnits[i-1]?.name||`${i}단원`,
+          checked:false, score:null, checkedDate:'', addedDate:dk(new Date())
+        });
+      }
       saveTbUnits(sid,tbId,units).catch(e=>console.warn('단원 자동 초기화 실패:',e));
       textbookUnits[key]=units;
     }
@@ -7701,10 +7709,15 @@ function rModal(){
         </div>
       </div>
       <div class="frow">
-        <label>단원 수 <span style="font-size:10px;color:var(--text3)">(입력 시 오늘기록에서 단원 체크박스 자동 생성)</span></label>
+        <label>단원명 입력 <span style="font-size:10px;color:var(--text3)">(한 줄에 하나씩 입력 · 비우면 1단원·2단원... 자동 생성)</span></label>
+        <textarea id="tbUnitNames" rows="5" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--r);font-family:inherit;resize:vertical" placeholder="1단원 소수와 합성수&#10;2단원 약수와 배수&#10;3단원 최대공약수&#10;4단원 최소공배수"></textarea>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px">입력한 줄 수가 단원 수가 됩니다. 단원명 없이 수만 입력하려면 아래 단원 수 입력란을 사용하세요.</div>
+      </div>
+      <div class="frow">
+        <label>단원 수만 지정 <span style="font-size:10px;color:var(--text3)">(단원명 입력 시 무시됨)</span></label>
         <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
           <input type="number" id="tbUnitCount" min="0" max="100" value="" placeholder="예: 6" style="width:80px;text-align:center">
-          <span style="font-size:11px;color:var(--text2)">단원 (예: 6 입력 시 1~6단원 자동 생성)</span>
+          <span style="font-size:11px;color:var(--text2)">단원</span>
         </div>
       </div>
       <div class="mfoot"><button class="btn" onclick="closeM()">취소</button><button class="btn btn-primary" onclick="confAddTextbook()">추가</button></div>
@@ -8202,26 +8215,50 @@ async function confAddTextbook(){
     nameRaw=parts.join(' ');
   }
   if(!nameRaw){alert('교재명을 입력하거나 시리즈·학년·학기를 선택해주세요');return;}
-  const unitCountRaw=parseInt(document.getElementById('tbUnitCount')?.value||'0')||0;
+  // 단원명 파싱
+  const unitNamesRaw = (document.getElementById('tbUnitNames')?.value||'').trim();
+  const unitCountRaw = parseInt(document.getElementById('tbUnitCount')?.value||'0')||0;
+
+  let units = [];
+  if(unitNamesRaw){
+    // 줄바꿈으로 구분된 단원명
+    units = unitNamesRaw.split('\n').map(u=>u.trim()).filter(Boolean).map(name=>({
+      name, checked:false, score:null, checkedDate:'', addedDate:dk(new Date())
+    }));
+  } else if(unitCountRaw > 0){
+    // 단원 수만 지정 → 1단원~N단원 자동 생성
+    units = Array.from({length:unitCountRaw},(_,i)=>({
+      name:`${i+1}단원`, checked:false, score:null, checkedDate:'', addedDate:dk(new Date())
+    }));
+  }
+
+  const tbId = 'tb'+Date.now();
   const newTb={
-    id:'tb'+Date.now(),
-    name:nameRaw,
-    publisher:document.getElementById('tbPublisher').value.trim(),
+    id: tbId,
+    name: nameRaw,
+    publisher: document.getElementById('tbPublisher').value.trim(),
     seriesName,
     grade,
     semester,
-    unitCount: unitCountRaw>0?unitCountRaw:0,
+    unitCount: units.length,
     masterTier: (document.querySelector('input[name="tbMasterTier"]:checked')?.value)
                || (document.querySelector('input[name="tbMasterTier"][type="hidden"]')?.value)
                || 'high',
   };
   cfg.textbooks.push(newTb);
-  // st 초기화
   st.tbNewSeriesMode=false; st.tbNewSeries='';
   await gasCall('saveConfig',{config:cfg});
+
+  // 단원명이 있으면 textbook_units에 기본 데이터 저장
+  // (학생 배정 시 이 데이터를 복사해서 개인별 단원 생성)
+  if(units.length){
+    try{
+      await saveTbUnits('__template__', tbId, units);
+    }catch(e){ console.warn('단원 템플릿 저장 실패:', e); }
+  }
+
   closeM(); render();
-  // 단원 수가 입력됐으면 모든 배정 학생에게 자동으로 단원 생성 (신규 교재라 배정 학생 없으므로 생략)
-  // 이후 학생 배정 시 renderUnitCheckPanels에서 자동 초기화됨
+  toast(`교재 추가 완료 (단원 ${units.length}개)`);
 }
 
 async function confEditTextbook(tbId){
