@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>학생 데이터 내보내기</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Apple SD Gothic Neo', sans-serif; background: #f5f5f5; padding: 20px; }
+.card { background: #fff; border-radius: 12px; padding: 24px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+h2 { font-size: 16px; margin-bottom: 12px; }
+.btn { padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 700; font-family: inherit; }
+.btn-green { background: #1e6e3a; color: #fff; }
+.btn-blue { background: #1558a8; color: #fff; }
+.btn:disabled { background: #999; cursor: not-allowed; }
+.log { font-size: 12px; font-family: monospace; background: #111; color: #fff; padding: 14px; border-radius: 8px; min-height: 80px; max-height: 200px; overflow-y: auto; line-height: 1.8; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 12px; }
+th { background: #1a1a1a; color: #fff; padding: 8px; text-align: left; }
+td { padding: 7px 8px; border-bottom: 1px solid #eee; }
+tr:hover td { background: #f9f9f9; }
+</style>
+</head>
+<body>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app-check.js';
+import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD8QW7ho0PavzdA5sb8H2GZzatakRRbDMw",
+  authDomain: "esmath-122f1.firebaseapp.com",
+  projectId: "esmath-122f1",
+  storageBucket: "esmath-122f1.firebasestorage.app",
+  messagingSenderId: "914321018838",
+  appId: "1:914321018838:web:452cd8d68446b1c6ec1e77"
+};
+
+const app = initializeApp(firebaseConfig);
+try {
+  initializeAppCheck(app, {
+    provider: new ReCaptchaV3Provider('6LetIP0sAAAAAOLYkVNNXK6RP07CnsN8qCT62uoQ'),
+    isTokenAutoRefreshEnabled: true
+  });
+} catch(e) {}
+const db = getFirestore(app);
+
+function log(msg, type='info'){
+  const el = document.getElementById('log');
+  const color = type==='ok'?'#4caf50':type==='err'?'#f44336':type==='warn'?'#ffb74d':'#90caf9';
+  el.innerHTML += `<span style="color:${color}">${msg}</span>\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function loadXLSX(){
+  if(window.XLSX) return;
+  const script = document.createElement('script');
+  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+  document.head.appendChild(script);
+  await new Promise(r=>script.onload=r);
+}
+
+window.exportStudents = async function(){
+  document.getElementById('exportBtn').disabled = true;
+  log('📂 Firebase에서 학생 데이터 로드 중...', 'info');
+
+  let students = [], teachers = [], assistantTeachers = [];
+  try{
+    const snap = await getDoc(doc(db,'config','main'));
+    if(!snap.exists()){ log('❌ config/main 없음', 'err'); return; }
+    const data = snap.data();
+    students = data.students||[];
+    teachers = data.teachers||[];
+    assistantTeachers = data.assistantTeachers||[];
+    log(`✅ 학생 ${students.length}명 로드 완료`, 'ok');
+  }catch(e){
+    log(`❌ 로드 실패: ${e.message}`, 'err');
+    document.getElementById('exportBtn').disabled = false;
+    return;
+  }
+
+  // 미리보기 테이블
+  const tbody = document.getElementById('previewBody');
+  tbody.innerHTML = '';
+  students.sort((a,b)=>a.name.localeCompare(b.name,'ko')).forEach((s,i)=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${i+1}</td><td><b>${s.name}</b></td><td>${s.grade||''}</td><td>${s.classType||''}</td><td>${s.level||''}</td><td>${s.teacher||''}</td><td>${s.fridayTeacher||''}</td><td>${s.weekdayTime||''}</td><td>${s.fridayTime||''}</td><td>${s.joinDate||''}</td>`;
+    tbody.appendChild(tr);
+  });
+  document.getElementById('preview').style.display = '';
+
+  // 엑셀 생성
+  await loadXLSX();
+
+  const rows = [
+    ['평일담당','레벨','학년','이름','반','평일교시','금요일교시','금요일담당','등록일','특이사항']
+  ];
+  students.sort((a,b)=>{
+    const ta = a.teacher||'';
+    const tb = b.teacher||'';
+    if(ta!==tb) return ta.localeCompare(tb,'ko');
+    return a.name.localeCompare(b.name,'ko');
+  }).forEach(s=>{
+    rows.push([
+      s.teacher||'',
+      s.level||'',
+      s.grade||'',
+      s.name||'',
+      s.classType||'',
+      s.weekdayTime||'',
+      s.fridayTime||'',
+      s.fridayTeacher||'',
+      s.joinDate||'',
+      s.specialNote||'',
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{wch:10},{wch:5},{wch:6},{wch:10},{wch:8},{wch:8},{wch:10},{wch:10},{wch:12},{wch:20}];
+
+  // 헤더 스타일 (기본)
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '학생목록');
+
+  const today = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `ES_학생목록_${today}.xlsx`);
+  log(`✅ 엑셀 다운로드 완료 (${students.length}명)`, 'ok');
+  document.getElementById('exportBtn').disabled = false;
+};
+</script>
+
+<div class="card">
+  <h2>📋 학생 데이터 내보내기</h2>
+  <p style="font-size:12px;color:#888;margin-bottom:16px">Firebase의 현재 학생 데이터를 엑셀로 저장합니다.</p>
+  <button class="btn btn-green" id="exportBtn" onclick="exportStudents()">
+    📥 학생 데이터 엑셀로 저장
+  </button>
+</div>
+
+<div class="card" id="preview" style="display:none">
+  <h2>👀 미리보기</h2>
+  <div style="overflow-x:auto">
+    <table>
+      <thead>
+        <tr><th>#</th><th>이름</th><th>학년</th><th>반</th><th>레벨</th><th>평일담당</th><th>금요일담당</th><th>평일교시</th><th>금요일교시</th><th>등록일</th></tr>
+      </thead>
+      <tbody id="previewBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-bottom:8px">📟 로그</h2>
+  <div class="log" id="log">버튼을 눌러 시작하세요.\n</div>
+</div>
+
+</body>
+</html>
