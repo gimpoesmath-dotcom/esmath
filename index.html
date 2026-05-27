@@ -653,37 +653,40 @@ async function loadConfig(){
   // 특강 배열 초기화
   if(!cfg.specialClasses) cfg.specialClasses=[];
 
-  // ── 학년 자동 증가: 년도가 바뀌면 학생 학년 올리기 (원장만) ──
-  // gradeUpYear가 현재 연도와 같으면 절대 실행 안 함 (중복 방지)
-  if(session?.role==='principal' && cfg.students?.length){
-    const curYear = new Date().getFullYear();
-    const lastYear = parseInt(cfg.gradeUpYear)||0;
-    if(lastYear < curYear){
-      const GRADE_UP = {
-        '초3':'초4','초4':'초5','초5':'초6','초6':'중1',
-        '중1':'중2','중2':'중3','중3':'고1',
-        '고1':'고2','고2':'고3'
-      };
-      let upgraded = 0;
-      cfg.students.forEach(s=>{
-        if(s.grade && GRADE_UP[s.grade]){
-          s.grade = GRADE_UP[s.grade];
-          upgraded++;
-        }
-      });
-      cfg.gradeUpYear = curYear;
-      // gasCall('saveConfig') 사용 → 병합 로직 적용 (다른 탭의 교재 등 보호)
-      try{
-        await gasCall('saveConfig', {config:cfg});
-        if(upgraded > 0){
-          toast(`🎓 ${curYear}년 새해! 학생 ${upgraded}명 학년이 자동으로 올라갔습니다.`);
-        }
-      }catch(e){ console.warn('학년 자동 업그레이드 저장 실패:', e); }
-    }
-  }
+  // 학년 자동 증가 제거 — 설정 탭에서 수동으로 진행
   const keys=Object.keys(CT());
   if(!st.matrixClass&&keys.length) st.matrixClass=keys[0];
   if(!st.newCls&&keys.length) st.newCls=keys[0];
+}
+
+// 수동 학년 올리기 (설정 탭 버튼)
+async function manualGradeUp(){
+  const curYear = new Date().getFullYear();
+  const lastUpYear = parseInt(cfg.gradeUpYear)||0;
+  if(lastUpYear >= curYear){
+    toast(`이미 ${curYear}년 학년 올리기가 완료됐습니다.`, true); return;
+  }
+  const cnt = (cfg.students||[]).filter(s=>s.grade&&s.grade!=='고3').length;
+  if(!confirm(`전체 학생 ${cnt}명의 학년을 한 단계씩 올릴까요?\n\n초3→초4→...→중3→고1→고2→고3\n(고3은 변경 없음)\n\n⚠️ 이 작업은 되돌릴 수 없습니다.`)) return;
+
+  const GRADE_UP = {
+    '초3':'초4','초4':'초5','초5':'초6','초6':'중1',
+    '중1':'중2','중2':'중3','중3':'고1',
+    '고1':'고2','고2':'고3'
+  };
+  let upgraded = 0;
+  (cfg.students||[]).forEach(s=>{
+    if(s.grade && GRADE_UP[s.grade]){
+      s.grade = GRADE_UP[s.grade];
+      upgraded++;
+    }
+  });
+  cfg.gradeUpYear = curYear;
+  try{
+    await gasCall('saveConfig', {config:cfg});
+    toast(`🎓 ${upgraded}명 학년 올리기 완료!`);
+    render();
+  }catch(e){ toast('저장 실패: '+e.message, true); }
 }
 
 async function saveConfigToFb(){
@@ -6046,6 +6049,28 @@ function rSettings(){
   let ny=st.year,nm2=st.month+1;if(nm2>12){nm2=1;ny++;}
 
   let h=``;
+
+  // ① 학년 올리기 (원장만)
+  if(isPrincipal){
+    const lastUpYear = parseInt(cfg.gradeUpYear)||0;
+    const curYear = new Date().getFullYear();
+    h+=`<div class="card" style="margin-bottom:14px;border:2px solid ${lastUpYear>=curYear?'var(--border)':'#e8c060'};background:${lastUpYear>=curYear?'#fff':'#fffdf0'}">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div style="flex:1">
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">🎓 학년 올리기</div>
+          <div style="font-size:12px;color:var(--text2)">
+            ${lastUpYear>=curYear
+              ? `✅ ${curYear}년 학년 올리기 완료`
+              : `⚠️ 아직 ${curYear}년 학년 올리기를 하지 않았습니다`}
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-top:3px">초3→초4→...→중3→고1→고2→고3 순서로 전체 학생 학년이 한 단계씩 올라갑니다.</div>
+        </div>
+        ${lastUpYear>=curYear
+          ? `<span style="font-size:12px;color:#1e6e3a;font-weight:700">✅ ${curYear}년 완료</span>`
+          : `<button class="btn btn-primary" onclick="manualGradeUp()" style="flex-shrink:0">🎓 ${curYear}년 학년 올리기</button>`}
+      </div>
+    </div>`;
+  }
 
   // ② 담당 선생님 명단 관리 (원장만)
   if(isPrincipal){
