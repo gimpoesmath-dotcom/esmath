@@ -659,6 +659,111 @@ async function loadConfig(){
   if(!st.newCls&&keys.length) st.newCls=keys[0];
 }
 
+// ── 전체 데이터 백업 ──
+async function backupAllData(){
+  toast('백업 준비 중... 잠시 기다려주세요');
+
+  // SheetJS 로드
+  if(!window.XLSX){
+    await new Promise((res,rej)=>{
+      const s=document.createElement('script');
+      s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload=res; s.onerror=rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  const {getDocs,collection,getDoc}=fb();
+  const wb=XLSX.utils.book_new();
+
+  try{
+    // 1. 학생 정보
+    const studs=(cfg.students||[]).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+    const studRows=[['학생명','학년','반','레벨','평일담당','금요일담당','평일교시','금요일교시','등록일','특이사항']];
+    studs.forEach(s=>studRows.push([s.name,s.grade||'',s.classType||'',s.level||'',s.teacher||'',s.fridayTeacher||'',s.weekdayTime||'',s.fridayTime||'',s.joinDate||'',s.specialNote||'']));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(studRows), '학생');
+
+    // 2. 교재 배정
+    const tbRows=[['학생명','교재명','시리즈','학년','학기','시작일','현행선행']];
+    studs.forEach(s=>{
+      (s.textbooks||[]).forEach(t=>{
+        const bk=(cfg.textbooks||[]).find(b=>b.id===t.tbId);
+        tbRows.push([s.name, bk?.name||t.tbId, bk?.seriesName||'', bk?.grade||'', bk?.semester||'', t.startDate||'', t.rowType||'현행']);
+      });
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(tbRows), '교재배정');
+
+    // 3. 포인트 내역
+    const ptRows=[['학생명','날짜','항목','포인트','메모','잔액']];
+    studs.forEach(s=>{
+      const pd=pointsData[s.id];
+      if(!pd) return;
+      (pd.history||[]).forEach(h=>{
+        ptRows.push([s.name, h.date||'', h.label||h.type||'', h.points||0, h.note||'', '']);
+      });
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ptRows), '포인트');
+
+    // 4. 학교 성적
+    const examRows=[['학생명','학년','시험','점수','성적표인증','저장일']];
+    const EXAM_LABELS={s1_mid:'1학기중간',s1_fin:'1학기기말',s2_mid:'2학기중간',s2_fin:'2학기기말'};
+    studs.forEach(s=>{
+      const sd=schoolExamData[s.id];
+      if(!sd) return;
+      (sd.exams||[]).filter(e=>e.type==='school').forEach(e=>{
+        examRows.push([s.name, e.gradeLabel||s.grade||'', EXAM_LABELS[e.key]||e.key, e.score??'', e.certified?'O':'X', (e.savedAt||'').slice(0,10)]);
+      });
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(examRows), '학교성적');
+
+    // 5. 수업 기록 (현재 월 ± 최근 3개월)
+    const lessonRows=[['학생명','날짜','출결','과제점수','시험점수','진도','과제','특이사항']];
+    const ATT={attend:'출석',late:'지각',absent:'결석'};
+    // 현재 로드된 mdb.lessons 사용
+    Object.values(mdb.lessons||{}).forEach(l=>{
+      const s=studs.find(x=>x.id===l.studentId);
+      lessonRows.push([s?.name||l.studentId, l.date||'', ATT[l.attendance]||'', l.homeworkScore??'', l.testScore??'', l.progress||'', l.homework||'', l.note||'']);
+    });
+    // 이전 달 캐시에서도 추가
+    Object.values(prevMonthLessonsCache).forEach(monthLessons=>{
+      Object.values(monthLessons).forEach(l=>{
+        const s=studs.find(x=>x.id===l.studentId);
+        lessonRows.push([s?.name||l.studentId, l.date||'', ATT[l.attendance]||'', l.homeworkScore??'', l.testScore??'', l.progress||'', l.homework||'', l.note||'']);
+      });
+    });
+    lessonRows.sort((a,b)=>{ if(a[0]!==b[0]) return a[0].localeCompare(b[0],'ko'); return (a[1]||'').localeCompare(b[1]||''); });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(lessonRows), '수업기록');
+
+    // 6. 교재 단원 체크
+    const unitRows=[['학생명','교재명','단원명','체크','점수','완료일']];
+    studs.forEach(s=>{
+      (s.textbooks||[]).forEach(t=>{
+        const bk=(cfg.textbooks||[]).find(b=>b.id===t.tbId);
+        const key=s.id+'_'+t.tbId;
+        const units=textbookUnits[key]||[];
+        units.forEach(u=>{
+          if(u.checked||u.manualComplete||(u.score!==null&&u.score!==undefined&&u.score!==''))
+            unitRows.push([s.name, bk?.name||t.tbId, u.name||'', u.checked?'O':'', u.score??'', u.checkedDate||'']);
+        });
+      });
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(unitRows), '단원체크');
+
+    // 저장
+    XLSX.writeFile(wb, 'ES수학_전체백업.xlsx');
+
+    // 마지막 백업 시각 저장
+    cfg.lastBackupAt=new Date().toISOString();
+    await gasCall('saveConfig',{config:cfg});
+    toast('✅ 백업 완료! ES수학_전체백업.xlsx — 원드라이브에 덮어쓰기 하세요');
+    render();
+
+  }catch(e){
+    toast('백업 실패: '+e.message, true);
+    console.error(e);
+  }
+}
+
 // 수동 학년 올리기 (설정 탭 버튼)
 async function manualGradeUp(){
   const curYear = new Date().getFullYear();
@@ -6061,7 +6166,22 @@ function rSettings(){
 
   let h=``;
 
-  // ① 학년 올리기 (원장만)
+  // ① 데이터 백업 (전체 선생님 접근 가능)
+  {
+    const lastBackup = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
+    h+=`<div class="card" style="margin-bottom:14px;border:2px solid #90b8e8;background:#f0f6ff">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div style="flex:1">
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">💾 전체 데이터 백업</div>
+          <div style="font-size:12px;color:var(--text2)">마지막 백업: <b>${lastBackup}</b></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:3px">학생·수업기록·포인트·성적·교재 등 모든 데이터를 엑셀로 저장합니다. 원드라이브 공유폴더에 보관하세요.</div>
+        </div>
+        <button class="btn btn-primary" onclick="backupAllData()" style="flex-shrink:0">📥 지금 백업</button>
+      </div>
+    </div>`;
+  }
+
+  // ② 학년 올리기 (원장만)
   if(isPrincipal){
     const lastUpYear = parseInt(cfg.gradeUpYear)||0;
     const curYear = new Date().getFullYear();
