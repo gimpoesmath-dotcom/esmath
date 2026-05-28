@@ -880,7 +880,10 @@ async function loadMonthData(){
     weeklyEval[data.key||d.id]=data;
   });
 
-  mdb={year:y,month:m,lessons,makeup:{},carryIn:{},weeklyEval,lessonVersions};
+  // 이전 달 데이터도 mdb.lessons에 병합 (사이클이 이전 달 날짜를 포함할 때 필요)
+  const mergedLessons = Object.assign({}, prevMonthLessonsCache[prevKey]||{}, lessons);
+
+  mdb={year:y,month:m,lessons:mergedLessons,makeup:{},carryIn:{},weeklyEval,lessonVersions};
 }
 
 // ── 교재 진도 로드 ──
@@ -7749,7 +7752,13 @@ function rModal(){
         </div>
       </div>
       <div class="frow">
-        <label>단원 수 <span style="font-size:10px;color:var(--text3)">(변경 시 기존 단원 데이터는 유지, 단원 수만 업데이트)</span></label>
+        <label>단원명 편집 <span style="font-size:10px;color:var(--text3)">(한 줄에 하나씩 · 저장 시 템플릿 업데이트)</span></label>
+        <textarea id="etbUnitNames" rows="6" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--r);font-family:inherit;resize:vertical"
+          placeholder="1단원 소수와 합성수&#10;2단원 약수와 배수&#10;3단원 최대공약수">${(textbookUnits['__template___'+tbId]||[]).map(u=>u.name).join('\n')}</textarea>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px">입력한 줄 수가 단원 수가 됩니다.</div>
+      </div>
+      <div class="frow">
+        <label>단원 수만 지정 <span style="font-size:10px;color:var(--text3)">(단원명 입력 시 무시됨)</span></label>
         <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
           <input type="number" id="etbUnitCount" min="0" max="100" value="${bk.unitCount||''}" placeholder="예: 6" style="width:80px;text-align:center">
           <span style="font-size:11px;color:var(--text2)">단원</span>
@@ -8266,17 +8275,36 @@ async function confEditTextbook(tbId){
   if(!bk){ alert('교재를 찾을 수 없습니다'); return; }
   const newName=document.getElementById('etbName').value.trim();
   if(!newName){ alert('교재명을 입력해주세요'); return; }
-  const newUnitCount=parseInt(document.getElementById('etbUnitCount')?.value||'0')||0;
+
+  // 단원명 파싱
+  const unitNamesRaw=(document.getElementById('etbUnitNames')?.value||'').trim();
+  const newUnitCountRaw=parseInt(document.getElementById('etbUnitCount')?.value||'0')||0;
   const prevUnitCount=bk.unitCount||0;
+
+  let newUnits=[];
+  if(unitNamesRaw){
+    newUnits=unitNamesRaw.split('\n').map(u=>u.trim()).filter(Boolean).map(name=>({
+      name, checked:false, score:null, checkedDate:'', addedDate:dk(new Date())
+    }));
+  }
+  const newUnitCount=newUnits.length>0?newUnits.length:(newUnitCountRaw>0?newUnitCountRaw:0);
 
   bk.name=newName;
   bk.publisher=document.getElementById('etbPublisher').value.trim();
   bk.grade=document.getElementById('etbGrade').value;
   bk.semester=document.getElementById('etbSemester').value;
-  bk.unitCount=newUnitCount>0?newUnitCount:0;
+  bk.unitCount=newUnitCount;
   bk.masterTier=document.getElementById('etbMasterTier').value;
 
   await gasCall('saveConfig',{config:cfg});
+
+  // 단원명 템플릿 저장
+  if(newUnits.length){
+    try{
+      await saveTbUnits('__template__', tbId, newUnits);
+      textbookUnits['__template___'+tbId]=newUnits;
+    }catch(e){ console.warn('템플릿 저장 실패:', e); }
+  }
 
   // 단원 수가 늘어났으면 배정된 학생들에게 새 단원 추가 (기존 단원 유지)
   if(newUnitCount>prevUnitCount){
@@ -8287,7 +8315,7 @@ async function confEditTextbook(tbId){
       const existNames=new Set(units.map(u=>u.name));
       let added=false;
       for(let i=prevUnitCount+1;i<=newUnitCount;i++){
-        const uname=`${i}단원`;
+        const uname=newUnits[i-1]?.name||`${i}단원`;
         if(!existNames.has(uname)){
           units.push({name:uname,checked:false,score:null,checkedDate:'',addedDate:dk(new Date())});
           added=true;
@@ -8298,7 +8326,7 @@ async function confEditTextbook(tbId){
   }
 
   closeM(); render();
-  toast(`'${newName}' 수정 완료`);
+  toast(`'${newName}' 수정 완료 (단원 ${newUnitCount}개)`);
 }
 
 async function confSaveSpecial(spId){
