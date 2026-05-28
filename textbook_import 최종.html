@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>교재 일괄 추가 도구</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Apple SD Gothic Neo', sans-serif; background: #f5f5f5; padding: 20px; }
+.card { background: #fff; border-radius: 12px; padding: 24px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+h2 { font-size: 16px; margin-bottom: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { background: #1a1a1a; color: #fff; padding: 8px; text-align: left; }
+td { padding: 7px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+tr:hover td { background: #f9f9f9; }
+input[type=text], textarea { padding: 4px 7px; border: 1px solid #ddd; border-radius: 5px; font-size: 12px; font-family: inherit; }
+.btn { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 700; font-family: inherit; }
+.btn-black { background: #1a1a1a; color: #fff; }
+.btn-green { background: #1e6e3a; color: #fff; }
+.btn-blue { background: #1558a8; color: #fff; }
+.btn:disabled { background: #999; cursor: not-allowed; }
+.log { font-size: 12px; font-family: monospace; background: #111; color: #fff; padding: 14px; border-radius: 8px; min-height: 80px; max-height: 200px; overflow-y: auto; line-height: 1.8; }
+.tip { font-size: 11px; color: #888; margin-top: 8px; line-height: 1.8; }
+</style>
+</head>
+<body>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app-check.js';
+import { getFirestore, doc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD8QW7ho0PavzdA5sb8H2GZzatakRRbDMw",
+  authDomain: "esmath-122f1.firebaseapp.com",
+  projectId: "esmath-122f1",
+  storageBucket: "esmath-122f1.firebasestorage.app",
+  messagingSenderId: "914321018838",
+  appId: "1:914321018838:web:452cd8d68446b1c6ec1e77"
+};
+const app = initializeApp(firebaseConfig);
+try { initializeAppCheck(app, { provider: new ReCaptchaV3Provider('6LetIP0sAAAAAOLYkVNNXK6RP07CnsN8qCT62uoQ'), isTokenAutoRefreshEnabled: true }); } catch(e) {}
+const db = getFirestore(app);
+
+function log(msg, type='info'){
+  const el = document.getElementById('log');
+  const color = type==='ok'?'#4caf50':type==='err'?'#f44336':type==='warn'?'#ffb74d':'#90caf9';
+  el.innerHTML += `<span style="color:${color}">${msg}</span>\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function loadCfg(){
+  try{ const snap=await getDoc(doc(db,'config','main')); return snap.exists()?snap.data():{textbooks:[]}; }catch(e){ return {textbooks:[]}; }
+}
+
+async function loadXLSX(){
+  if(window.XLSX) return;
+  const s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+  document.head.appendChild(s);
+  await new Promise(r=>s.onload=r);
+}
+
+window.handleFile = async function(input){
+  const file=input.files[0]; if(!file) return;
+  await loadXLSX();
+  const data=await file.arrayBuffer();
+  const wb=XLSX.read(data,{type:'array'});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+  if(!rows.length){ log('데이터 없음','err'); return; }
+
+  window._parsed = rows.map((r,i)=>{
+    const seriesName   = String(r['시리즈명']||'').trim();
+    const grade        = String(r['학년']||'').trim();
+    const semester     = String(r['학기']||'').trim();
+    const unitNamesRaw = String(r['단원명(쉼표구분)']||r['단원명']||'').trim();
+    const tier         = String(r['포인트등급']||'').trim().toLowerCase();
+    const masterTier   = tier==='high'||tier==='높음'?'high': tier==='low'||tier==='낮음'?'low':'none';
+    const unitCountRaw = parseInt(r['단원수'])||0;
+
+    // 교재명: 직접 입력값 우선, 없으면 시리즈+학년+학기 자동생성
+    const inputName = String(r['교재명']||'').trim();
+    const autoName  = [seriesName, grade, semester].filter(Boolean).join(' ');
+    const name      = inputName || autoName;
+
+    // 단원명 파싱 (쉼표 구분)
+    let units = [];
+    if(unitNamesRaw){
+      units = unitNamesRaw.split(',').map((u,ui)=>({
+        name:u.trim()||`${ui+1}단원`, checked:false, score:null, checkedDate:'', addedDate:new Date().toISOString().slice(0,10)
+      }));
+    } else if(unitCountRaw>0){
+      units = Array.from({length:unitCountRaw},(_,ui)=>({
+        name:`${ui+1}단원`, checked:false, score:null, checkedDate:'', addedDate:new Date().toISOString().slice(0,10)
+      }));
+    }
+
+    return { id:i, seriesName, grade, semester, name, masterTier, units, unitCount:units.length };
+  }).filter(b=>b.name);
+
+  renderPreview();
+  document.getElementById('importBtn').disabled = false;
+  log(`📋 ${window._parsed.length}개 교재 파싱 완료. 교재명·단원명 확인 후 저장하세요.`, 'ok');
+};
+
+function renderPreview(){
+  const tbody = document.getElementById('previewBody');
+  tbody.innerHTML = '';
+  (window._parsed||[]).forEach((b,i)=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-size:11px;color:#888">${i+1}</td>
+      <td><input type="text" value="${esc(b.seriesName)}" style="width:120px" oninput="window._parsed[${i}].seriesName=this.value;updateAutoName(${i})"></td>
+      <td><input type="text" value="${esc(b.grade)}" style="width:45px" oninput="window._parsed[${i}].grade=this.value;updateAutoName(${i})"></td>
+      <td><input type="text" value="${esc(b.semester)}" style="width:55px" oninput="window._parsed[${i}].semester=this.value;updateAutoName(${i})"></td>
+      <td><input type="text" id="tbname_${i}" value="${esc(b.name)}" style="width:180px" oninput="window._parsed[${i}].name=this.value"></td>
+      <td>
+        <select onchange="window._parsed[${i}].masterTier=this.value" style="font-size:11px">
+          <option value="high" ${b.masterTier==='high'?'selected':''}>HIGH 5,000P</option>
+          <option value="low"  ${b.masterTier==='low'?'selected':''}>LOW 2,000P</option>
+          <option value="none" ${b.masterTier==='none'?'selected':''}>없음</option>
+        </select>
+      </td>
+      <td><textarea id="units_${i}" rows="3" style="width:200px;font-size:11px" oninput="updateUnits(${i},this.value)">${b.units.map(u=>u.name).join('\n')}</textarea></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  document.getElementById('preview').style.display='';
+  document.getElementById('previewCount').textContent = `${(window._parsed||[]).length}개`;
+}
+
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+window.updateAutoName = function(i){
+  const b = window._parsed[i];
+  const auto = [b.seriesName, b.grade, b.semester].filter(Boolean).join(' ');
+  const inp = document.getElementById('tbname_'+i);
+  if(inp) { inp.value=auto; b.name=auto; }
+};
+
+window.updateUnits = function(i, val){
+  window._parsed[i].units = val.split('\n').map((u,ui)=>({
+    name:u.trim()||`${ui+1}단원`, checked:false, score:null, checkedDate:'', addedDate:new Date().toISOString().slice(0,10)
+  })).filter(u=>u.name);
+  window._parsed[i].unitCount = window._parsed[i].units.length;
+};
+
+window.importToFirebase = async function(){
+  if(!window._parsed?.length){ log('데이터 없음','err'); return; }
+  if(!confirm(`${window._parsed.length}개 교재를 Firebase에 저장하시겠어요?`)) return;
+  document.getElementById('importBtn').disabled=true;
+
+  const cfg=await loadCfg();
+  if(!cfg.textbooks) cfg.textbooks=[];
+
+  let added=0, skipped=0;
+  const unitData={};
+
+  window._parsed.forEach(b=>{
+    if(!b.name){ skipped++; return; }
+    if(cfg.textbooks.some(x=>x.name===b.name&&x.seriesName===b.seriesName)){
+      log(`  ⚠️ ${b.name}: 이미 존재 (스킵)`,'warn'); skipped++; return;
+    }
+    const tbId='tb'+Date.now()+Math.random().toString(36).slice(2,6);
+    cfg.textbooks.push({ id:tbId, name:b.name, seriesName:b.seriesName, grade:b.grade, semester:b.semester, unitCount:b.units.length, masterTier:b.masterTier });
+    if(b.units.length) unitData[tbId]=b.units;
+    log(`  ✅ ${b.name} (단원 ${b.units.length}개)`,'ok');
+    added++;
+  });
+
+  try{
+    await setDoc(doc(db,'config','main'), cfg, {merge:true});
+
+    // 단원 템플릿 저장
+    for(const [tbId, units] of Object.entries(unitData)){
+      await setDoc(doc(db,'textbook_units','__template___'+tbId), {units});
+    }
+
+    log(`\n🎉 완료! ${added}개 추가 · ${skipped}개 스킵`,'ok');
+  }catch(e){
+    log(`❌ 저장 실패: ${e.message}`,'err');
+  }
+  document.getElementById('importBtn').disabled=false;
+};
+
+window.downloadSample = async function(){
+  await loadXLSX();
+  const data=[
+    ['교재명','시리즈명','학년','학기','단원수','포인트등급','단원명(쉼표구분)'],
+    ['디딤돌 수학 중1-1','디딤돌 수학','중1','1학기',8,'high','1단원 소수와 합성수, 2단원 약수와 배수, 3단원 최대공약수'],
+    ['디딤돌 수학 중1-2','디딤돌 수학','중1','2학기',8,'high',''],
+    ['쎈 중2-1','쎈','중2','1학기',10,'low',''],
+    ['개념+유형 4-1','개념+유형','초4','1학기',6,'low','1단원 큰 수, 2단원 분수'],
+    ['수학의 정석 고1','수학의 정석','고1','공통',12,'high',''],
+  ];
+  const ws=XLSX.utils.aoa_to_sheet(data);
+  ws['!cols']=[{wch:20},{wch:14},{wch:6},{wch:8},{wch:7},{wch:10},{wch:50}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'교재목록');
+  XLSX.writeFile(wb,'교재_일괄추가_양식.xlsx');
+};
+</script>
+
+<div class="card">
+  <h2>📚 교재 일괄 추가 도구</h2>
+  <p style="font-size:12px;color:#888;margin-bottom:16px">시리즈명+학년+학기로 교재명 자동 생성 · 단원명 직접 편집 후 저장</p>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+    <button class="btn btn-black" onclick="downloadSample()">📥 양식 다운로드</button>
+    <label class="btn btn-blue" style="cursor:pointer">
+      📂 엑셀 파일 선택
+      <input type="file" accept=".xlsx,.xls" style="display:none" onchange="handleFile(this)">
+    </label>
+  </div>
+  <div class="tip">
+    📌 교재명은 <b>시리즈명+학년+학기</b>로 자동 생성됩니다 (미리보기에서 직접 수정 가능)<br>
+    📌 단원명: 쉼표로 구분 예) <b>1단원 소수와 합성수, 2단원 약수와 배수</b><br>
+    📌 포인트등급: <b>high</b>(5,000P) · <b>low</b>(2,000P) · <b>none</b>(없음)
+  </div>
+</div>
+
+<div class="card" id="preview" style="display:none">
+  <h2>👀 미리보기 <span id="previewCount" style="font-size:12px;color:#888;font-weight:400"></span> <span style="font-size:11px;color:var(--text3);font-weight:400">— 교재명·단원명 직접 수정 가능</span></h2>
+  <div style="overflow-x:auto;margin-bottom:14px">
+    <table>
+      <thead>
+        <tr><th>#</th><th>시리즈명</th><th>학년</th><th>학기</th><th>교재명 (자동생성·수정가능)</th><th>포인트</th><th>단원명 (줄바꿈 구분)</th></tr>
+      </thead>
+      <tbody id="previewBody"></tbody>
+    </table>
+  </div>
+  <button class="btn btn-green" id="importBtn" onclick="importToFirebase()" disabled>🚀 Firebase에 저장</button>
+</div>
+
+<div class="card">
+  <h2 style="margin-bottom:8px">📟 로그</h2>
+  <div class="log" id="log">대기 중...\n</div>
+</div>
+
+</body>
+</html>
