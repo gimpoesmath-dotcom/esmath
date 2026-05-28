@@ -6167,27 +6167,6 @@ function rSettings(){
 
   let h=``;
 
-  // ① 데이터 백업 + 학년 올리기 (2열 레이아웃)
-  {
-    const lastBackup = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
-    const lastUpYear = parseInt(cfg.gradeUpYear)||0;
-    const curYear = new Date().getFullYear();
-    h+=`<div style="display:grid;grid-template-columns:1fr ${isPrincipal?'1fr':''};gap:10px;margin-bottom:14px">
-      <div class="card" style="margin-bottom:0;border:2px solid #90b8e8;background:#f0f6ff">
-        <div style="font-size:13px;font-weight:700;margin-bottom:4px">💾 전체 데이터 백업</div>
-        <div style="font-size:11px;color:var(--text2);margin-bottom:8px">마지막 백업: <b>${lastBackup}</b></div>
-        <button class="btn btn-primary btn-sm" onclick="backupAllData()" style="width:100%">📥 지금 백업</button>
-      </div>
-      ${isPrincipal?`<div class="card" style="margin-bottom:0;border:2px solid ${lastUpYear>=curYear?'var(--border)':'#e8c060'};background:${lastUpYear>=curYear?'#fff':'#fffdf0'}">
-        <div style="font-size:13px;font-weight:700;margin-bottom:4px">🎓 학년 올리기</div>
-        <div style="font-size:11px;color:var(--text2);margin-bottom:8px">${lastUpYear>=curYear?`✅ ${curYear}년 완료`:`⚠️ ${curYear}년 미완료`}</div>
-        ${lastUpYear>=curYear
-          ? `<button class="btn btn-sm" style="width:100%;background:#e2f2e9;color:#1e6e3a;border:1px solid #80c090" disabled>✅ ${curYear}년 완료</button>`
-          : `<button class="btn btn-primary btn-sm" onclick="manualGradeUp()" style="width:100%">🎓 ${curYear}년 학년 올리기</button>`}
-      </div>`:''}
-    </div>`;
-  }
-
   // ② 담당 선생님 명단 관리 (원장만)
   if(isPrincipal){
     const teachers=cfg.teachers||[];
@@ -6408,12 +6387,18 @@ function rSettings(){
     </div>`;
   }
 
-  // ⑦ 엑셀
-  h+=`<div class="toolbar" style="margin-top:14px"><b>💾 데이터</b></div>
-  <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
-    <button class="btn btn-green" onclick="exportExcel()">📥 이달 전체 엑셀</button>
-    <button class="btn btn-primary" onclick="exportESReport()">📋 ES 분기 레포트 (학생별 시트)</button>
-  </div>`;
+  // ⑦ 엑셀 + 백업
+  {
+    const lastBackup = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
+    h+=`<div class="toolbar" style="margin-top:14px"><b>💾 데이터</b></div>
+    <div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-green" onclick="exportExcel()">📥 이달 전체 엑셀</button>
+      <button class="btn btn-primary" onclick="exportESReport()">📋 ES 분기 레포트 (학생별 시트)</button>
+      <div style="width:1px;height:24px;background:var(--border);margin:0 2px"></div>
+      <button class="btn btn-primary btn-sm" onclick="backupAllData()" style="border:2px solid #90b8e8;background:#f0f6ff;color:#1558a8">📥 전체 데이터 백업</button>
+      <span style="font-size:11px;color:var(--text3)">마지막: ${lastBackup}</span>
+    </div>`;
+  }
 
   // ⑧ 활동 로그 (원장만)
   if(isPrincipal){
@@ -6425,6 +6410,19 @@ function rSettings(){
       <div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">새로고침 버튼을 눌러 로그를 불러오세요</div>
     </div>`;
   }
+  // ⑨ 학년 올리기 (원장만, 맨 하단)
+  if(isPrincipal){
+    const lastUpYear = parseInt(cfg.gradeUpYear)||0;
+    const curYear = new Date().getFullYear();
+    h+=`<div class="toolbar" style="margin-top:14px"><b>🎓 학년 올리기</b></div>
+    <div class="card" style="border:2px solid ${lastUpYear>=curYear?'var(--border)':'#e8c060'};background:${lastUpYear>=curYear?'#fff':'#fffdf0'}">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">${lastUpYear>=curYear?`✅ ${curYear}년 완료`:`⚠️ ${curYear}년 미완료 — 새 학년도가 시작되면 학생 학년을 일괄 올려주세요.`}</div>
+      ${lastUpYear>=curYear
+        ? `<button class="btn btn-sm" style="background:#e2f2e9;color:#1e6e3a;border:1px solid #80c090" disabled>✅ ${curYear}년 완료</button>`
+        : `<button class="btn btn-primary btn-sm" onclick="manualGradeUp()">🎓 ${curYear}년 학년 올리기</button>`}
+    </div>`;
+  }
+
   return h;
   } catch(e) {
     console.error('rSettings 오류:', e);
