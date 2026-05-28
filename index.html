@@ -6167,40 +6167,24 @@ function rSettings(){
 
   let h=``;
 
-  // ① 데이터 백업 (전체 선생님 접근 가능)
+  // ① 데이터 백업 + 학년 올리기 (2열 레이아웃)
   {
     const lastBackup = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
-    h+=`<div class="card" style="margin-bottom:14px;border:2px solid #90b8e8;background:#f0f6ff">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <div style="flex:1">
-          <div style="font-size:14px;font-weight:700;margin-bottom:4px">💾 전체 데이터 백업</div>
-          <div style="font-size:12px;color:var(--text2)">마지막 백업: <b>${lastBackup}</b></div>
-          <div style="font-size:11px;color:var(--text3);margin-top:3px">학생·수업기록·포인트·성적·교재 등 모든 데이터를 엑셀로 저장합니다. 원드라이브 공유폴더에 보관하세요.</div>
-        </div>
-        <button class="btn btn-primary" onclick="backupAllData()" style="flex-shrink:0">📥 지금 백업</button>
-      </div>
-    </div>`;
-  }
-
-  // ② 학년 올리기 (원장만)
-  if(isPrincipal){
     const lastUpYear = parseInt(cfg.gradeUpYear)||0;
     const curYear = new Date().getFullYear();
-    h+=`<div class="card" style="margin-bottom:14px;border:2px solid ${lastUpYear>=curYear?'var(--border)':'#e8c060'};background:${lastUpYear>=curYear?'#fff':'#fffdf0'}">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <div style="flex:1">
-          <div style="font-size:14px;font-weight:700;margin-bottom:4px">🎓 학년 올리기</div>
-          <div style="font-size:12px;color:var(--text2)">
-            ${lastUpYear>=curYear
-              ? `✅ ${curYear}년 학년 올리기 완료`
-              : `⚠️ 아직 ${curYear}년 학년 올리기를 하지 않았습니다`}
-          </div>
-          <div style="font-size:11px;color:var(--text3);margin-top:3px">초3→초4→...→중3→고1→고2→고3 순서로 전체 학생 학년이 한 단계씩 올라갑니다.</div>
-        </div>
-        ${lastUpYear>=curYear
-          ? `<span style="font-size:12px;color:#1e6e3a;font-weight:700">✅ ${curYear}년 완료</span>`
-          : `<button class="btn btn-primary" onclick="manualGradeUp()" style="flex-shrink:0">🎓 ${curYear}년 학년 올리기</button>`}
+    h+=`<div style="display:grid;grid-template-columns:1fr ${isPrincipal?'1fr':''};gap:10px;margin-bottom:14px">
+      <div class="card" style="margin-bottom:0;border:2px solid #90b8e8;background:#f0f6ff">
+        <div style="font-size:13px;font-weight:700;margin-bottom:4px">💾 전체 데이터 백업</div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:8px">마지막 백업: <b>${lastBackup}</b></div>
+        <button class="btn btn-primary btn-sm" onclick="backupAllData()" style="width:100%">📥 지금 백업</button>
       </div>
+      ${isPrincipal?`<div class="card" style="margin-bottom:0;border:2px solid ${lastUpYear>=curYear?'var(--border)':'#e8c060'};background:${lastUpYear>=curYear?'#fff':'#fffdf0'}">
+        <div style="font-size:13px;font-weight:700;margin-bottom:4px">🎓 학년 올리기</div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:8px">${lastUpYear>=curYear?`✅ ${curYear}년 완료`:`⚠️ ${curYear}년 미완료`}</div>
+        ${lastUpYear>=curYear
+          ? `<button class="btn btn-sm" style="width:100%;background:#e2f2e9;color:#1e6e3a;border:1px solid #80c090" disabled>✅ ${curYear}년 완료</button>`
+          : `<button class="btn btn-primary btn-sm" onclick="manualGradeUp()" style="width:100%">🎓 ${curYear}년 학년 올리기</button>`}
+      </div>`:''}
     </div>`;
   }
 
