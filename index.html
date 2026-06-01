@@ -397,7 +397,10 @@ window._fbReady = true;
   <div class="sync-bar">
     <div class="sync-dot" id="syncDot"></div>
     <span id="syncLabel" style="color:var(--text3)">대기 중</span>
-    <button onclick="backupAllData()" style="margin-left:auto;padding:2px 10px;font-size:11px;border:1px solid #90b8e8;border-radius:20px;background:#f0f6ff;color:#1558a8;cursor:pointer;font-family:inherit;font-weight:600;flex-shrink:0">💾 백업</button>
+    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <button onclick="saveAllToday()" style="padding:2px 10px;font-size:11px;border:1px solid #80c090;border-radius:20px;background:#e2f2e9;color:#1e6e3a;cursor:pointer;font-family:inherit;font-weight:600;flex-shrink:0">💾 저장</button>
+      <button onclick="backupAllData()" style="padding:2px 10px;font-size:11px;border:1px solid #90b8e8;border-radius:20px;background:#f0f6ff;color:#1558a8;cursor:pointer;font-family:inherit;font-weight:600;flex-shrink:0">📦 백업</button>
+    </div>
   </div>
   <div class="main" id="main"></div>
 </div>
@@ -1842,12 +1845,19 @@ function prevHwInMonth(sid,dateStr,classType,year,month){
   const curCacheLessons = prevMonthLessonsCache[curKey]||{};
   const merged = {...prevLessons, ...curCacheLessons, ...(mdb.lessons||{})};
 
-  // 이 학생이 수업 있는 모든 날짜(정규) — 현재 날짜 이전
-  // classType의 수업일 전체에서 이 학생 기준으로 수업 있는 날 추출
+  // 이 학생이 수업 있는 모든 날짜(정규 + 토요보강) — 현재 날짜 이전
   const ct = CT()[classType];
   const allSessionDates = ct ? _getAllSessionDates(classType).filter(d=>d<dateStr) : [];
+
+  // 토요 보강 날짜도 포함 (이 학생이 보강 수업 기록 있는 날)
+  const satDates = Object.keys(mdb.lessons||{})
+    .filter(k=>k.startsWith(sid+'_'))
+    .map(k=>k.slice(sid.length+1))
+    .filter(d=>d<dateStr && !allSessionDates.includes(d));
+
+  const allDates = [...new Set([...allSessionDates, ...satDates])];
   // 역순 (최근순)
-  const sortedDates = [...allSessionDates].sort((a,b)=>b.localeCompare(a));
+  const sortedDates = [...allDates].sort((a,b)=>b.localeCompare(a));
 
   for(const d of sortedDates){
     const l = merged[lk(sid,d)];
@@ -3085,23 +3095,28 @@ function rMonthly(){
   function calcAwards(sid, classType){
     const stats = calcMonthStats(sid, classType);
     const awards = [];
-    // 출석상 조건: 반의 기준 회차(주3회=12, 주2회=8)가 오늘까지 실제로 진행됐어야 수여 가능
     const ct2 = CT()[classType];
     const requiredSessions = ct2 ? (ct2.sessions || 0) : 0;
-    // 오늘까지 지난 회차만 카운트 (미래 날짜 제외)
     const todayStrAw = dk(new Date());
     const allSessions = sessionsForMonthWithCycle(classType, st.year, st.month);
     const passedSessions = allSessions.filter(s => s.dateStr <= todayStrAw).length;
     const cycleComplete = requiredSessions > 0 && passedSessions >= requiredSessions;
-    if(cycleComplete){
+
+    // 등록일 기준: 사이클 전체 참여 여부 확인
+    const stu = (cfg.students||[]).find(x=>x.id===sid);
+    const joinDate = stu?.joinDate||'';
+    const validSessions = joinDate ? allSessions.filter(s=>s.dateStr>=joinDate) : allSessions;
+    const canEarnAward = cycleComplete && validSessions.length >= requiredSessions;
+
+    if(canEarnAward){
       if(stats.absent===0 && stats.late===0 && stats.attend>=requiredSessions)
         awards.push({id:'perfect', label:'PERFECT', sub:'출석상', icon:'🏅', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'});
       else if(stats.absent===0 && stats.late>=1 && stats.late<=2)
         awards.push({id:'steady',  label:'STEADY',  sub:'출석상', icon:'⭐', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'});
     }
-    if(stats.testAvg!==null && stats.testAvg>=80)
+    if(canEarnAward && stats.testAvg!==null && stats.testAvg>=80)
       awards.push({id:'daily', label:'DAILY', sub:'챌린지상', icon:'📊', color:'#7a4e00', bg:'#fdf0d8', border:'#e0c060'});
-    if(hasMasterScore(sid))
+    if(canEarnAward && hasMasterScore(sid))
       awards.push({id:'master', label:'MASTER', sub:'인증상', icon:'👑', color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'});
     return { awards, stats };
   }
@@ -3816,42 +3831,42 @@ function rPoints(){
         const GRADE_ORDER_LIST=['초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
 
         gExams.forEach(ex=>{
-          if(!ex.certified || ex.score===null || ex.score===undefined) return;
+          // 점수가 없으면 스킵
+          if(ex.score===null || ex.score===undefined) return;
           const sc = ex.score;
-          // growth 계산: 바로 앞 순서 시험만 참조, 건너뛰기 없음
-          // 직전 시험이 미입력/미인증이면 growth = null (끝)
+
+          // growth 계산: 인증 필수 (바로 앞 순서 시험만 참조, 건너뛰기 없음)
           const prevKey = PREV_MAP[ex.key];
           let prevSc = null;
-          if(ex.key==='s1_mid'){
-            // s1_mid: 직전 학년 s2_fin만 참조 (인증+점수 있어야 함)
-            const glIdx = GRADE_ORDER_LIST.indexOf(gl);
-            if(glIdx > 0){
-              const prevGrade = GRADE_ORDER_LIST[glIdx-1];
-              const prevGradeEx = (sDb.exams||[]).find(e=>
-                e.type==='school' && e.gradeLabel===prevGrade && e.key==='s2_fin'
-              );
-              // 직전 학년 s2_fin이 인증+점수 있을 때만
-              if(prevGradeEx && prevGradeEx.certified && prevGradeEx.score!==null && prevGradeEx.score!==undefined){
-                prevSc = prevGradeEx.score;
+          if(ex.certified){ // growth는 현재 시험도 인증 필요
+            if(ex.key==='s1_mid'){
+              const glIdx = GRADE_ORDER_LIST.indexOf(gl);
+              if(glIdx > 0){
+                const prevGrade = GRADE_ORDER_LIST[glIdx-1];
+                const prevGradeEx = (sDb.exams||[]).find(e=>
+                  e.type==='school' && e.gradeLabel===prevGrade && e.key==='s2_fin'
+                );
+                if(prevGradeEx && prevGradeEx.certified && prevGradeEx.score!==null && prevGradeEx.score!==undefined){
+                  prevSc = prevGradeEx.score;
+                }
               }
-              // 직전 학년 s2_fin이 미입력/미인증이면 → growth 없음 (건너뛰기 금지)
+            } else if(prevKey){
+              const prevEx = examMapG[prevKey];
+              if(prevEx && prevEx.certified && prevEx.score!==null && prevEx.score!==undefined){
+                prevSc = prevEx.score;
+              }
             }
-          } else if(prevKey){
-            // 같은 학년 내 직전 시험: 해당 시험이 인증+점수 있을 때만
-            const prevEx = examMapG[prevKey];
-            if(prevEx && prevEx.certified && prevEx.score!==null && prevEx.score!==undefined){
-              prevSc = prevEx.score;
-            }
-            // 직전 시험이 미입력/미인증이면 → growth 없음 (건너뛰기 금지)
           }
           const growth = (prevSc!==null&&!isNaN(sc)&&!isNaN(prevSc))?(sc-prevSc):null;
 
           // 포인트 계산
+          // TOP HONOR / HIGH HONOR: 인증 없이도 점수만으로 수여 가능
+          // GROWTH: 인증 필수 (위에서 certified 체크)
           const candidates = [];
           if(sc===100 || (isHighStu && sc===-1)){
-            candidates.push({type:'TOP_HONOR', label:'Top Honor', points:20000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} 100점`});
+            candidates.push({type:'TOP_HONOR', label:'Top Honor', points:20000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} 100점${ex.certified?'':' (미인증)'}`});
           } else if(sc>=90){
-            candidates.push({type:isHighStu?'HIGH_HONOR_HIGH':'HIGH_HONOR_MID', label:'High Honor', points:isHighStu?20000:10000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} ${sc}점`});
+            candidates.push({type:isHighStu?'HIGH_HONOR_HIGH':'HIGH_HONOR_MID', label:'High Honor', points:isHighStu?20000:10000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} ${sc}점${ex.certified?'':' (미인증)'}`});
           }
           if(growth!==null){
             if(growth>=30) candidates.push({type:'GROWTH_30',label:'Growth+30',points:20000,note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} +${growth}점`});
@@ -5388,9 +5403,7 @@ function rToday(){
       h+=`</div>`;
     });
 
-    h+=`<div style="display:flex;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--border);background:var(--bg2)">
-      <button class="btn btn-primary btn-sm" onclick="saveAllTime(${t},'${dateStr}',${dow},${dy},${dm})">💾 ${t}교시 저장</button>
-    </div></div>`;
+    h+=`</div>`;
   }
 
   // 교시 미지정 학생 표시 (원장에게)
@@ -6167,7 +6180,7 @@ function rSettings(){
 
   let h=``;
 
-  // ② 담당 선생님 명단 관리 (원장만)
+  // ① 담당 선생님 명단 관리 (원장만)
   if(isPrincipal){
     const teachers=cfg.teachers||[];
     h+=`<div class="toolbar" style="margin-top:14px"><b>👩‍🏫 선생님 명단</b>
@@ -6387,16 +6400,39 @@ function rSettings(){
     </div>`;
   }
 
-  // ⑦ 엑셀 + 백업
+  // ⑦ 데이터
   {
     const lastBackup = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
     h+=`<div class="toolbar" style="margin-top:14px"><b>💾 데이터</b></div>
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-green" onclick="exportExcel()">📥 이달 전체 엑셀</button>
-      <button class="btn btn-primary" onclick="exportESReport()">📋 ES 분기 레포트 (학생별 시트)</button>
-      <div style="width:1px;height:24px;background:var(--border);margin:0 2px"></div>
-      <button class="btn btn-primary btn-sm" onclick="backupAllData()" style="border:2px solid #90b8e8;background:#f0f6ff;color:#1558a8">📥 전체 데이터 백업</button>
-      <span style="font-size:11px;color:var(--text3)">마지막: ${lastBackup}</span>
+      <button class="btn btn-primary" onclick="exportESReport()">📋 ES 분기 레포트</button>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:var(--text3)">마지막 백업: ${lastBackup}</span>
+        <button class="btn btn-primary" onclick="backupAllData()">💾 전체 백업</button>
+      </div>
+    </div>`;
+  }
+
+  // ⑦-1 학년 올리기 (원장만, 활동 로그 위)
+  if(isPrincipal){
+    const lastUpYear = parseInt(cfg.gradeUpYear)||0;
+    const curYear = new Date().getFullYear();
+    h+=`<div class="card" style="margin-top:14px;border:2px solid ${lastUpYear>=curYear?'var(--border)':'#e8c060'};background:${lastUpYear>=curYear?'#fff':'#fffdf0'}">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div style="flex:1">
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">🎓 학년 올리기</div>
+          <div style="font-size:12px;color:var(--text2)">
+            ${lastUpYear>=curYear
+              ? `✅ ${curYear}년 학년 올리기 완료`
+              : `⚠️ 아직 ${curYear}년 학년 올리기를 하지 않았습니다`}
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-top:3px">초3→초4→...→중3→고1→고2→고3 순서로 전체 학생 학년이 한 단계씩 올라갑니다.</div>
+        </div>
+        ${lastUpYear>=curYear
+          ? `<span style="font-size:12px;color:#1e6e3a;font-weight:700">✅ ${curYear}년 완료</span>`
+          : `<button class="btn btn-primary" onclick="manualGradeUp()" style="flex-shrink:0">🎓 ${curYear}년 학년 올리기</button>`}
+      </div>
     </div>`;
   }
 
@@ -6410,19 +6446,6 @@ function rSettings(){
       <div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">새로고침 버튼을 눌러 로그를 불러오세요</div>
     </div>`;
   }
-  // ⑨ 학년 올리기 (원장만, 맨 하단)
-  if(isPrincipal){
-    const lastUpYear = parseInt(cfg.gradeUpYear)||0;
-    const curYear = new Date().getFullYear();
-    h+=`<div class="toolbar" style="margin-top:14px"><b>🎓 학년 올리기</b></div>
-    <div class="card" style="border:2px solid ${lastUpYear>=curYear?'var(--border)':'#e8c060'};background:${lastUpYear>=curYear?'#fff':'#fffdf0'}">
-      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">${lastUpYear>=curYear?`✅ ${curYear}년 완료`:`⚠️ ${curYear}년 미완료 — 새 학년도가 시작되면 학생 학년을 일괄 올려주세요.`}</div>
-      ${lastUpYear>=curYear
-        ? `<button class="btn btn-sm" style="background:#e2f2e9;color:#1e6e3a;border:1px solid #80c090" disabled>✅ ${curYear}년 완료</button>`
-        : `<button class="btn btn-primary btn-sm" onclick="manualGradeUp()">🎓 ${curYear}년 학년 올리기</button>`}
-    </div>`;
-  }
-
   return h;
   } catch(e) {
     console.error('rSettings 오류:', e);
@@ -8692,6 +8715,53 @@ async function tSaveHw(sid,d,cls,v){
   if(st.tab!=='today') render();
   logActivity('edit',sid,d,'homework',oldV,v);
 }
+// 페이지 숨김/닫힘 시 자동 저장 (데이터 유실 방지)
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='hidden') _autoSavePending();
+});
+window.addEventListener('beforeunload', ()=>{
+  _autoSavePending();
+});
+function _autoSavePending(){
+  // 현재 포커스된 input/textarea 값을 강제로 blur 시켜서 저장 트리거
+  const active = document.activeElement;
+  if(active && (active.tagName==='INPUT'||active.tagName==='TEXTAREA')){
+    active.blur();
+  }
+}
+
+// 상단 저장 버튼 - 현재 탭에 맞게 저장
+async function saveAllToday(){
+  if(st.tab==='today'){
+    // 오늘입력 탭: 오늘 날짜의 모든 학생 데이터 저장
+    const dateStr = dk(new Date());
+    const studs = cfg.students||[];
+    let saved = 0;
+    for(const s of studs){
+      const key = lk(s.id, dateStr);
+      const l = mdb.lessons[key];
+      if(l){
+        setSyncState('syncing','저장 중...');
+        try{ await persistLesson(l); saved++; }catch(e){}
+      }
+    }
+    setSyncState('ok', `${saved}건 저장됨`);
+    toast(`💾 ${saved}건 저장 완료`);
+  } else if(st.tab==='matrix'){
+    // 수업기록표 탭: 현재 보이는 달 전체 저장
+    const lessons = Object.values(mdb.lessons||{});
+    let saved = 0;
+    setSyncState('syncing','저장 중...');
+    for(const l of lessons){
+      try{ await persistLesson(l); saved++; }catch(e){}
+    }
+    setSyncState('ok',`${saved}건 저장됨`);
+    toast(`💾 ${saved}건 저장 완료`);
+  } else {
+    toast('저장은 수업기록표·오늘입력 탭에서만 사용 가능합니다.', true);
+  }
+}
+
 async function saveAllTime(time, dateStr, dow, dy, dm){
   // 그 요일·타임에 해당하는 모든 학생의 lesson을 저장 (현재 화면 필터와 일치)
   const isFriday = (dow===5);
