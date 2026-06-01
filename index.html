@@ -8386,7 +8386,44 @@ async function goTodayDate(){
 }
 // 해당 연/월 데이터가 현재 mdb와 다른 달이면 로드 후 머지
 async function ensureMonthLoaded(y, m){
-  if(mdb && mdb.year===y && mdb.month===m) return; // 이미 같은 달
+  // 이미 같은 달이더라도 이전 달이 캐시에 없으면 로드해야 함
+  // (이월 회차: 예) 5월 8회차가 6월1일에 표시 → 데이터는 lessons_2025-05에 저장)
+  const isSameMonth = (mdb && mdb.year===y && mdb.month===m);
+
+  // 이전 달 키 계산
+  const pm = m===1?12:m-1;
+  const py = m===1?y-1:y;
+  const prevKey = `${py}-${String(pm).padStart(2,'0')}`;
+
+  // 이전 달이 캐시에 없으면 로드 후 mdb.lessons에 병합
+  if(!prevMonthLessonsCache[prevKey]){
+    try{
+      const {getDocs,collection}=fb();
+      const prevCol=collection(fbDb(), `lessons_${prevKey}`);
+      const prevSnaps=await getDocs(prevCol);
+      const prevData={};
+      prevSnaps.forEach(d=>{ const data=d.data(); const key=data.key||d.id; prevData[key]=data; });
+      prevMonthLessonsCache[prevKey]=prevData;
+      // mdb.lessons에 병합 (현재달 데이터가 없는 키만 추가)
+      Object.entries(prevData).forEach(([key,data])=>{
+        const existing=mdb.lessons[key];
+        if(!existing){
+          mdb.lessons[key]=data;
+          lessonVersions[key]=data.updatedAt||'';
+        } else {
+          const existingAt=existing.updatedAt||'';
+          const firebaseAt=data.updatedAt||'';
+          if(!existingAt||(firebaseAt&&firebaseAt>existingAt)){
+            mdb.lessons[key]=data;
+            lessonVersions[key]=firebaseAt;
+          }
+        }
+      });
+    } catch(e){ prevMonthLessonsCache[prevKey]={}; console.warn('이전달 로드 실패:', e); }
+  }
+
+  if(isSameMonth) return; // 이전달 병합 후 같은 달이면 종료
+
   // 대상 달 데이터를 별도로 가져와 mdb.lessons에 머지하고 캐시에도 저장
   const cacheKey = `${y}-${String(m).padStart(2,'0')}`;
   try{
