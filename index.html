@@ -984,6 +984,21 @@ async function loadMonthData(){
     } catch(e){ prevMonthLessonsCache[prevKey]={}; }
   }
 
+  // 다음 달 데이터 로드 (이번달 귀속 사이클의 마지막 회차가 다음달 초에 걸치는 경우 대응)
+  // 예: 5월 반의 8회차/12회차가 6월 1~2일에 있을 때, 5월 탭에서도 해당 데이터 표시/편집 가능
+  const nm = m===12?1:m+1;
+  const ny = m===12?y+1:y;
+  const nextKey = `${ny}-${String(nm).padStart(2,'0')}`;
+  if(!prevMonthLessonsCache[nextKey]){
+    try{
+      const nextCol=collection(fbDb(), `lessons_${nextKey}`);
+      const nextSnaps=await getDocs(nextCol);
+      const nextLessons={};
+      nextSnaps.forEach(d=>{ const data=d.data(); nextLessons[data.key||d.id]=data; });
+      prevMonthLessonsCache[nextKey]=nextLessons;
+    } catch(e){ prevMonthLessonsCache[nextKey]={}; }
+  }
+
   // 주간 평가
   const weeklyEval={};
   const wCol=collection(fbDb(),`weekly_eval_${y}-${String(m).padStart(2,'0')}`);
@@ -993,8 +1008,9 @@ async function loadMonthData(){
     weeklyEval[data.key||d.id]=data;
   });
 
-  // 이전 달 데이터도 mdb.lessons에 병합 (사이클이 이전 달 날짜를 포함할 때 필요)
-  const mergedLessons = Object.assign({}, prevMonthLessonsCache[prevKey]||{}, lessons);
+  // 이전달 + 다음달 데이터도 mdb.lessons에 병합 (overflow 사이클 대응)
+  // 우선순위: 이전달 < 다음달 < 현재달 (현재달이 최우선)
+  const mergedLessons = Object.assign({}, prevMonthLessonsCache[prevKey]||{}, prevMonthLessonsCache[nextKey]||{}, lessons);
 
   mdb={year:y,month:m,lessons:mergedLessons,makeup:{},carryIn:{},weeklyEval,lessonVersions};
 }
@@ -1661,11 +1677,15 @@ function chgMonth(n){let m=st.month+n,y=st.year;if(m<1){m=12;y--;}if(m>12){m=1;y
 function goNow(){const n=new Date();switchMonth(n.getFullYear(),n.getMonth()+1);}
 async function switchMonth(y,m){
   st.year=y;st.month=m;buildMonthSel();
-  // 이전달 캐시 클리어 (새 달로 이동 시 이전달 데이터 재로드 보장)
+  // 이전달/다음달 캐시 클리어 (새 달로 이동 시 재로드 보장)
   const pm=m===1?12:m-1;
   const py=m===1?y-1:y;
   const prevKey=`${py}-${String(pm).padStart(2,'0')}`;
   delete prevMonthLessonsCache[prevKey];
+  const nm=m===12?1:m+1;
+  const ny=m===12?y+1:y;
+  const nextKey2=`${ny}-${String(nm).padStart(2,'0')}`;
+  delete prevMonthLessonsCache[nextKey2];
   setSyncState('syncing',`${y}년 ${m}월 불러오는 중...`);
   await loadMonthData();
   setSyncState('ok','준비 완료');
@@ -5462,7 +5482,7 @@ function rToday(){
       // 이 반의 전체 수업일 중 등록일 이후 ~ 오늘(포함) 범위
       const allDates = _getAllSessionDates(s.classType).filter(d=>{
         if(joinDate && d < joinDate) return false;
-        if(d >= todayForCheck) return false; // 오늘 포함 이후는 제외 (오늘은 아직 입력 중)
+        if(d > todayForCheck) return false;
         return true;
       });
       // 그 중 출결 기록이 없는 날이 하나라도 있으면
@@ -8386,44 +8406,7 @@ async function goTodayDate(){
 }
 // 해당 연/월 데이터가 현재 mdb와 다른 달이면 로드 후 머지
 async function ensureMonthLoaded(y, m){
-  // 이미 같은 달이더라도 이전 달이 캐시에 없으면 로드해야 함
-  // (이월 회차: 예) 5월 8회차가 6월1일에 표시 → 데이터는 lessons_2025-05에 저장)
-  const isSameMonth = (mdb && mdb.year===y && mdb.month===m);
-
-  // 이전 달 키 계산
-  const pm = m===1?12:m-1;
-  const py = m===1?y-1:y;
-  const prevKey = `${py}-${String(pm).padStart(2,'0')}`;
-
-  // 이전 달이 캐시에 없으면 로드 후 mdb.lessons에 병합
-  if(!prevMonthLessonsCache[prevKey]){
-    try{
-      const {getDocs,collection}=fb();
-      const prevCol=collection(fbDb(), `lessons_${prevKey}`);
-      const prevSnaps=await getDocs(prevCol);
-      const prevData={};
-      prevSnaps.forEach(d=>{ const data=d.data(); const key=data.key||d.id; prevData[key]=data; });
-      prevMonthLessonsCache[prevKey]=prevData;
-      // mdb.lessons에 병합 (현재달 데이터가 없는 키만 추가)
-      Object.entries(prevData).forEach(([key,data])=>{
-        const existing=mdb.lessons[key];
-        if(!existing){
-          mdb.lessons[key]=data;
-          lessonVersions[key]=data.updatedAt||'';
-        } else {
-          const existingAt=existing.updatedAt||'';
-          const firebaseAt=data.updatedAt||'';
-          if(!existingAt||(firebaseAt&&firebaseAt>existingAt)){
-            mdb.lessons[key]=data;
-            lessonVersions[key]=firebaseAt;
-          }
-        }
-      });
-    } catch(e){ prevMonthLessonsCache[prevKey]={}; console.warn('이전달 로드 실패:', e); }
-  }
-
-  if(isSameMonth) return; // 이전달 병합 후 같은 달이면 종료
-
+  if(mdb && mdb.year===y && mdb.month===m) return; // 이미 같은 달
   // 대상 달 데이터를 별도로 가져와 mdb.lessons에 머지하고 캐시에도 저장
   const cacheKey = `${y}-${String(m).padStart(2,'0')}`;
   try{
