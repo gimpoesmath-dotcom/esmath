@@ -5462,7 +5462,7 @@ function rToday(){
       // 이 반의 전체 수업일 중 등록일 이후 ~ 오늘(포함) 범위
       const allDates = _getAllSessionDates(s.classType).filter(d=>{
         if(joinDate && d < joinDate) return false;
-        if(d > todayForCheck) return false;
+        if(d >= todayForCheck) return false; // 오늘 포함 이후는 제외 (오늘은 아직 입력 중)
         return true;
       });
       // 그 중 출결 기록이 없는 날이 하나라도 있으면
