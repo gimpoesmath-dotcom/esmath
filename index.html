@@ -5475,18 +5475,23 @@ function rToday(){
     });
     if(teacherGroups.has('__미지정__')) ordered.push(['__미지정__', teacherGroups.get('__미지정__')]);
 
-    // ── 출결 미기록 학생 감지 (등록일 이후, 오늘 이전 수업일 중 출결 없는 것) ──
-    const todayForCheck = dk(new Date());
+    // ── 출결 미기록 학생 감지 ──
+    // 규칙: 오늘 날짜(dateStr)가 속한 사이클의 1회차 ~ 오늘(당일 포함)까지 출결 체크
+    // - 당일 아직 미입력이면 알람 표시, 입력하면 이름 사라짐
+    // - 사이클이 바뀌면 새 사이클 기준으로 리셋 (이전 사이클 누락과 무관)
     const unrecorded = studs.filter(s=>{
-      const joinDate = s.joinDate||'';
-      // 이 반의 전체 수업일 중 등록일 이후 ~ 오늘(포함) 범위
-      const allDates = _getAllSessionDates(s.classType).filter(d=>{
-        if(joinDate && d < joinDate) return false;
-        if(d > todayForCheck) return false;
-        return true;
-      });
-      // 그 중 출결 기록이 없는 날이 하나라도 있으면
-      return allDates.some(d=>{
+      // 오늘 날짜(dateStr)가 속한 사이클 찾기
+      const allCycles = _getAllCycles(s.classType);
+      let currentCycle = null;
+      for(const cycle of allCycles){
+        if(cycle.dates.includes(dateStr)){ currentCycle = cycle; break; }
+      }
+      // 오늘이 사이클에 없으면(비수업일 등) 알람 없음
+      if(!currentCycle) return false;
+      // 현재 사이클 내에서 오늘(포함)까지의 날짜만 확인
+      const checkDates = currentCycle.dates.filter(d => d <= dateStr);
+      // 그 중 출결 기록이 없는 날이 하나라도 있으면 알람
+      return checkDates.some(d=>{
         const l = mdb.lessons[lk(s.id, d)];
         return !l || !l.attendance;
       });
