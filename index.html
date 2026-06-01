@@ -609,6 +609,8 @@ async function showApp(){
 }
 
 window.fbShowApp = showApp; // legacy compat
+window.doLogin = doLogin;
+window.doLogout = doLogout;
 
 // ── 설정 로드/저장 ──
 async function loadConfig(){
@@ -3426,7 +3428,7 @@ function calcMonthPoints(sid, classType, year, month, lessonsOverride){
     // 사이클에 없으면 (보강일 등) 날짜의 calendar month 사용
     return dateStr ? dateStr.substring(0,7) : '';
   }
-  const targetMonthStr = `${year}-${String(month).padStart(2,'0')}`;
+  // targetMonthStr은 함수 상단(3353번)에서 이미 선언됨
 
   Object.entries(myTests).forEach(([tbId, arr])=>{
     const first = arr.find(a=>Number(a.attempt)===1);
