@@ -842,8 +842,42 @@ async function firebaseAction(action, body){
       Object.entries(localCfg).filter(([k])=>!k.startsWith('_'))
     );
 
-    // merge:true → holidays, textbooks 등 다른 탭/도구에서 추가된 필드 보호
-    await setDoc(configDocRef(), toSave, {merge:true});
+    // ── 학생 데이터 충돌 방지: 저장 직전 Firebase 최신 students를 읽어와 grade/level 보호 ──
+    // 다른 사용자(선생님)가 낡은 cfg로 저장할 때 원장이 수정한 학년/레벨을 덮어쓰는 문제 방지
+    try{
+      const latestSnap = await getDoc(configDocRef());
+      if(latestSnap.exists()){
+        const latestStudents = latestSnap.data().students||[];
+        const localStudents = toSave.students||[];
+        // Firebase 최신 students 기준으로 grade/level/specialNote 보호
+        // (로컬에 없는 필드는 Firebase 값 우선)
+        const protectedFields = ['grade','level','specialNote','joinDate'];
+        toSave.students = localStudents.map(ls=>{
+          const fs = latestStudents.find(x=>x.id===ls.id);
+          if(!fs) return ls; // 새 학생이면 로컬값 그대로
+          const merged = {...ls};
+          protectedFields.forEach(f=>{
+            // Firebase 값이 존재하고, 로컬값과 다를 경우:
+            // 로컬이 원장 세션이면 로컬 우선, 아니면 Firebase 우선
+            if(fs[f] !== undefined && fs[f] !== ls[f]){
+              if(session?.role !== 'principal'){
+                merged[f] = fs[f]; // 선생님은 Firebase(원장 수정값) 우선
+              }
+              // 원장은 자신의 수정값(ls[f]) 우선 — 그대로 둠
+            }
+          });
+          return merged;
+        });
+        // Firebase에만 있고 로컬에 없는 필드도 보호 (holidays, textbooks 등)
+        Object.keys(latestSnap.data()).forEach(k=>{
+          if(!k.startsWith('_') && !(k in toSave)){
+            toSave[k] = latestSnap.data()[k];
+          }
+        });
+      }
+    }catch(e){ console.warn('cfg 충돌 방지 읽기 실패(무시):', e); }
+
+    await setDoc(configDocRef(), toSave);
     cfg = Object.assign({}, toSave, {_myRole:session?.role, _myName:session?.displayName});
     return {ok:true};
   }
