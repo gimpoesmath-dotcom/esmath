@@ -99,6 +99,7 @@ select,input[type=text],input[type=date],input[type=number]{padding:5px 9px;font
 .row-o .dcell.sat-cell{background:#fdf6e2!important}
 .sub-hdr{text-align:center;padding:4px 3px;background:var(--bg3);font-size:10px;color:var(--text2);font-weight:600;white-space:nowrap;position:sticky;top:28px;z-index:12}
 .sub-hdr.today-g{background:#fff5cc}
+.sub-hdr.sub-hdr-prev{background:#f0e8ff;color:#5a2080}
 .dcell{padding:3px;vertical-align:top}
 .dcell.c{text-align:center;vertical-align:middle}
 .ab-wrap{display:flex;gap:2px;justify-content:center;flex-wrap:wrap;padding:2px}
@@ -1129,6 +1130,12 @@ async function persistLessonFb(lesson, knownUpdatedAt, forceOverwrite=false){
   await setDoc(ref, data);
   lessonVersions[key]=now;
   mdb.lessons[key]=data;
+  // 이전달 날짜인 경우 prevMonthLessonsCache도 동기화
+  const cacheKey=`${lessonYear}-${String(lessonMonth).padStart(2,'0')}`;
+  if(lessonYear!==st.year || lessonMonth!==st.month){
+    if(!prevMonthLessonsCache[cacheKey]) prevMonthLessonsCache[cacheKey]={};
+    prevMonthLessonsCache[cacheKey][key]=data;
+  }
   // 저장 완료 syncBar 표시
   setSyncState('ok', new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' 저장됨');
   return {ok:true,updatedAt:now};
@@ -1651,6 +1658,11 @@ function chgMonth(n){let m=st.month+n,y=st.year;if(m<1){m=12;y--;}if(m>12){m=1;y
 function goNow(){const n=new Date();switchMonth(n.getFullYear(),n.getMonth()+1);}
 async function switchMonth(y,m){
   st.year=y;st.month=m;buildMonthSel();
+  // 이전달 캐시 클리어 (새 달로 이동 시 이전달 데이터 재로드 보장)
+  const pm=m===1?12:m-1;
+  const py=m===1?y-1:y;
+  const prevKey=`${py}-${String(pm).padStart(2,'0')}`;
+  delete prevMonthLessonsCache[prevKey];
   setSyncState('syncing',`${y}년 ${m}월 불러오는 중...`);
   await loadMonthData();
   setSyncState('ok','준비 완료');
@@ -1821,10 +1833,51 @@ function sessionDatesForMonth(classType,year,month){
   return buildMonthSessions(classType, year, month);
 }
 
-/* 월별 회차 정보 (sessionNo 포함) */
+/* 월별 회차 정보 (sessionNo 포함)
+ * 규칙:
+ * 1) 이번달에 귀속된 사이클 회차 (기존 동일)
+ * 2) + 이전달 사이클 중 날짜가 이번달에 걸친(overflow) 회차도 포함
+ *    → 이전달 탭에서 12회차/8회차로 입력한 내용을 이번달 탭에서도 수정 가능
+ * 두 그룹을 날짜순으로 정렬 후 반환 */
 function sessionsForMonthWithCycle(classType, year, month){
-  const dates=buildMonthSessions(classType, year, month);
-  return dates.map((d,i)=>({sessionNo:i+1, dateStr:d}));
+  const targetMonthStr=`${year}-${String(month).padStart(2,'0')}`;
+  const cycles=_getAllCycles(classType);
+
+  // 이번달 귀속 사이클
+  const curCycle=cycles.find(c=>c.ownerMonth===targetMonthStr);
+
+  // 이전달 귀속 사이클 중 날짜가 이번달에 걸친 것
+  const pm=month===1?12:month-1;
+  const py=month===1?year-1:year;
+  const prevMonthStr=`${py}-${String(pm).padStart(2,'0')}`;
+  const prevCycle=cycles.find(c=>c.ownerMonth===prevMonthStr);
+
+  const result=[];
+  const addedDates=new Set();
+
+  // 이전달 사이클의 overflow 회차 (날짜가 이번달인 것)
+  if(prevCycle){
+    prevCycle.dates.forEach((d,i)=>{
+      if(d.substring(0,7)===targetMonthStr && !addedDates.has(d)){
+        result.push({sessionNo:i+1, dateStr:d, prevCycle:true});
+        addedDates.add(d);
+      }
+    });
+  }
+
+  // 이번달 귀속 사이클 (전체 포함)
+  if(curCycle){
+    curCycle.dates.forEach((d,i)=>{
+      if(!addedDates.has(d)){
+        result.push({sessionNo:i+1, dateStr:d, prevCycle:false});
+        addedDates.add(d);
+      }
+    });
+  }
+
+  // 날짜순 정렬
+  result.sort((a,b)=>a.dateStr.localeCompare(b.dateStr));
+  return result;
 }
 
 function prevHwInMonth(sid,dateStr,classType,year,month){
@@ -3043,7 +3096,9 @@ function rMonthly(){
 
   // 월 전체 출결 통계
   function calcMonthStats(sid, classType){
-    const sessions = sessionsForMonthWithCycle(classType, st.year, st.month);
+    // 통계는 이번달 귀속 사이클만 사용 (이전달 overflow 제외)
+    const _ownCycleSt=_getAllCycles(classType).find(c=>c.ownerMonth===`${st.year}-${String(st.month).padStart(2,'0')}`);
+    const sessions = _ownCycleSt ? _ownCycleSt.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
     let attend=0, absent=0, late=0, testScores=[];
     sessions.forEach(sess=>{
       const l = mdb.lessons[lk(sid, sess.dateStr)];
@@ -3098,7 +3153,9 @@ function rMonthly(){
     const ct2 = CT()[classType];
     const requiredSessions = ct2 ? (ct2.sessions || 0) : 0;
     const todayStrAw = dk(new Date());
-    const allSessions = sessionsForMonthWithCycle(classType, st.year, st.month);
+    // 수상 판단은 이번달 귀속 사이클만 사용 (이전달 overflow 제외)
+    const _ownCycleAw=_getAllCycles(classType).find(c=>c.ownerMonth===`${st.year}-${String(st.month).padStart(2,'0')}`);
+    const allSessions = _ownCycleAw ? _ownCycleAw.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
     const passedSessions = allSessions.filter(s => s.dateStr <= todayStrAw).length;
     const cycleComplete = requiredSessions > 0 && passedSessions >= requiredSessions;
 
@@ -3111,7 +3168,7 @@ function rMonthly(){
     if(canEarnAward){
       if(stats.absent===0 && stats.late===0 && stats.attend>=requiredSessions)
         awards.push({id:'perfect', label:'PERFECT', sub:'출석상', icon:'🏅', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'});
-      else if(stats.absent===0 && stats.late>=1 && stats.late<=2)
+      else if(stats.absent===0 && stats.late>=1 && stats.late<=2 && (stats.attend+stats.late)>=requiredSessions)
         awards.push({id:'steady',  label:'STEADY',  sub:'출석상', icon:'⭐', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'});
     }
     if(canEarnAward && stats.testAvg!==null && stats.testAvg>=80)
@@ -3292,7 +3349,11 @@ const PT = {
 function calcMonthPoints(sid, classType, year, month, lessonsOverride){
   // lessonsOverride: 특정 월 로드 데이터가 있을 경우 mdb.lessons 대신 사용
   const _lessons = lessonsOverride || mdb.lessons;
-  const sessions = sessionsForMonthWithCycle(classType, year, month);
+  // 포인트 계산은 이번달 귀속 사이클만 사용 (이전달 overflow 회차 제외)
+  const targetMonthStr=`${year}-${String(month).padStart(2,'0')}`;
+  const allCycles=_getAllCycles(classType);
+  const ownCycle=allCycles.find(c=>c.ownerMonth===targetMonthStr);
+  const sessions = ownCycle ? ownCycle.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
   const earned = [];
 
   // ── 등록일(joinDate) 기준 참여 가능 회차 필터링 ──
@@ -3326,7 +3387,7 @@ function calcMonthPoints(sid, classType, year, month, lessonsOverride){
     if(absent===0 && late===0 && attend>=stdSessions){
       earned.push({type:'PERFECT', label:'PERFECT 출석상', points:PT.PERFECT,
         note:`결석 0 · 지각 0 (${stdSessions}회 완료)`});
-    } else if(absent===0 && late>=1 && late<=2){
+    } else if(absent===0 && late>=1 && late<=2 && (attend+late)>=stdSessions){
       earned.push({type:'STEADY', label:'STEADY 출석상', points:PT.STEADY,
         note:`결석 0 · 지각 ${late}회 (${stdSessions}회 완료)`});
     }
@@ -3619,7 +3680,8 @@ function rPoints(){
         const sel = (st.ptAttendSel||{})[s.id]||'none';
         const selPt = sel==='perfect'?PT.PERFECT:sel==='steady'?PT.STEADY:0;
 
-        const sessions = sessionsForMonthWithCycle(s.classType, settleYear, settleMonth);
+        const _ownCycle=_getAllCycles(s.classType).find(c=>c.ownerMonth===`${settleYear}-${String(settleMonth).padStart(2,'0')}`);
+        const sessions = _ownCycle ? _ownCycle.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
         const ctInfo = CT()[s.classType];
         const reqSess = ctInfo ? (ctInfo.sessions||0) : 0;
         // 등록일 기준 참여 가능 회차
@@ -3641,7 +3703,7 @@ function rPoints(){
         let sysRecommend = 'none';
         if(canEarnAttendSettle){
           if(absCount===0 && lateCount===0 && attendCount>=reqSess) sysRecommend='perfect';
-          else if(absCount===0 && lateCount>=1 && lateCount<=2) sysRecommend='steady';
+          else if(absCount===0 && lateCount>=1 && lateCount<=2 && (attendCount+lateCount)>=reqSess) sysRecommend='steady';
         }
         const recBadge = !isCycleComplete
           ? `<span style="font-size:10px;padding:1px 7px;border-radius:20px;background:#f0f0f0;color:#888;border:1px solid #ddd;font-weight:600">기준 회차(${reqSess}회) 미완료</span>`
@@ -4620,7 +4682,7 @@ function rMatrix(){
 
     const satDays=getMakeupDays();
     const mergedCols=[];
-    monthSessions.forEach(info=>mergedCols.push({type:'session',dateStr:info.dateStr,sessionNo:info.sessionNo,info}));
+    monthSessions.forEach(info=>mergedCols.push({type:'session',dateStr:info.dateStr,sessionNo:info.sessionNo,prevCycle:info.prevCycle||false,info}));
     satDays.forEach(e=>mergedCols.push({type:'sat',dateStr:e.date}));
     mergedCols.sort((a,b)=>a.dateStr.localeCompare(b.dateStr));
 
@@ -4656,11 +4718,21 @@ function renderMatrixTable(studs,mergedCols,todayStr,cls){
       const isPrevMonth=isOtherMonth && (dY<st.year || (dY===st.year && dM<st.month));
       const overflowCls=isOtherMonth?' overflow-month':'';
       const monthLabel=isOtherMonth?`<span style="font-size:9px;color:#a05a00;font-weight:600;display:block">${isPrevMonth?'↰':'↳'} ${dM}월</span>`:'';
-      h+=`<th class="sess-group${isT?' today-g':''}${overflowCls}" colspan="7">
-        ${col.sessionNo}회차
-        <span style="font-size:9px;font-weight:400">${d.slice(5)} (${dl})</span>
-        ${monthLabel}
-      </th>`;
+      // 이전달 사이클에 속한 회차 (이번달 탭에서 이전달 회차로 표시)
+      if(col.prevCycle){
+        const pm=st.month===1?12:st.month-1;
+        h+=`<th class="sess-group overflow-month${isT?' today-g':''}" colspan="7" style="background:#f0e8ff;color:#5a2080;border-left:3px solid #c090e0">
+          <span style="font-size:9px;color:#7a4e00;font-weight:700;display:block">↰ ${pm}월 이월</span>
+          ${col.sessionNo}회차
+          <span style="font-size:9px;font-weight:400">${d.slice(5)} (${dl})</span>
+        </th>`;
+      } else {
+        h+=`<th class="sess-group${isT?' today-g':''}${overflowCls}" colspan="7">
+          ${col.sessionNo}회차
+          <span style="font-size:9px;font-weight:400">${d.slice(5)} (${dl})</span>
+          ${monthLabel}
+        </th>`;
+      }
     } else {
       // 토요보강
       h+=`<th class="sess-group sat-group${isT?' today-g':''}" colspan="7">
@@ -4673,8 +4745,9 @@ function renderMatrixTable(studs,mergedCols,todayStr,cls){
   mergedCols.forEach(col=>{
     const isT=col.dateStr===todayStr;
     const isSat=col.type==='sat';
+    const isPrevCycle=col.prevCycle||false;
     SUBS.forEach(sc=>{
-      h+=`<th class="sub-hdr${isSat?' sat-sub':''}${isT?' today-g':''}">${sc}</th>`;
+      h+=`<th class="sub-hdr${isSat?' sat-sub':''}${isT?' today-g':''}${isPrevCycle?' sub-hdr-prev':''}">${sc}</th>`;
     });
   });
   h+=`</tr></thead><tbody>`;
@@ -5379,8 +5452,26 @@ function rToday(){
     });
     if(teacherGroups.has('__미지정__')) ordered.push(['__미지정__', teacherGroups.get('__미지정__')]);
 
+    // ── 출결 미기록 학생 감지 (등록일 이후, 오늘 이전 수업일 중 출결 없는 것) ──
+    const todayForCheck = dk(new Date());
+    const unrecorded = studs.filter(s=>{
+      const joinDate = s.joinDate||'';
+      // 이 반의 전체 수업일 중 등록일 이후 ~ 오늘(포함) 범위
+      const allDates = _getAllSessionDates(s.classType).filter(d=>{
+        if(joinDate && d < joinDate) return false;
+        if(d > todayForCheck) return false;
+        return true;
+      });
+      // 그 중 출결 기록이 없는 날이 하나라도 있으면
+      return allDates.some(d=>{
+        const l = mdb.lessons[lk(s.id, d)];
+        return !l || !l.attendance;
+      });
+    });
+
     h+=`<div class="timeslot-hdr"><b style="font-size:14px">⏰ ${t}교시</b>
       <span style="font-size:12px;color:var(--text3);margin-left:6px">${studs.length}명</span>
+      ${unrecorded.length ? `<span style="display:inline-flex;align-items:center;gap:5px;margin-left:auto;font-size:11px;font-weight:700;color:#a02828;background:#fce6e6;border:1px solid #e0a0a0;border-radius:20px;padding:3px 10px">⚠️ 출결 확인 필요: ${unrecorded.map(s=>esc(s.name)).join(', ')}</span>` : ''}
     </div><div class="timeslot-body">`;
 
     ordered.forEach(([tname, glist])=>{
