@@ -400,8 +400,8 @@ window._fbReady = true;
     <div class="sync-dot" id="syncDot"></div>
     <span id="syncLabel" style="color:var(--text3)">대기 중</span>
     <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
-      <button onclick="saveAllToday()" style="padding:2px 10px;font-size:11px;border:1px solid #80c090;border-radius:20px;background:#e2f2e9;color:#1e6e3a;cursor:pointer;font-family:inherit;font-weight:600;flex-shrink:0">💾 저장</button>
       <button onclick="backupAllData()" style="padding:2px 10px;font-size:11px;border:1px solid #90b8e8;border-radius:20px;background:#f0f6ff;color:#1558a8;cursor:pointer;font-family:inherit;font-weight:600;flex-shrink:0">📦 백업</button>
+      <button onclick="saveAllToday()" style="padding:2px 10px;font-size:11px;border:1px solid #80c090;border-radius:20px;background:#e2f2e9;color:#1e6e3a;cursor:pointer;font-family:inherit;font-weight:600;flex-shrink:0">💾 백업 전 확인저장</button>
     </div>
   </div>
   <div class="main" id="main"></div>
@@ -1009,12 +1009,19 @@ async function loadMonthData(){
   const py = m===1?y-1:y;
   const prevKey = `${py}-${String(pm).padStart(2,'0')}`;
   if(!prevMonthLessonsCache[prevKey]){
+    // sessionStorage 캐시 우선 확인 (세션 내 재방문 시 Firestore 읽기 절약)
     try{
-      const prevCol=collection(fbDb(), `lessons_${prevKey}`);
-      const prevSnaps=await getDocs(prevCol);
-      const prevLessons={};
-      prevSnaps.forEach(d=>{ const data=d.data(); prevLessons[data.key||d.id]=data; });
-      prevMonthLessonsCache[prevKey]=prevLessons;
+      const ssCached = sessionStorage.getItem(`lessons_cache_${prevKey}`);
+      if(ssCached){
+        prevMonthLessonsCache[prevKey]=JSON.parse(ssCached);
+      } else {
+        const prevCol=collection(fbDb(), `lessons_${prevKey}`);
+        const prevSnaps=await getDocs(prevCol);
+        const prevLessons={};
+        prevSnaps.forEach(d=>{ const data=d.data(); prevLessons[data.key||d.id]=data; });
+        prevMonthLessonsCache[prevKey]=prevLessons;
+        try{ sessionStorage.setItem(`lessons_cache_${prevKey}`, JSON.stringify(prevLessons)); }catch(e){}
+      }
     } catch(e){ prevMonthLessonsCache[prevKey]={}; }
   }
 
@@ -1024,12 +1031,19 @@ async function loadMonthData(){
   const ny = m===12?y+1:y;
   const nextKey = `${ny}-${String(nm).padStart(2,'0')}`;
   if(!prevMonthLessonsCache[nextKey]){
+    // sessionStorage 캐시 우선 확인
     try{
-      const nextCol=collection(fbDb(), `lessons_${nextKey}`);
-      const nextSnaps=await getDocs(nextCol);
-      const nextLessons={};
-      nextSnaps.forEach(d=>{ const data=d.data(); nextLessons[data.key||d.id]=data; });
-      prevMonthLessonsCache[nextKey]=nextLessons;
+      const ssCached = sessionStorage.getItem(`lessons_cache_${nextKey}`);
+      if(ssCached){
+        prevMonthLessonsCache[nextKey]=JSON.parse(ssCached);
+      } else {
+        const nextCol=collection(fbDb(), `lessons_${nextKey}`);
+        const nextSnaps=await getDocs(nextCol);
+        const nextLessons={};
+        nextSnaps.forEach(d=>{ const data=d.data(); nextLessons[data.key||d.id]=data; });
+        prevMonthLessonsCache[nextKey]=nextLessons;
+        try{ sessionStorage.setItem(`lessons_cache_${nextKey}`, JSON.stringify(nextLessons)); }catch(e){}
+      }
     } catch(e){ prevMonthLessonsCache[nextKey]={}; }
   }
 
@@ -1991,7 +2005,7 @@ function getLesson(sid,dateStr){return mdb.lessons[lk(sid,dateStr)]||null;}
 function getOrCreate(sid,dateStr){
   const key=lk(sid,dateStr);
   if(!mdb.lessons[key]){
-    mdb.lessons[key]={studentId:sid,date:dateStr,prevHomework:'',attendance:'attend',homeworkScore:'',testScore:'',progress:'',homework:'',makeupClass:false,note:''};
+    mdb.lessons[key]={studentId:sid,date:dateStr,prevHomework:'',attendance:'',homeworkScore:'',testScore:'',progress:'',homework:'',makeupClass:false,note:''};
   }
   return mdb.lessons[key];
 }
@@ -5989,7 +6003,7 @@ function rStudents(){
   const gradeF=st.studentGradeFilter||'';
   const levelF=st.studentLevelFilter||'';
   const teacherF=st.studentTeacherFilter||'';
-  const isFiltered=attF||gradeF||levelF||teacherF;
+  const isFiltered=gradeF||levelF||teacherF;
 
   // 선생님 필터 (원장만 표시)
   if(isPrin){
@@ -6003,14 +6017,8 @@ function rStudents(){
     }
   }
 
-  // 출결 이상 (클릭 시 필터)
-  const attBtnStyle=(active)=>active?'outline:2px solid currentColor;outline-offset:1px;':'';
-  if(absentCnt) h+=`<span onclick="st.studentAttFilter=st.studentAttFilter==='absent'?'':'absent';render()" style="display:inline-flex;align-items:center;gap:3px;background:var(--red-bg);color:var(--red);border:1px solid #e0a0a0;border-radius:20px;padding:3px 10px;font-weight:700;font-size:11px;cursor:pointer;${attF==='absent'?'outline:2px solid var(--red);outline-offset:1px;':''}">결석 <b>${absentCnt}</b></span>`;
-  if(lateCnt)   h+=`<span onclick="st.studentAttFilter=st.studentAttFilter==='late'?'':'late';render()" style="display:inline-flex;align-items:center;gap:3px;background:var(--amber-bg);color:var(--amber);border:1px solid #e0c060;border-radius:20px;padding:3px 10px;font-weight:700;font-size:11px;cursor:pointer;${attF==='late'?'outline:2px solid var(--amber);outline-offset:1px;':''}">지각 <b>${lateCnt}</b></span>`;
-
   // 학년 그룹 (클릭 시 학년 필터)
   if(gradeOrder.length){
-    if(absentCnt||lateCnt) h+=`<span style="color:var(--border2);font-size:14px">│</span>`;
     const elems=gradeOrder.filter(g=>g.startsWith('초'));
     const middle=gradeOrder.filter(g=>g.startsWith('중'));
     const high=gradeOrder.filter(g=>g.startsWith('고'));
@@ -6054,7 +6062,6 @@ function rStudents(){
   </div>`;
   Object.entries(CT()).forEach(([type,ct])=>{
     const sq2=st.studentSearch||'';
-    const attF2=st.studentAttFilter||'';
     const gradeF2=st.studentGradeFilter||'';
     const levelF2=st.studentLevelFilter||'';
     const teacherF2=st.studentTeacherFilter||'';
@@ -6064,15 +6071,6 @@ function rStudents(){
       if(gradeF2 && s.grade!==gradeF2) return false;
       if(levelF2 && s.level!==levelF2) return false;
       if(teacherF2 && !isStudentOfTeacher(s, teacherF2)) return false;
-      if(attF2){
-        // 이번달 수업 기록에서 해당 출결 상태 있는지 확인
-        const monthDates2=sessionDatesForMonth(s.classType,st.year,st.month);
-        const hasAtt=monthDates2.some(d=>{
-          const l=(mdb.lessons||{})[lk(s.id,d)];
-          return l && l.attendance===attF2;
-        });
-        if(!hasAtt) return false;
-      }
       return true;
     });if(!ss.length)return;
     const monthDates=sessionDatesForMonth(type,st.year,st.month);
@@ -6245,6 +6243,42 @@ function rMyClass(){
   if(!allStudents.length){
     h+=`<div class="empty">등록된 학생이 없습니다.</div>`;
   } else {
+    // 전임선생님 교시별 일괄 선택 섹션
+    const fullTeachers=allTeachers(); // 전임선생님 목록
+    if(fullTeachers.length){
+      // 교시별로 grouping된 학생 목록 생성 (weekdayTime 기준)
+      const teacherTimeGroups={}; // {'선생님__교시': [students]}
+      allStudents.forEach(s=>{
+        const teacher=s.teacher||'';
+        if(!teacher) return;
+        const time=s.weekdayTime||'';
+        const key=`${teacher}__${time}`;
+        if(!teacherTimeGroups[key]) teacherTimeGroups[key]={teacher,time,students:[]};
+        teacherTimeGroups[key].students.push(s);
+      });
+      const groupEntries=Object.values(teacherTimeGroups).filter(g=>g.students.length>0);
+      groupEntries.sort((a,b)=>{
+        const ti=fullTeachers.indexOf(a.teacher)-fullTeachers.indexOf(b.teacher);
+        if(ti!==0) return ti;
+        return Number(a.time||0)-Number(b.time||0);
+      });
+      if(groupEntries.length){
+        h+=`<div class="card" style="margin-bottom:14px;background:#f5f9fd;border-color:#b0cef0">`;
+        h+=`<div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:10px">⚡ 교시별 빠른 선택</div>`;
+        h+=`<div style="display:flex;flex-wrap:wrap;gap:6px">`;
+        groupEntries.forEach(g=>{
+          const ids=g.students.map(s=>s.id);
+          const allChecked=ids.every(id=>assignedIds.includes(id));
+          const label=g.time?`${esc(g.teacher)} ${g.time}교시`:`${esc(g.teacher)} (교시미정)`;
+          h+=`<button class="btn btn-sm" style="font-size:11px;${allChecked?'background:var(--blue);color:#fff;border-color:var(--blue)':''}"
+            onclick="toggleAssistantTeacherTime('${esc(me)}','${esc(g.teacher)}','${esc(g.time)}',${!allChecked})">
+            ${allChecked?'✓ ':''}${label} <span style="opacity:.75">${g.students.length}명</span>
+          </button>`;
+        });
+        h+=`</div></div>`;
+      }
+    }
+
     // 반별로 그룹핑
     if(allCTs.length){
       allCTs.forEach(([ctk, ctv])=>{
@@ -6322,6 +6356,27 @@ async function toggleAllClassAssistant(assistantName, ctk, checked){
     await gasCall('saveConfig',{config:cfg});
     render();
     toast(checked?`${studsInCt.length}명 담당으로 추가됨`:`${studsInCt.length}명 담당 해제됨`);
+  } catch(e){ toast('저장 실패: '+e.message,true); }
+}
+
+// 전임선생님 + 교시 조합으로 해당 학생 전체 선택/해제
+async function toggleAssistantTeacherTime(assistantName, teacher, time, checked){
+  const studs=(cfg.students||[]).filter(s=>s.teacher===teacher && String(s.weekdayTime||'')===String(time));
+  if(!studs.length){ toast('해당 조건의 학생이 없습니다',true); return; }
+  cfg.assistantStudents=cfg.assistantStudents||{};
+  cfg.assistantStudents[assistantName]=cfg.assistantStudents[assistantName]||[];
+  studs.forEach(s=>{
+    if(checked){
+      if(!cfg.assistantStudents[assistantName].includes(s.id))
+        cfg.assistantStudents[assistantName].push(s.id);
+    } else {
+      cfg.assistantStudents[assistantName]=cfg.assistantStudents[assistantName].filter(x=>x!==s.id);
+    }
+  });
+  try{
+    await gasCall('saveConfig',{config:cfg});
+    render();
+    toast(checked?`${studs.length}명 담당으로 추가됨`:`${studs.length}명 담당 해제됨`);
   } catch(e){ toast('저장 실패: '+e.message,true); }
 }
 
@@ -8448,6 +8503,24 @@ async function ensureMonthLoaded(y, m){
   if(mdb && mdb.year===y && mdb.month===m) return; // 이미 같은 달
   // 대상 달 데이터를 별도로 가져와 mdb.lessons에 머지하고 캐시에도 저장
   const cacheKey = `${y}-${String(m).padStart(2,'0')}`;
+  // prevMonthLessonsCache에 이미 있으면 재사용 (Firestore 읽기 절약)
+  if(prevMonthLessonsCache[cacheKey]){
+    Object.entries(prevMonthLessonsCache[cacheKey]).forEach(([key,data])=>{
+      const existing=mdb.lessons[key];
+      if(!existing){
+        mdb.lessons[key]=data;
+        lessonVersions[key]=data.updatedAt||'';
+      } else {
+        const existingAt=existing.updatedAt||'';
+        const firebaseAt=data.updatedAt||'';
+        if(!existingAt||(firebaseAt&&firebaseAt>existingAt)){
+          mdb.lessons[key]=data;
+          lessonVersions[key]=firebaseAt;
+        }
+      }
+    });
+    return;
+  }
   try{
     const {getDocs,collection}=fb();
     const colName=`lessons_${cacheKey}`;
@@ -8474,6 +8547,7 @@ async function ensureMonthLoaded(y, m){
     });
     // prevHwInMonth에서도 사용할 수 있도록 캐시에 저장
     prevMonthLessonsCache[cacheKey]=loadedData;
+    try{ sessionStorage.setItem(`lessons_cache_${cacheKey}`, JSON.stringify(loadedData)); }catch(e){}
   } catch(e){ console.warn('추가 달 로드 실패:', e); }
 }
 function openM(m,arg1,arg2,arg3){if(m==='addCt')st.newCtDays=[];if(m==='addSt'){st.newName='';st.newGrade=null;st.newLevel=null;st.newTeacher='';st.newFridayTeacher='';st.newWeekdayTime='';st.newFridayTime='';st.newJoinDate='';}st.modal=m;st.modalArg1=arg1;st.modalArg2=arg2;st.modalArg3=arg3;rModal();}
@@ -8800,8 +8874,9 @@ async function mSave(sid,d,f,v){
   if(f==='testScore' && (!v || String(v).trim()==='')){
     delete l.testIsFullRange;
   }
-  // 점수/진도/과제 입력 시 출결 미입력이면 자동 출석 처리
-  if(v && String(v).trim()!=='' && !l.attendance){
+  // 과제점수·시험점수 입력 시에만 출결 미입력이면 자동 출석 처리
+  // (목표진도·진도·특이사항 등 기타 필드 입력 시에는 자동 출결 없음)
+  if((f==='homeworkScore'||f==='testScore') && v && String(v).trim()!=='' && !l.attendance){
     l.attendance='attend';
   }
   setSyncState('syncing','저장 중...');
@@ -8844,8 +8919,9 @@ async function tSave(sid,d,cls,f,v){
   if(f==='testScore' && (!v || String(v).trim()==='')){
     delete l.testIsFullRange;
   }
-  // 점수/진도/과제 입력 시 출결 미입력이면 자동 출석 처리
-  if(v && String(v).trim()!=='' && !l.attendance){
+  // 과제점수·시험점수 입력 시에만 출결 미입력이면 자동 출석 처리
+  // (목표진도·진도·과제내용·특이사항 등은 자동 출결 없음)
+  if((f==='homeworkScore'||f==='testScore') && v && String(v).trim()!=='' && !l.attendance){
     l.attendance='attend';
   }
   setSyncState('syncing','저장 중...');
@@ -9925,20 +10001,17 @@ async function presenceFocus(cellKey){
   }catch(e){}
 }
 
-// blur 시: 쓰기 1회(내 셀 제거)
+// blur 시: 쓰기 1회(내 셀 제거) — getDoc 없이 로컬 캐시로 처리 (읽기 절약)
 async function presenceBlur(cellKey){
   if(!session) return;
   _myActiveCells.delete(cellKey);
   try{
-    const {getDoc,setDoc}=fb();
+    const {setDoc}=fb();
     const ref=_presenceDocRef();
-    const snap=await getDoc(ref);
-    const current=snap.exists()?snap.data():{};
-    // 내 항목만 제거
-    if(current[cellKey]?.username===session.username){
-      delete current[cellKey];
-      _presenceLocal=current;
-      await setDoc(ref, current);
+    // 로컬 캐시 기준으로 내 항목 제거 (Firestore 읽기 없이 쓰기만)
+    if(_presenceLocal[cellKey]?.username===session.username){
+      delete _presenceLocal[cellKey];
+      await setDoc(ref, _presenceLocal);
     }
   }catch(e){}
 }
