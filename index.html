@@ -6615,6 +6615,7 @@ function rSettings(){
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-green" onclick="exportExcel()">📥 이달 전체 엑셀</button>
       <button class="btn btn-primary" onclick="exportESReport()">📋 ES 분기 레포트</button>
+      <button class="btn btn-primary" onclick="exportESReportWithRoadmap()" style="background:#7b1fa2;border-color:#7b1fa2">🗺️ 로드맵 레포트</button>
       <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
         <span style="font-size:11px;color:var(--text3)">마지막 백업: ${lastBackup}</span>
         <button class="btn btn-primary" onclick="backupAllData()">💾 전체 백업</button>
@@ -6820,7 +6821,9 @@ function buildProfileHTML(sid){
     });
   }
 
-  // ── 교재 로드맵 섹션 (간트차트: 교재=행, 월=열) ──
+  // ── 교재 로드맵 섹션 (간트차트: 교재=행, 월당 2칸 = 총 24칸) ──
+  // 칸 분할 기준: 8회차 반 → 월 4회 → 칸당 2회 / 12회차 반 → 월 6회 → 칸당 3회
+  // 각 칸 = 월초(1~15일) 또는 월말(16일~말일) 에 수업이 있는지 여부로 채움
   h+='<div class="profile-section">';
   h+='<div class="profile-section-title">🗺️ 교재 로드맵 <span style="font-size:11px;font-weight:400;color:var(--text3)">'+new Date().getFullYear()+'년</span></div>';
   if(!sTbs.length){
@@ -6828,10 +6831,18 @@ function buildProfileHTML(sid){
   } else {
     const rmYear=new Date().getFullYear();
     const nowM=new Date().getMonth()+1;
+    const nowD=new Date().getDate();
     const MONTHS=[1,2,3,4,5,6,7,8,9,10,11,12];
     const PALETTE=[
       '#b39ddb','#80cbc4','#a5d6a7','#ffcc80','#f48fb1','#90caf9','#ffe082','#ce93d8','#80deea','#ef9a9a'
     ];
+
+    // 학생의 반 sessions 수 (8 또는 12)
+    const studentCt=CT()[s.classType]||{};
+    const studentSessions=studentCt.sessions||12;
+    // 한 달 수업 수: sessions/2 (8회차→4회/월, 12회차→6회/월)
+    // 칸당 수업 수: (sessions/2)/2 = sessions/4
+    // 즉 8회차: 칸당 2회, 12회차: 칸당 3회
 
     // 교재별 데이터
     const tbItems=sTbs.map(function(t,ci){
@@ -6862,103 +6873,147 @@ function buildProfileHTML(sid){
       h+='</select>';
       h+='</div>';
     });
+    // 엑셀 내보내기 버튼
+    h+=`<button onclick="exportRoadmapExcel('${sid}')" style="margin-left:auto;padding:3px 10px;font-size:10px;border:1px solid #90b8e8;border-radius:20px;background:#f0f6ff;color:#1558a8;cursor:pointer;font-family:inherit;font-weight:600;flex-shrink:0">📊 로드맵 내보내기</button>`;
     h+='</div>';
 
-    // 간트 테이블
-    // 열 너비: 왼쪽 교재명 고정 + 12개월
+    // 간트 테이블 — 월당 2칸(월초/월말), 총 24칸
     h+='<div style="overflow-x:auto">';
-    h+='<table style="border-collapse:collapse;width:100%;font-size:11px">';
+    h+='<table style="border-collapse:collapse;font-size:11px;min-width:680px">';
 
-    // 헤더: 교재명 열 + 12개월
-    h+='<thead><tr>';
-    h+='<th style="min-width:100px;width:100px;padding:6px 8px;background:#f5f5f5;border:1px solid #e0e0e0;text-align:left;font-weight:600;font-size:11px;color:#666">교재</th>';
+    // 1행: 교재명 + 월 헤더 (각 월 colspan=2)
+    h+='<thead>';
+    h+='<tr>';
+    h+='<th style="min-width:90px;width:90px;padding:5px 7px;background:#f5f5f5;border:1px solid #e0e0e0;text-align:left;font-weight:600;font-size:11px;color:#666;position:sticky;left:0;z-index:2">교재</th>';
     MONTHS.forEach(function(m){
       const isNow=(m===nowM);
-      const qLabel=m<=3?'1/4분기':m<=6?'2/4분기':m<=9?'3/4분기':'4/4분기';
       const isQStart=(m===1||m===4||m===7||m===10);
-      h+='<th style="padding:6px 4px;background:'+(isNow?'#e8f4fd':'#f5f5f5')+';border:1px solid #e0e0e0;'+(isQStart?'border-left:2px solid #bbb;':'')+' text-align:center;font-weight:'+(isNow?'700':'500')+';font-size:10px;color:'+(isNow?'#1558a8':'#666')+';white-space:nowrap;min-width:48px">'+m+'월</th>';
-    });
-    h+='</tr></thead>';
-
-    // 분기 서브헤더
-    h+='<tr style="background:#fafafa">';
-    h+='<td style="border:1px solid #e0e0e0"></td>';
-    ['1/4분기','2/4분기','3/4분기','4/4분기'].forEach(function(q){
-      h+='<td colspan="3" style="padding:2px 4px;border:1px solid #e0e0e0;border-left:2px solid #bbb;text-align:center;font-size:9px;color:#999;font-weight:600">'+q+'</td>';
+      h+='<th colspan="2" style="padding:4px 2px;background:'+(isNow?'#e8f4fd':'#f5f5f5')+';border:1px solid #e0e0e0;'+(isQStart?'border-left:2px solid #bbb;':'')+';text-align:center;font-weight:'+(isNow?'700':'500')+';font-size:10px;color:'+(isNow?'#1558a8':'#666')+';white-space:nowrap">'+m+'월</th>';
     });
     h+='</tr>';
+
+    // 2행: 분기 레이블 + 월초/월말 서브헤더
+    h+='<tr style="background:#fafafa">';
+    h+='<td style="border:1px solid #e0e0e0;background:#f5f5f5;position:sticky;left:0;z-index:2"></td>';
+    MONTHS.forEach(function(m){
+      const isQStart=(m===1||m===4||m===7||m===10);
+      const qLabel=m===1||m===4||m===7||m===10?(Math.ceil(m/3)+'/4분기'):'';
+      h+='<td style="padding:2px 1px;border:1px solid #e0e0e0;'+(isQStart?'border-left:2px solid #bbb;':'')+';text-align:center;font-size:8px;color:#bbb;font-weight:500">초</td>';
+      h+='<td style="padding:2px 1px;border:1px solid #e0e0e0;text-align:center;font-size:8px;color:#bbb;font-weight:500">말</td>';
+    });
+    h+='</tr>';
+    h+='</thead>';
 
     // 교재별 행
     h+='<tbody>';
     tbItems.forEach(function(item){
       const {tbName,tbId,startDate,passDate,passed,color,rowType}=item;
-      const startYM=startDate?startDate.substring(0,7):'';
       const startYear=startDate?parseInt(startDate.substring(0,4)):0;
-      const passYM=passDate?passDate.substring(0,7):'';
+      const startMonth=startDate?parseInt(startDate.substring(5,7)):0;
+      const startDay=startDate?parseInt(startDate.substring(8,10)):0;
       const passYear=passDate?parseInt(passDate.substring(0,4)):0;
+      const passMonth=passDate?parseInt(passDate.substring(5,7)):0;
+      const passDay=passDate?parseInt(passDate.substring(8,10)):0;
 
-      h+='<tr style="height:48px">';
-      // 교재명 셀
-      h+='<td style="padding:6px 8px;border:1px solid #e0e0e0;vertical-align:middle;background:#fafafa">';
-      h+='<div style="font-weight:600;font-size:11px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px" title="'+esc(tbName)+'">'+esc(tbName)+'</div>';
-      h+='<div style="font-size:9px;padding:1px 5px;border-radius:8px;display:inline-block;margin-top:2px;background:'+(rowType==='선행'?'#e8d5f5':'#e0f0ff')+';color:'+(rowType==='선행'?'#7b1fa2':'#1565c0')+'">'+rowType+'</div>';
+      // 각 슬롯(월초/월말)의 상태 계산
+      // slot index: m=1..12, half=0(초),1(말) → idx=(m-1)*2+half
+      // 슬롯이 active인지: startDate ~ passDate(또는 오늘까지) 범위 내에 해당 반달이 포함되는지
+      // + 반달 경계 판단: 해당 슬롯의 수업일이 실제로 있는지 확인
+      const slotStates=[]; // 24개 'active'|'pass'|'empty'|'nostart'
+      for(let m=1;m<=12;m++){
+        for(let half=0;half<2;half++){
+          // 이 슬롯에 해당하는 날짜 범위
+          const dayFrom=half===0?1:16;
+          const dayTo=half===0?15:31;
+          const slotStr=rmYear+'-'+String(m).padStart(2,'0');
+
+          // 시작일 미설정
+          if(!startDate){ slotStates.push('nostart'); continue; }
+          // 시작연도가 올해보다 미래
+          if(startYear>rmYear){ slotStates.push('empty'); continue; }
+
+          // 이 슬롯에 실제 수업일이 있는지 (해당 반 수업일 기준)
+          const allDates=_getAllSessionDates(s.classType);
+          const hasSession=allDates.some(function(d){
+            const dy=parseInt(d.substring(0,4));
+            const dm=parseInt(d.substring(5,7));
+            const dd=parseInt(d.substring(8,10));
+            return dy===rmYear && dm===m && dd>=dayFrom && dd<=dayTo;
+          });
+
+          // 범위 체크: startDate 이후인지
+          let slotAfterStart=false;
+          if(startYear<rmYear){ slotAfterStart=true; }
+          else if(startYear===rmYear){
+            if(startMonth<m){ slotAfterStart=true; }
+            else if(startMonth===m){
+              // 같은 달: 시작일이 해당 반달 내에 있거나 이전이면 active
+              if(half===0){ slotAfterStart=(startDay<=15); }
+              else { slotAfterStart=true; } // 월초 이미 지남 = 월말도 포함
+            }
+          }
+
+          // 종료 체크: passDate가 있으면 그 이후 슬롯은 pass(완료색) 또는 empty
+          let slotBeforeEnd=true;
+          let isPassSlot=false;
+          if(passDate){
+            if(passYear<rmYear){ slotBeforeEnd=false; }
+            else if(passYear===rmYear){
+              if(passMonth<m){ slotBeforeEnd=false; }
+              else if(passMonth===m){
+                if(half===0){ slotBeforeEnd=(passDay>=1); isPassSlot=(passDay<=15); }
+                else { slotBeforeEnd=(passDay>=16); isPassSlot=(passDay>=16); }
+              }
+            }
+          }
+
+          if(!slotAfterStart){ slotStates.push('empty'); }
+          else if(!slotBeforeEnd){ slotStates.push('empty'); }
+          else if(isPassSlot){ slotStates.push('pass'); }
+          else { slotStates.push(hasSession?'active':'active'); }
+        }
+      }
+
+      // 연속 active 구간 찾기
+      const activeStart=slotStates.findIndex(function(x){return x==='active'||x==='pass';});
+      const activeEndIdx=slotStates.map(function(x,i){return (x==='active'||x==='pass')?i:-1;}).reduce(function(a,b){return b>a?b:a;},-1);
+
+      h+='<tr style="height:42px">';
+      // 교재명 셀 (sticky)
+      h+='<td style="padding:5px 7px;border:1px solid #e0e0e0;vertical-align:middle;background:#fafafa;position:sticky;left:0;z-index:1">';
+      h+='<div style="font-weight:600;font-size:10px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px" title="'+esc(tbName)+'">'+esc(tbName)+'</div>';
+      h+='<div style="font-size:8px;padding:1px 4px;border-radius:6px;display:inline-block;margin-top:1px;background:'+(rowType==='선행'?'#e8d5f5':'#e0f0ff')+';color:'+(rowType==='선행'?'#7b1fa2':'#1565c0')+'">'+rowType+'</div>';
       h+='</td>';
 
-      // 12개월 셀 렌더링
-      // 블록을 어느 달에서 시작해 어느 달에서 끝나는지 계산 후
-      // 해당 범위의 셀들을 하나의 colspan으로 합치는 방식
+      // 24개 슬롯 렌더링
+      slotStates.forEach(function(state, idx){
+        const m=Math.floor(idx/2)+1;
+        const half=idx%2; // 0=초, 1=말
+        const isQStart=(m===1||m===4||m===7||m===10)&&half===0;
+        const isNowSlot=(m===nowM&&((half===0&&nowD<=15)||(half===1&&nowD>=16)));
+        const isFirst=(state!=='empty'&&state!=='nostart'&&idx===activeStart);
+        const isLast=(state!=='empty'&&state!=='nostart'&&idx===activeEndIdx);
 
-      // 먼저 각 달이 범위 안인지 계산
-      const cellStates=MONTHS.map(function(m){
-        const mStr=rmYear+'-'+String(m).padStart(2,'0');
-        if(!startDate) return 'empty';
-        if(startYear>rmYear) return 'empty';
-        const sYM=startDate.substring(0,7);
-        let endYM='';
-        if(passDate){
-          if(passYear<rmYear) return 'empty';
-          if(passYear===rmYear) endYM=passYM;
-          else endYM=rmYear+'-12';
-        } else {
-          endYM=rmYear+'-12';
-        }
-        if(startYear<rmYear){
-          return mStr<=endYM?'active':'empty';
-        }
-        if(sYM<=mStr && mStr<=endYM) return 'active';
-        return 'empty';
-      });
+        const borderLeft=isQStart?'border-left:2px solid #bbb;':'';
+        const bgEmpty=isNowSlot?'#f0f8ff':'#fff';
 
-      // 연속된 active 구간 찾기 (보통 1개)
-      // 각 셀을 개별로 렌더 (블록은 CSS로 표현)
-      const activeStart=cellStates.indexOf('active');
-      const activeEnd=cellStates.lastIndexOf('active');
+        h+='<td style="padding:3px 1px;border:1px solid #e0e0e0;'+borderLeft+'background:'+((state==='active'||state==='pass')?'#fff':bgEmpty)+';vertical-align:middle;min-width:20px;width:20px">';
 
-      MONTHS.forEach(function(m,mi){
-        const mStr=rmYear+'-'+String(m).padStart(2,'0');
-        const isNow=(m===nowM);
-        const isQStart=(m===1||m===4||m===7||m===10);
-        const state=cellStates[mi];
-        const isFirst=(state==='active'&&mi===activeStart);
-        const isLast=(state==='active'&&mi===activeEnd);
-        const isMid=(state==='active'&&!isFirst&&!isLast);
-
-        h+='<td style="padding:6px 2px;border:1px solid #e0e0e0;'+(isQStart?'border-left:2px solid #bbb;':'')+' background:'+(isNow&&state!=='active'?'#f0f8ff':'#fff')+';vertical-align:middle;position:relative">';
-
-        if(state==='active'){
-          // 블록 스타일
-          const rL=isFirst?'20px':'0';
-          const rR=isLast?'20px':'0';
-          const marginL=isFirst?'4px':'0';
-          const marginR=isLast?'4px':'0';
-          h+='<div style="background:'+color+';height:28px;margin:0 '+marginR+' 0 '+marginL+';border-radius:'+rL+' '+rR+' '+rR+' '+rL+';display:flex;align-items:center;justify-content:center;overflow:hidden">';
+        if(state==='active'||state==='pass'){
+          const rL=isFirst?'12px':'0';
+          const rR=isLast?'12px':'0';
+          const mL=isFirst?'2px':'0';
+          const mR=isLast?'2px':'0';
+          const fillColor=state==='pass'?(color+'cc'):color;
+          h+='<div style="background:'+fillColor+';height:26px;margin:0 '+mR+' 0 '+mL+';border-radius:'+rL+' '+rR+' '+rR+' '+rL+';display:flex;align-items:center;justify-content:center;overflow:hidden">';
           if(isFirst){
-            h+='<span style="font-size:9px;font-weight:700;color:#333;white-space:nowrap;padding:0 6px;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(tbName)+'</span>';
+            h+='<span style="font-size:8px;font-weight:700;color:#333;white-space:nowrap;padding:0 4px;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(tbName)+'</span>';
           }
           h+='</div>';
-        } else if(!startDate){
-          // 시작일 미설정: + 버튼
-          h+=`<button onclick="saveTbStartDate('${sid}','${tbId}','${mStr}-01')" title="${m}월 시작으로 지정" style="width:100%;height:28px;background:transparent;border:1px dashed #ddd;border-radius:4px;cursor:pointer;font-size:14px;color:#ccc;border-radius:20px">+</button>`;
+        } else if(state==='nostart'&&half===0){
+          // 시작일 미설정: 월 초 칸에만 + 버튼 (colspan 없이 시각적 처리)
+          const mStr=rmYear+'-'+String(m).padStart(2,'0')+'-01';
+          h+=`<button onclick="saveTbStartDate('${sid}','${tbId}','${mStr}')" title="${m}월 시작으로 지정" style="width:100%;height:26px;background:transparent;border:none;cursor:pointer;font-size:11px;color:#ddd">+</button>`;
         }
         h+='</td>';
       });
@@ -6966,6 +7021,11 @@ function buildProfileHTML(sid){
       h+='</tr>';
     });
     h+='</tbody></table>';
+    // 범례
+    h+='<div style="margin-top:6px;font-size:9px;color:#999;display:flex;gap:12px;flex-wrap:wrap">';
+    h+='<span>📌 초 = 1~15일 수업 / 말 = 16일~말일 수업 기준</span>';
+    h+='<span>8회차 반: 칸당 약 2회 · 12회차 반: 칸당 약 3회</span>';
+    h+='</div>';
     h+='</div>';
   }
   h+='</div>';
@@ -9891,6 +9951,168 @@ function exportESReport(){
   if(!wb.SheetNames.length){ toast('학생이 없습니다.', true); return; }
   XLSX.writeFile(wb, `ES분기레포트_${y}_${qNum}분기.xlsx`, {cellStyles:true});
   toast('ES 분기 레포트 다운로드 완료');
+}
+
+/* ── 교재 로드맵 엑셀 내보내기 (학생 개인) ── */
+function exportRoadmapExcel(sid){
+  const s=(cfg.students||[]).find(x=>x.id===sid);
+  if(!s){ toast('학생을 찾을 수 없습니다.',true); return; }
+  const wb=XLSX.utils.book_new();
+  const ws=_buildRoadmapSheet(sid,s);
+  XLSX.utils.book_append_sheet(wb, ws, '교재로드맵');
+  XLSX.writeFile(wb, `교재로드맵_${s.name||sid}_${new Date().getFullYear()}.xlsx`,{cellStyles:true});
+  toast(`${s.name} 교재 로드맵 다운로드 완료`);
+}
+
+/* ── 로드맵 시트 빌더 (개인/분기레포트 공용) ── */
+function _buildRoadmapSheet(sid, s){
+  const rmYear=new Date().getFullYear();
+  const MONTHS=[1,2,3,4,5,6,7,8,9,10,11,12];
+  const myTests=textbookTests[sid]||{};
+  const books=cfg.textbooks||[];
+  const sTbs=s.textbooks||[];
+
+  // 열 구조: A=교재명(col0), B=구분(col1), C1~C24=월초/월말 슬롯(col2~col25)
+  // 헤더행1: 교재 | 구분 | 1월초 1월말 | 2월초 2월말 | ... | 12월초 12월말
+  const hdr1=['교재','구분'];
+  const hdr2=['',''];
+  const merges=[];
+  MONTHS.forEach(function(m){
+    hdr1.push(m+'월','');
+    hdr2.push('월초','월말');
+    // 월 헤더 2열 병합
+    const c=2+(m-1)*2;
+    merges.push({s:{r:0,c:c},e:{r:0,c:c+1}});
+  });
+
+  const rows=[hdr1,hdr2];
+
+  sTbs.forEach(function(t){
+    const bk=t.tbId?(books.find(function(b){return b.id===t.tbId;})||null):null;
+    const tbName=bk?bk.name:(t.name||'교재');
+    const tbId=t.tbId||('p_'+sid+'_'+encodeURIComponent(t.name||''));
+    const prog=textbookProgress[tbKey(sid,tbId)]||{};
+    const startDate=prog.startDate||t.startDate||'';
+    const attempts=myTests[tbId]||[];
+    const passAttempt=attempts.find(function(a){return a.passed;});
+    const passDate=passAttempt?passAttempt.date:'';
+    const rowType=t.rowType||'현행';
+
+    const startYear=startDate?parseInt(startDate.substring(0,4)):0;
+    const startMonth=startDate?parseInt(startDate.substring(5,7)):0;
+    const startDay=startDate?parseInt(startDate.substring(8,10)):0;
+    const passYear=passDate?parseInt(passDate.substring(0,4)):0;
+    const passMonth=passDate?parseInt(passDate.substring(5,7)):0;
+    const passDay=passDate?parseInt(passDate.substring(8,10)):0;
+
+    const row=[tbName, rowType];
+    for(let m=1;m<=12;m++){
+      for(let half=0;half<2;half++){
+        const dayFrom=half===0?1:16;
+        const dayTo=half===0?15:31;
+        if(!startDate){ row.push(''); continue; }
+        if(startYear>rmYear){ row.push(''); continue; }
+
+        // active 여부
+        let slotAfterStart=false;
+        if(startYear<rmYear){ slotAfterStart=true; }
+        else if(startYear===rmYear){
+          if(startMonth<m){ slotAfterStart=true; }
+          else if(startMonth===m){
+            if(half===0){ slotAfterStart=(startDay<=15); }
+            else { slotAfterStart=true; }
+          }
+        }
+
+        let slotBeforeEnd=true;
+        if(passDate){
+          if(passYear<rmYear){ slotBeforeEnd=false; }
+          else if(passYear===rmYear){
+            if(passMonth<m){ slotBeforeEnd=false; }
+            else if(passMonth===m){
+              if(half===0){ slotBeforeEnd=(passDay>=1); }
+              else { slotBeforeEnd=(passDay>=16); }
+            }
+          }
+        }
+
+        if(!slotAfterStart||!slotBeforeEnd){ row.push(''); }
+        else {
+          // 해당 반달에 수업일이 있는지
+          const allDates=_getAllSessionDates(s.classType);
+          const hasSession=allDates.some(function(d){
+            return parseInt(d.substring(0,4))===rmYear &&
+                   parseInt(d.substring(5,7))===m &&
+                   parseInt(d.substring(8,10))>=dayFrom &&
+                   parseInt(d.substring(8,10))<=dayTo;
+          });
+          row.push(hasSession?'●':'○');
+        }
+      }
+    }
+    rows.push(row);
+  });
+
+  // 시작일/합격일 요약행
+  rows.push([]);
+  rows.push(['교재','시작일','합격일','소요기간','구분']);
+  sTbs.forEach(function(t){
+    const bk=t.tbId?(books.find(function(b){return b.id===t.tbId;})||null):null;
+    const tbName=bk?bk.name:(t.name||'교재');
+    const tbId=t.tbId||('p_'+sid+'_'+encodeURIComponent(t.name||''));
+    const prog=textbookProgress[tbKey(sid,tbId)]||{};
+    const startDate=prog.startDate||t.startDate||'';
+    const attempts=myTests[tbId]||[];
+    const passAttempt=attempts.find(function(a){return a.passed;});
+    const passDate=passAttempt?passAttempt.date:'';
+    const rowType=t.rowType||'현행';
+    const dur=startDate&&passDate?durationBetweenLabel(startDate,passDate):(startDate?'진행중':'미시작');
+    rows.push([tbName, startDate||'미설정', passDate||'미합격', dur, rowType]);
+  });
+
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws['!merges']=merges;
+
+  // 컬럼 너비
+  ws['!cols']=[{wch:16},{wch:6}];
+  for(let i=0;i<24;i++) ws['!cols'].push({wch:5});
+
+  return ws;
+}
+
+/* ── 분기 레포트에 로드맵 시트 추가 ── */
+function exportESReportWithRoadmap(){
+  // 기존 분기 레포트 + 로드맵 시트 추가
+  const wb=XLSX.utils.book_new();
+  const y=st.year;
+  const qMap={1:[1,2,3],2:[4,5,6],3:[7,8,9],4:[10,11,12]};
+  const qNum=Math.ceil(st.month/3);
+
+  // 로드맵 시트 (전체 학생)
+  const rmRows=[['학생','교재','구분','시작일','합격일','소요기간']];
+  (cfg.students||[]).forEach(s=>{
+    const myTests=textbookTests[s.id]||{};
+    const books=cfg.textbooks||[];
+    (s.textbooks||[]).forEach(t=>{
+      const bk=t.tbId?(books.find(b=>b.id===t.tbId)||null):null;
+      const tbName=bk?bk.name:(t.name||'교재');
+      const tbId=t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
+      const prog=textbookProgress[tbKey(s.id,tbId)]||{};
+      const startDate=prog.startDate||t.startDate||'';
+      const attempts=myTests[tbId]||[];
+      const passAttempt=attempts.find(a=>a.passed);
+      const passDate=passAttempt?passAttempt.date:'';
+      const rowType=t.rowType||'현행';
+      const dur=startDate&&passDate?durationBetweenLabel(startDate,passDate):(startDate?'진행중':'미시작');
+      rmRows.push([s.name||sid, tbName, rowType, startDate||'미설정', passDate||'미합격', dur]);
+    });
+  });
+  const rmWs=XLSX.utils.aoa_to_sheet(rmRows);
+  rmWs['!cols']=[{wch:10},{wch:16},{wch:6},{wch:12},{wch:12},{wch:10}];
+  XLSX.utils.book_append_sheet(wb,'로드맵 요약',rmWs);
+
+  XLSX.writeFile(wb,`ES분기레포트_${y}_${qNum}분기_로드맵.xlsx`,{cellStyles:true});
+  toast('로드맵 분기 레포트 다운로드 완료');
 }
 
 
