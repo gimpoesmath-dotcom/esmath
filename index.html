@@ -1,4 +1,4 @@
-<!-- v20260601_071233 -->
+<!-- v20260603_fix_matrix_schedule_roadmap -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -3151,18 +3151,6 @@ function setWkClass(v){ st.weeklyClass=v; render(); }
 function setMTeacher(v){ st.matrixTeacher=v; render(); }
 function setWkTeacher(v){ st.weeklyTeacher=v; render(); }
 
-// 수업기록표 이름 검색 — render 없이 DOM 직접 필터 (포커스 유지)
-function matrixNameSearchFilter(val){
-  st.matrixNameSearch=val;
-  const kw=(val||'').trim();
-  document.querySelectorAll('.mtbl tbody tr').forEach(tr=>{
-    if(!tr.classList.contains('row-e')&&!tr.classList.contains('row-o')) return;
-    const nameCell=tr.querySelector('.col-student');
-    const name=nameCell?nameCell.textContent.trim():'';
-    tr.style.display=(!kw||name.includes(kw))?'':'none';
-  });
-}
-
 /* ── MONTHLY SUMMARY TAB ── */
 function rMonthly(){
   const studs = cfg.students||[];
@@ -4626,6 +4614,11 @@ function exportWeeklyExcel(){
   toast('주간요약 엑셀 다운로드 완료');
 }
 
+function matrixNameFilter(val){
+  st.studentNameFilter=val;
+  render();
+}
+
 /* ── MATRIX ── */
 function rMatrix(){
   const isPrin=session?.role==='principal';
@@ -4680,7 +4673,6 @@ function rMatrix(){
   // 필터 바 데이터 계산
   const _gradeF0=st.studentGradeFilter||'';
   const _levelF0=st.studentLevelFilter||'';
-  const _attF0=st.studentAttFilter||'';
   const _teacherF0=st.studentTeacherFilter||'';
   const allStuds=cfg.students||[];
   // 학년 목록
@@ -4699,21 +4691,18 @@ function rMatrix(){
     }).join('<span style="color:#ccc;margin:0 2px">·</span>');
     return `<span style="display:inline-flex;align-items:center;gap:4px;background:${bg};color:${color};border:1px solid ${border};border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600;${groupActive?'outline:2px solid '+color+';outline-offset:1px;':''}">${label} ${items}</span>`;
   };
-  // 이름 검색 필터
-  const _nameF0=st.matrixNameSearch||'';
-  const isFiltered0=_gradeF0||_levelF0||_teacherF0||_nameF0;
 
+  const _nameF0=st.studentNameFilter||'';
+  const isFiltered0b=_gradeF0||_levelF0||_teacherF0||_nameF0;
   let filterBar=`<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px">`;
-  // 이름 검색 인풋 (DOM 직접 필터 방식 — render 없이 실시간)
+  // 이름 검색 입력창
   filterBar+=`<div style="display:inline-flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--border2);border-radius:20px;padding:2px 10px">
     <span style="font-size:12px;color:var(--text3)">🔍</span>
-    <input type="text" id="matrixNameSearch" placeholder="이름 검색" value="${esc(_nameF0)}"
-      oninput="matrixNameSearchFilter(this.value)"
-      style="border:none;outline:none;font-size:12px;width:100px;background:transparent;font-family:inherit;color:var(--text)">
-    ${_nameF0?`<span onclick="matrixNameSearchFilter('');document.getElementById('matrixNameSearch').value=''" style="font-size:12px;cursor:pointer;color:var(--text3)">✕</span>`:''}
+    <input type="text" id="matrixNameSearch" placeholder="이름 검색" value="${esc(_nameF0)}" oninput="matrixNameFilter(this.value)" style="border:none;outline:none;background:transparent;font-size:12px;font-family:inherit;width:90px;padding:2px 0;color:var(--text)">
+    ${_nameF0?`<span onclick="matrixNameFilter('')" style="cursor:pointer;font-size:11px;color:var(--text3);padding:0 2px" title="검색 초기화">✕</span>`:''}
   </div>`;
   if(gradeSet.length){ filterBar+=renderGradeGroup('초등','#5a3c00','#fef3e2','#e8c87a',elems0); filterBar+=renderGradeGroup('중등','#1e4a80','#e5effc','#90b8e8',middle0); filterBar+=renderGradeGroup('고등','#3a1e6e','#f0e8fc','#c090e0',high0); }
-  if(isFiltered0) filterBar+=`<button class="btn btn-sm" onclick="st.studentGradeFilter='';st.studentLevelFilter='';st.studentTeacherFilter='';matrixNameSearchFilter('');const ni=document.getElementById('matrixNameSearch');if(ni)ni.value='';render()" style="font-size:11px">✕ 필터 초기화</button>`;
+  if(isFiltered0b) filterBar+=`<button class="btn btn-sm" onclick="st.studentGradeFilter='';st.studentLevelFilter='';st.studentTeacherFilter='';st.studentNameFilter='';render()" style="font-size:11px">✕ 필터 초기화</button>`;
   filterBar+=`</div>`;
 
   let h=`<div class="toolbar">
@@ -4740,11 +4729,11 @@ function rMatrix(){
     const _gradeF=st.studentGradeFilter||'';
     const _levelF=st.studentLevelFilter||'';
     const _teacherF=st.studentTeacherFilter||'';
-    const _nameF=st.matrixNameSearch||'';
     if(_gradeF) studs=studs.filter(s=>s.grade===_gradeF);
     if(_levelF) studs=studs.filter(s=>s.level===_levelF);
     if(_teacherF) studs=studs.filter(s=>isStudentOfTeacher(s,_teacherF));
-    if(_nameF) studs=studs.filter(s=>(s.name||'').includes(_nameF));
+    const _nameF=st.studentNameFilter||'';
+    if(_nameF) studs=studs.filter(s=>s.name&&s.name.includes(_nameF));
     if(!studs.length) return;
 
     const monthSessions=sessionsForMonthWithCycle(cls,st.year,st.month);
@@ -5756,17 +5745,25 @@ function rSchedule(){
   return h;
 }
 
-/* 토요일 보강 시간표 — 이번 달 보강일들의 학생을 1교시(10-12)/2교시(12-14)별로 담당 그룹핑하여 표시 */
+/* 토요일 보강 시간표 — 이번 달 + 인접 달 보강일들의 학생을 1교시(10-12)/2교시(12-14)별로 담당 그룹핑하여 표시 */
 function renderSaturdayTable(){
-  // 이번 달 + 다음 달 보강일 표시 (전월 결석 → 다음달 보강 케이스 대응)
+  // 현재 달 + 이전 달 + 다음 달 보강일 모두 합산 표시
+  const md=cfg.makeupDays||{};
+  const curKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
+  const pm=st.month===1?12:st.month-1, py=st.month===1?st.year-1:st.year;
+  const prevKey=`${py}-${String(pm).padStart(2,'0')}`;
   const nm=st.month===12?1:st.month+1, ny=st.month===12?st.year+1:st.year;
   const nextKey=`${ny}-${String(nm).padStart(2,'0')}`;
-  const days=getMakeupDays();
-  const nextDays=(cfg.makeupDays||{})[nextKey]||[];
-  // 다음 달 보강일 중 학생이 등록된 경우만 표시
-  const nextDaysWithStuds=nextDays.filter(e=>getMakeupStudents(e).length>0);
-  const allDays=[...days, ...nextDaysWithStuds].sort((a,b)=>a.date.localeCompare(b.date));
-  if(!allDays.length) return '';
+  // 모든 달 보강일 수집 후 날짜순 정렬
+  const allEntries=[
+    ...(md[prevKey]||[]),
+    ...(md[curKey]||[]),
+    ...(md[nextKey]||[]),
+  ].sort((a,b)=>a.date.localeCompare(b.date));
+  // 중복 제거 (같은 날짜 있을 경우)
+  const seenDates=new Set();
+  const days=allEntries.filter(e=>{ if(seenDates.has(e.date)) return false; seenDates.add(e.date); return true; });
+  if(!days.length) return '';
   const isPrin=session?.role==='principal';
   const allStuds=cfg.students||[];
   const studs=(!isPrin && !st.viewAll)
@@ -5774,7 +5771,7 @@ function renderSaturdayTable(){
     : allStuds;
 
   // 등록된 보강일을 모두 표시 (학생 없어도)
-  const activeDays=allDays;
+  const activeDays=days;
   if(!activeDays.length) return '';
 
   let h=`<div style="margin-top:24px">
@@ -6632,8 +6629,8 @@ function rSettings(){
     h+=`<div class="toolbar" style="margin-top:14px"><b>💾 데이터</b></div>
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-green" onclick="exportExcel()">📥 이달 전체 엑셀</button>
-      <button class="btn btn-primary" onclick="exportESReport(1)">📋 1분기 레포트 (1~12월)</button>
-      <button class="btn btn-primary" onclick="exportESReport(2)" style="background:#1558a8;border-color:#1558a8">📋 2분기 레포트 (4~다음해3월)</button>
+      <button class="btn btn-primary" onclick="exportESReport()">📋 ES 분기 레포트</button>
+      <button class="btn btn-primary" onclick="exportESReportWithRoadmap()" style="background:#7b1fa2;border-color:#7b1fa2">🗺️ 로드맵 레포트</button>
       <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
         <span style="font-size:11px;color:var(--text3)">마지막 백업: ${lastBackup}</span>
         <button class="btn btn-primary" onclick="backupAllData()">💾 전체 백업</button>
@@ -9768,43 +9765,31 @@ async function delCt(k){
 }
 
 
-/* ── ES 분기 레포트 엑셀
-   reportType: 1 = 1분기 (1월~12월, 기준연도=st.year)
-               2 = 2분기 (4월~다음해3월, 기준연도=st.year) ── */
-function exportESReport(reportType){
-  reportType = reportType||1;
+/* ── ES 분기 레포트 엑셀 (원본과 동일: EF,GH 2열씩 병합) ── */
+function exportESReport(){
   const wb = XLSX.utils.book_new();
   const y = st.year;
-
-  // 월 목록 계산
-  let months, reportLabel, reportYear;
-  if(reportType===1){
-    // 1분기: 해당 연도 1~12월
-    months = [1,2,3,4,5,6,7,8,9,10,11,12];
-    reportLabel = '1분기';
-    reportYear = y;
-  } else {
-    // 2분기: 해당 연도 4월 ~ 다음해 3월
-    // months를 {year, month} 객체로 관리
-    months = [];
-    for(let m=4;m<=12;m++) months.push({year:y, month:m});
-    for(let m=1;m<=3;m++)  months.push({year:y+1, month:m});
-    reportLabel = '2분기';
-    reportYear = y;
-  }
+  const qMap = {1:[1,2,3],2:[4,5,6],3:[7,8,9],4:[10,11,12]};
+  const qNum = Math.ceil(st.month/3);
+  const months = qMap[qNum];
 
   // 열 구조 (0-indexed):
   // 0~3: A~D  라벨 (4열 병합)
-  // 4,5: E,F  → 1차 (EF 병합) ...
-  // 평균: col 28 (AC열)
-  const DATA_START = 4;
-  const DATA_STEP  = 2;
+  // 4,5: E,F  → 1차 (EF 병합)
+  // 6,7: G,H  → 2차 (GH 병합)
+  // ...
+  // 4 + (n-1)*2, 4 + (n-1)*2 + 1 → n차
+  // 28,29,30,31: AC~AF 여백
+  // 평균: col 28 (AC열, 단독)
+  const LABEL_COLS = 4;
+  const DATA_START = 4;   // E열
+  const DATA_STEP  = 2;   // 2열씩 병합
   const MAX_SESS   = 12;
-  const AVG_COL    = 28;
-  const TOTAL_COLS = 32;
+  const AVG_COL    = 28;  // AC열
+  const TOTAL_COLS = 32;  // AF열까지
 
+  // 빈 행 생성
   function emptyRow(){ return new Array(TOTAL_COLS).fill(''); }
-  function getMonthEntry(mEntry){ return reportType===1 ? {year:y, month:mEntry} : mEntry; }
 
   (cfg.students||[]).forEach(s => {
     const myTests = textbookTests[s.id]||{};
@@ -9820,58 +9805,65 @@ function exportESReport(reportType){
       const passA = attempts.find(a=>a.passed);
       if(!passA) return;
       const scoreStr = passA.manualComplete?'완료':passA.score+'점';
-      const suffix = passA.attempt>1 ? `전범위 서술형 ${passA.attempt}차 시험 결과` : `전범위 서술형 시험 결과`;
+      const suffix = passA.attempt>1
+        ? `전범위 서술형 ${passA.attempt}차 시험 결과`
+        : `전범위 서술형 시험 결과`;
       testResultLines.push(`${tbName} ${suffix} : ${scoreStr} 합격`);
     });
 
     const rows = [];
-    const merges = [];
+    const merges = []; // {s:{r,c}, e:{r,c}}
     let testResultRow = -1;
 
-    months.forEach(mEntry => {
-      const {year:my, month:mm} = getMonthEntry(mEntry);
-      // 해당 연/월의 lesson 데이터 가져오기 (prevMonthLessonsCache 포함)
-      const cacheKey = `${my}-${String(mm).padStart(2,'0')}`;
-      const monthLessons = (my===st.year && mm===st.month)
-        ? (mdb.lessons||{})
-        : (prevMonthLessonsCache[cacheKey]||{});
-      const dates = sessionDatesForMonth(s.classType, my, mm);
+    months.forEach(m => {
+      const dates = sessionDatesForMonth(s.classType, y, m);
 
-      // 헤더행
+      // ── 헤더행: 월(A~D 병합), 1차~12차(각 2열 병합), 평균 ──
       const hRow = emptyRow();
-      hRow[0] = (my!==y ? `${my}년 ` : '') + String(mm)+'월';
-      for(let i=0;i<MAX_SESS;i++) hRow[DATA_START + i*DATA_STEP] = `${i+1}차`;
+      hRow[0] = String(m)+'월';
+      for(let i=0;i<MAX_SESS;i++){
+        hRow[DATA_START + i*DATA_STEP] = `${i+1}차`;
+      }
       hRow[AVG_COL] = '평균';
       const hRowIdx = rows.length;
       rows.push(hRow);
+      // 월 라벨 A~D 병합
       merges.push({s:{r:hRowIdx,c:0}, e:{r:hRowIdx,c:3}});
+      // 각 회차 2열씩 병합 (E~F, G~H, ...)
       for(let i=0;i<MAX_SESS;i++){
         const c = DATA_START + i*DATA_STEP;
         merges.push({s:{r:hRowIdx,c:c}, e:{r:hRowIdx,c:c+1}});
       }
+      // 평균 AC~AF 4열 병합
       merges.push({s:{r:hRowIdx,c:AVG_COL}, e:{r:hRowIdx,c:AVG_COL+3}});
 
-      // 출결행
+      // ── 출결행 ──
       const attRow = emptyRow();
       attRow[0] = '출결';
       for(let i=0;i<MAX_SESS;i++){
         const d = dates[i];
-        if(d){ const l = monthLessons[s.id+'_'+d]||{}; attRow[DATA_START + i*DATA_STEP] = l.attendance==='absent'?'X':'O'; }
+        if(d){
+          const l = (mdb.lessons||{})[s.id+'_'+d]||{};
+          attRow[DATA_START + i*DATA_STEP] = l.attendance==='absent'?'X':'O';
+        }
       }
       const attRowIdx = rows.length;
       rows.push(attRow);
       merges.push({s:{r:attRowIdx,c:0}, e:{r:attRowIdx,c:3}});
-      for(let i=0;i<MAX_SESS;i++) merges.push({s:{r:attRowIdx,c:DATA_START+i*DATA_STEP}, e:{r:attRowIdx,c:DATA_START+i*DATA_STEP+1}});
+      for(let i=0;i<MAX_SESS;i++){
+        const c = DATA_START + i*DATA_STEP;
+        merges.push({s:{r:attRowIdx,c:c}, e:{r:attRowIdx,c:c+1}});
+      }
       merges.push({s:{r:attRowIdx,c:AVG_COL}, e:{r:attRowIdx,c:AVG_COL+3}});
 
-      // 복습테스트행
+      // ── 복습테스트행 ──
       const testRow = emptyRow();
       testRow[0] = '복습 테스트';
       const testScores = [];
       for(let i=0;i<MAX_SESS;i++){
         const d = dates[i];
         if(d){
-          const l = monthLessons[s.id+'_'+d]||{};
+          const l = (mdb.lessons||{})[s.id+'_'+d]||{};
           if(l.attendance==='absent'){ testRow[DATA_START+i*DATA_STEP]='X'; continue; }
           const ts = l.testScore;
           if(!ts && ts!==0){ testRow[DATA_START+i*DATA_STEP]='X'; continue; }
@@ -9883,36 +9875,48 @@ function exportESReport(reportType){
         }
       }
       const testRowIdx = rows.length;
-      const testAvg = testScores.length ? Math.ceil(testScores.reduce((a,b)=>a+b,0)/testScores.length*100)/100 : '';
+      // X/*붙은값 제외 후 ROUNDUP(AVERAGE,2) 직접 계산
+      const testAvg = testScores.length
+        ? Math.ceil(testScores.reduce((a,b)=>a+b,0)/testScores.length * 100) / 100
+        : '';
       testRow[AVG_COL] = testAvg;
       rows.push(testRow);
       merges.push({s:{r:testRowIdx,c:0}, e:{r:testRowIdx,c:3}});
-      for(let i=0;i<MAX_SESS;i++) merges.push({s:{r:testRowIdx,c:DATA_START+i*DATA_STEP}, e:{r:testRowIdx,c:DATA_START+i*DATA_STEP+1}});
+      for(let i=0;i<MAX_SESS;i++){
+        const c = DATA_START + i*DATA_STEP;
+        merges.push({s:{r:testRowIdx,c:c}, e:{r:testRowIdx,c:c+1}});
+      }
       merges.push({s:{r:testRowIdx,c:AVG_COL}, e:{r:testRowIdx,c:AVG_COL+3}});
 
-      // 과제행
+      // ── 과제행 ──
       const hwRow = emptyRow();
       hwRow[0] = '과제';
       const hwScores = [];
       for(let i=0;i<MAX_SESS;i++){
         const d = dates[i];
         if(d){
-          const l = monthLessons[s.id+'_'+d]||{};
+          const l = (mdb.lessons||{})[s.id+'_'+d]||{};
           if(l.attendance==='absent'){ hwRow[DATA_START+i*DATA_STEP]='X'; continue; }
           const hw = l.homeworkScore;
-          if(!hw && hw!==0) continue;
+          if(!hw && hw!==0){ continue; }
           hwRow[DATA_START+i*DATA_STEP] = String(hw);
           const n=parseFloat(hw); if(!isNaN(n)) hwScores.push(n);
         }
       }
       const hwRowIdx = rows.length;
-      const hwAvg = hwScores.length ? Math.ceil(hwScores.reduce((a,b)=>a+b,0)/hwScores.length*100)/100 : '';
+      const hwAvg = hwScores.length
+        ? Math.ceil(hwScores.reduce((a,b)=>a+b,0)/hwScores.length * 100) / 100
+        : '';
       hwRow[AVG_COL] = hwAvg;
       rows.push(hwRow);
       merges.push({s:{r:hwRowIdx,c:0}, e:{r:hwRowIdx,c:3}});
-      for(let i=0;i<MAX_SESS;i++) merges.push({s:{r:hwRowIdx,c:DATA_START+i*DATA_STEP}, e:{r:hwRowIdx,c:DATA_START+i*DATA_STEP+1}});
+      for(let i=0;i<MAX_SESS;i++){
+        const c = DATA_START + i*DATA_STEP;
+        merges.push({s:{r:hwRowIdx,c:c}, e:{r:hwRowIdx,c:c+1}});
+      }
       merges.push({s:{r:hwRowIdx,c:AVG_COL}, e:{r:hwRowIdx,c:AVG_COL+3}});
 
+      // 월 구분 빈 행
       rows.push(emptyRow());
     });
 
@@ -9923,201 +9927,43 @@ function exportESReport(reportType){
       tr[0] = '전범위\n시험결과';
       tr[DATA_START] = testResultLines.join('\n');
       rows.push(tr);
+      // 라벨 A~D 병합, 내용 E~AB 병합
       merges.push({s:{r:testResultRow,c:0}, e:{r:testResultRow,c:3}});
       merges.push({s:{r:testResultRow,c:DATA_START}, e:{r:testResultRow,c:AVG_COL-1}});
     }
 
-    // ── 로드맵 섹션 (학생 개인 시트에 포함) ──
-    rows.push(emptyRow());
-    const rmHeaderRow = new Array(TOTAL_COLS).fill('');
-    rmHeaderRow[0] = '교재 로드맵';
-    rows.push(rmHeaderRow);
-    merges.push({s:{r:rows.length-1,c:0}, e:{r:rows.length-1,c:TOTAL_COLS-1}});
-
-    // 로드맵 기간: 1분기=1~12월, 2분기=4월~다음해3월
-    const rmMonths = reportType===1
-      ? Array.from({length:12},(_,i)=>({year:y, month:i+1}))
-      : [...Array.from({length:9},(_,i)=>({year:y, month:i+4})), ...Array.from({length:3},(_,i)=>({year:y+1, month:i+1}))];
-
-    // 로드맵 헤더 (교재명 | 구분 | 월초/월말 × 월수)
-    const rmHdrRow = new Array(TOTAL_COLS).fill('');
-    rmHdrRow[0] = '교재명';
-    rmHdrRow[1] = '구분';
-    rmMonths.forEach((me, mi) => {
-      const baseCol = 2 + mi*2;
-      rmHdrRow[baseCol] = (me.year!==y?`${me.year}년 `:'')+`${me.month}월`;
-    });
-    const rmHdrIdx = rows.length;
-    rows.push(rmHdrRow);
-    // 월 헤더 2열씩 병합
-    rmMonths.forEach((me, mi) => {
-      const c = 2 + mi*2;
-      if(c+1 < TOTAL_COLS) merges.push({s:{r:rmHdrIdx,c}, e:{r:rmHdrIdx,c:c+1}});
-    });
-
-    // 서브헤더 (월초/월말)
-    const rmSubRow = new Array(TOTAL_COLS).fill('');
-    rmSubRow[0] = ''; rmSubRow[1] = '';
-    rmMonths.forEach((me, mi) => {
-      const c = 2 + mi*2;
-      if(c < TOTAL_COLS) rmSubRow[c] = '월초';
-      if(c+1 < TOTAL_COLS) rmSubRow[c+1] = '월말';
-    });
-    rows.push(rmSubRow);
-
-    // 교재별 행
-    (s.textbooks||[]).forEach(t => {
-      const bk = t.tbId ? (cfg.textbooks||[]).find(b=>b.id===t.tbId)||null : null;
-      const tbName = bk?bk.name:(t.name||'교재');
-      const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
-      const prog = textbookProgress[tbKey(s.id,tbId)]||{};
-      const startDate = prog.startDate||t.startDate||'';
-      const attempts = (myTests[tbId]||[]);
-      const passAttempt = attempts.find(a=>a.passed);
-      const passDate = passAttempt?passAttempt.date:'';
-      const rowType = t.rowType||'현행';
-
-      const startY = startDate?parseInt(startDate.substring(0,4)):0;
-      const startM = startDate?parseInt(startDate.substring(5,7)):0;
-      const startD = startDate?parseInt(startDate.substring(8,10)):0;
-      const passY  = passDate?parseInt(passDate.substring(0,4)):0;
-      const passM  = passDate?parseInt(passDate.substring(5,7)):0;
-      const passD  = passDate?parseInt(passDate.substring(8,10)):0;
-
-      const rmRow = new Array(TOTAL_COLS).fill('');
-      rmRow[0] = tbName;
-      rmRow[1] = rowType;
-
-      // 연속 활성 슬롯: 시작 슬롯~종료 슬롯을 병합으로 색 채울 수 있도록 빈 문자열 유지
-      let activeStart = -1, activeEnd = -1;
-      rmMonths.forEach((me, mi) => {
-        const c = 2 + mi*2;
-        for(let half=0; half<2; half++){
-          const col = c + half;
-          if(col >= TOTAL_COLS) return;
-          const dayFrom = half===0?1:16;
-          const dayTo   = half===0?15:31;
-          if(!startDate){ rmRow[col]=''; return; }
-          // startYear가 보고서 기간보다 이후면 스킵
-          if(startY > me.year || (startY===me.year && startM > me.month)){ rmRow[col]=''; return; }
-
-          // 이 슬롯이 시작일 이후인지
-          let slotAfterStart = false;
-          if(startY < me.year){ slotAfterStart=true; }
-          else if(startY === me.year && startM < me.month){ slotAfterStart=true; }
-          else if(startY === me.year && startM === me.month){
-            if(half===0) slotAfterStart=(startD<=15);
-            else slotAfterStart=true;
-          }
-
-          // 종료일 이전인지
-          let slotBeforeEnd = true;
-          if(passDate){
-            if(passY < me.year){ slotBeforeEnd=false; }
-            else if(passY === me.year && passM < me.month){ slotBeforeEnd=false; }
-            else if(passY === me.year && passM === me.month){
-              if(half===0) slotBeforeEnd=(passD>=1);
-              else slotBeforeEnd=(passD>=16);
-            }
-          }
-
-          if(slotAfterStart && slotBeforeEnd){
-            // 활성 슬롯: 빈 문자열 유지 (셀 병합 후 색칠 가능하도록)
-            rmRow[col] = '';
-            if(activeStart < 0) activeStart = col;
-            activeEnd = col;
-          } else {
-            rmRow[col] = '';
-          }
-        }
-      });
-
-      const rmRowIdx = rows.length;
-      rows.push(rmRow);
-
-      // 활성 슬롯 연속 병합 (연속된 슬롯을 하나의 병합 셀로)
-      if(activeStart >= 0){
-        // 연속 활성 구간을 찾아서 병합
-        let runStart = -1;
-        rmMonths.forEach((me, mi) => {
-          const c = 2 + mi*2;
-          for(let half=0; half<2; half++){
-            const col = c + half;
-            if(col >= TOTAL_COLS) return;
-            // 해당 컬럼이 활성인지 재계산
-            const dayFrom = half===0?1:16;
-            if(!startDate){ endRun(); return; }
-            if(startY > me.year || (startY===me.year && startM > me.month)){ endRun(); return; }
-            let aft=false;
-            if(startY<me.year) aft=true;
-            else if(startY===me.year&&startM<me.month) aft=true;
-            else if(startY===me.year&&startM===me.month){ aft=half===0?(startD<=15):true; }
-            let bef=true;
-            if(passDate){
-              if(passY<me.year) bef=false;
-              else if(passY===me.year&&passM<me.month) bef=false;
-              else if(passY===me.year&&passM===me.month){ bef=half===0?(passD>=1):(passD>=16); }
-            }
-            if(aft&&bef){
-              if(runStart<0) runStart=col;
-            } else {
-              endRun();
-            }
-          }
-        });
-        endRun();
-        function endRun(){
-          if(runStart>=0 && activeEnd>=runStart){
-            const re = activeEnd; // use last found
-            // actual contiguous run: merge runStart to current col-1
-            merges.push({s:{r:rmRowIdx,c:runStart}, e:{r:rmRowIdx,c:activeEnd}});
-            runStart=-1;
-          }
-        }
-      }
-    });
-
-    // 로드맵 요약표
-    rows.push(emptyRow());
-    const rmSumHdr = new Array(TOTAL_COLS).fill('');
-    rmSumHdr[0]='교재명'; rmSumHdr[1]='시작일'; rmSumHdr[2]='합격일'; rmSumHdr[3]='소요기간'; rmSumHdr[4]='구분';
-    rows.push(rmSumHdr);
-    (s.textbooks||[]).forEach(t => {
-      const bk = t.tbId ? (cfg.textbooks||[]).find(b=>b.id===t.tbId)||null : null;
-      const tbName = bk?bk.name:(t.name||'교재');
-      const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
-      const prog = textbookProgress[tbKey(s.id,tbId)]||{};
-      const startDate = prog.startDate||t.startDate||'';
-      const attempts = (myTests[tbId]||[]);
-      const passAttempt = attempts.find(a=>a.passed);
-      const passDate = passAttempt?passAttempt.date:'';
-      const dur = startDate&&passDate?durationBetweenLabel(startDate,passDate):(startDate?'진행중':'미시작');
-      const sumRow = new Array(TOTAL_COLS).fill('');
-      sumRow[0]=tbName; sumRow[1]=startDate||'미설정'; sumRow[2]=passDate||'미합격'; sumRow[3]=dur; sumRow[4]=t.rowType||'현행';
-      rows.push(sumRow);
-    });
-
     const ws = XLSX.utils.aoa_to_sheet(rows);
+
+    // 모든 셀 가운데 정렬 (XLSX.js 0.18.5 스타일 적용 시도)
     Object.keys(ws).forEach(addr=>{
       if(addr.startsWith('!')) return;
       if(!ws[addr]) return;
       ws[addr].s = {alignment:{horizontal:'center', vertical:'center', wrapText:false}};
     });
+
     ws['!merges'] = merges;
+
+    // 행 높이: 전범위 시험결과 행
     if(testResultRow >= 0){
       if(!ws['!rows']) ws['!rows'] = [];
       ws['!rows'][testResultRow] = {hpt: testResultLines.length * 20 + 10};
     }
-    ws['!cols'] = [{wch:14},{wch:5}];
-    for(let i=0;i<24;i++) ws['!cols'].push({wch:4});
-    ws['!cols'].push({wch:3},{wch:3},{wch:3},{wch:8}); // 여분열
+
+    // 열 너비
+    ws['!cols'] = [
+      {wch:10},{wch:3},{wch:3},{wch:3}, // A~D 라벨
+    ];
+    for(let i=0;i<MAX_SESS;i++){
+      ws['!cols'].push({wch:5},{wch:5}); // E~X 데이터+병합
+    }
+    ws['!cols'].push({wch:3},{wch:3},{wch:3},{wch:9}); // AC~AF + 평균
 
     XLSX.utils.book_append_sheet(wb, ws, (s.name||'학생').slice(0,31));
   });
 
   if(!wb.SheetNames.length){ toast('학생이 없습니다.', true); return; }
-  XLSX.writeFile(wb, `ES${reportLabel}레포트_${reportYear}.xlsx`, {cellStyles:true});
-  toast(`ES ${reportLabel} 레포트 다운로드 완료`);
+  XLSX.writeFile(wb, `ES분기레포트_${y}_${qNum}분기.xlsx`, {cellStyles:true});
+  toast('ES 분기 레포트 다운로드 완료');
 }
 
 /* ── 교재 로드맵 엑셀 내보내기 (학생 개인) ── */
@@ -10125,30 +9971,52 @@ function exportRoadmapExcel(sid){
   const s=(cfg.students||[]).find(x=>x.id===sid);
   if(!s){ toast('학생을 찾을 수 없습니다.',true); return; }
   const wb=XLSX.utils.book_new();
-  const ws=_buildRoadmapSheet(sid,s);
+  const ws=_buildRoadmapSheet(sid,s,null);
   XLSX.utils.book_append_sheet(wb, ws, '교재로드맵');
   XLSX.writeFile(wb, `교재로드맵_${s.name||sid}_${new Date().getFullYear()}.xlsx`,{cellStyles:true});
   toast(`${s.name} 교재 로드맵 다운로드 완료`);
 }
 
 /* ── 로드맵 시트 빌더 (개인/분기레포트 공용) ── */
-function _buildRoadmapSheet(sid, s){
+/* qNum: 분기 번호 (1~4). null이면 1~12월 고정.
+ * 1분기: 1~12월(기준년), 2분기: 4월~다음해3월, 3분기: 7월~다음해6월, 4분기: 10월~다음해9월 */
+function _buildRoadmapSheet(sid, s, qNum){
   const rmYear=new Date().getFullYear();
-  const MONTHS=[1,2,3,4,5,6,7,8,9,10,11,12];
   const myTests=textbookTests[sid]||{};
   const books=cfg.textbooks||[];
   const sTbs=s.textbooks||[];
 
+  // 분기별 월 슬롯 계산 (달만 표시, 년도 없음)
+  // 각 슬롯은 {year, month, label} 형태
+  let monthSlots=[];
+  if(!qNum||qNum===1){
+    // 1분기: 기준년 1월~12월
+    for(let m=1;m<=12;m++) monthSlots.push({year:rmYear, month:m, label:m+'월'});
+  } else if(qNum===2){
+    // 2분기: 기준년 4월~다음해 3월
+    for(let m=4;m<=12;m++) monthSlots.push({year:rmYear, month:m, label:m+'월'});
+    for(let m=1;m<=3;m++) monthSlots.push({year:rmYear+1, month:m, label:m+'월'});
+  } else if(qNum===3){
+    // 3분기: 기준년 7월~다음해 6월
+    for(let m=7;m<=12;m++) monthSlots.push({year:rmYear, month:m, label:m+'월'});
+    for(let m=1;m<=6;m++) monthSlots.push({year:rmYear+1, month:m, label:m+'월'});
+  } else if(qNum===4){
+    // 4분기: 기준년 10월~다음해 9월
+    for(let m=10;m<=12;m++) monthSlots.push({year:rmYear, month:m, label:m+'월'});
+    for(let m=1;m<=9;m++) monthSlots.push({year:rmYear+1, month:m, label:m+'월'});
+  }
+  const totalMonths=monthSlots.length; // 12개
+
   // 열 구조: A=교재명(col0), B=구분(col1), C1~C24=월초/월말 슬롯(col2~col25)
-  // 헤더행1: 교재 | 구분 | 1월초 1월말 | 2월초 2월말 | ... | 12월초 12월말
+  // 헤더행1: 교재 | 구분 | 1월초 1월말 | ... (달만, 년도 없음)
   const hdr1=['교재','구분'];
   const hdr2=['',''];
   const merges=[];
-  MONTHS.forEach(function(m){
-    hdr1.push(m+'월','');
+  monthSlots.forEach(function(slot, i){
+    hdr1.push(slot.label,'');
     hdr2.push('월초','월말');
     // 월 헤더 2열 병합
-    const c=2+(m-1)*2;
+    const c=2+i*2;
     merges.push({s:{r:0,c:c},e:{r:0,c:c+1}});
   });
 
@@ -10165,40 +10033,45 @@ function _buildRoadmapSheet(sid, s){
     const passDate=passAttempt?passAttempt.date:'';
     const rowType=t.rowType||'현행';
 
-    const startYear=startDate?parseInt(startDate.substring(0,4)):0;
-    const startMonth=startDate?parseInt(startDate.substring(5,7)):0;
-    const startDay=startDate?parseInt(startDate.substring(8,10)):0;
-    const passYear=passDate?parseInt(passDate.substring(0,4)):0;
-    const passMonth=passDate?parseInt(passDate.substring(5,7)):0;
-    const passDay=passDate?parseInt(passDate.substring(8,10)):0;
+    const startY=startDate?parseInt(startDate.substring(0,4)):0;
+    const startM=startDate?parseInt(startDate.substring(5,7)):0;
+    const startD=startDate?parseInt(startDate.substring(8,10)):0;
+    const passY=passDate?parseInt(passDate.substring(0,4)):0;
+    const passM=passDate?parseInt(passDate.substring(5,7)):0;
+    const passD=passDate?parseInt(passDate.substring(8,10)):0;
 
     const row=[tbName, rowType];
-    for(let m=1;m<=12;m++){
+    const rowIdx=rows.length; // 이 교재 행의 인덱스 (병합 범위 계산용)
+    let activeStart=-1, activeEnd=-1; // 셀 병합용 active 범위
+
+    monthSlots.forEach(function(slot, i){
+      const slotYear=slot.year, slotM=slot.month;
       for(let half=0;half<2;half++){
+        const colIdx=2+i*2+half;
         const dayFrom=half===0?1:16;
         const dayTo=half===0?15:31;
         if(!startDate){ row.push(''); continue; }
-        if(startYear>rmYear){ row.push(''); continue; }
 
-        // active 여부
+        // 시작 전 슬롯인지
         let slotAfterStart=false;
-        if(startYear<rmYear){ slotAfterStart=true; }
-        else if(startYear===rmYear){
-          if(startMonth<m){ slotAfterStart=true; }
-          else if(startMonth===m){
-            if(half===0){ slotAfterStart=(startDay<=15); }
+        if(startY<slotYear){ slotAfterStart=true; }
+        else if(startY===slotYear){
+          if(startM<slotM){ slotAfterStart=true; }
+          else if(startM===slotM){
+            if(half===0){ slotAfterStart=(startD<=15); }
             else { slotAfterStart=true; }
           }
         }
 
+        // 종료 후 슬롯인지
         let slotBeforeEnd=true;
         if(passDate){
-          if(passYear<rmYear){ slotBeforeEnd=false; }
-          else if(passYear===rmYear){
-            if(passMonth<m){ slotBeforeEnd=false; }
-            else if(passMonth===m){
-              if(half===0){ slotBeforeEnd=(passDay>=1); }
-              else { slotBeforeEnd=(passDay>=16); }
+          if(passY<slotYear){ slotBeforeEnd=false; }
+          else if(passY===slotYear){
+            if(passM<slotM){ slotBeforeEnd=false; }
+            else if(passM===slotM){
+              if(half===0){ slotBeforeEnd=(passD>=1); }
+              else { slotBeforeEnd=(passD>=16); }
             }
           }
         }
@@ -10208,16 +10081,26 @@ function _buildRoadmapSheet(sid, s){
           // 해당 반달에 수업일이 있는지
           const allDates=_getAllSessionDates(s.classType);
           const hasSession=allDates.some(function(d){
-            return parseInt(d.substring(0,4))===rmYear &&
-                   parseInt(d.substring(5,7))===m &&
+            return parseInt(d.substring(0,4))===slotYear &&
+                   parseInt(d.substring(5,7))===slotM &&
                    parseInt(d.substring(8,10))>=dayFrom &&
                    parseInt(d.substring(8,10))<=dayTo;
           });
-          row.push(hasSession?'●':'○');
+          // 수업일이 있는 active 슬롯은 빈 값으로 놔두되 병합 범위 추적 (색칠 가능하도록)
+          row.push(hasSession?'':'');
+          if(hasSession){
+            if(activeStart===-1) activeStart=colIdx;
+            activeEnd=colIdx;
+          }
         }
       }
-    }
+    });
     rows.push(row);
+
+    // active 범위를 하나의 병합 셀로 만들어 색칠 가능하게
+    if(activeStart!==-1 && activeStart!==activeEnd){
+      merges.push({s:{r:rowIdx,c:activeStart},e:{r:rowIdx,c:activeEnd}});
+    }
   });
 
   // 시작일/합격일 요약행
@@ -10242,11 +10125,130 @@ function _buildRoadmapSheet(sid, s){
 
   // 컬럼 너비
   ws['!cols']=[{wch:16},{wch:6}];
-  for(let i=0;i<24;i++) ws['!cols'].push({wch:5});
+  for(let i=0;i<totalMonths*2;i++) ws['!cols'].push({wch:5});
 
   return ws;
 }
 
+/* ── 분기 레포트에 로드맵 시트 추가 ── */
+function exportESReportWithRoadmap(){
+  const wb=XLSX.utils.book_new();
+  const y=st.year;
+  // 분기별 월 범위 (출결/시험/과제 데이터용)
+  const qMap={1:[1,2,3],2:[4,5,6],3:[7,8,9],4:[10,11,12]};
+  const qNum=Math.ceil(st.month/3);
+  const months=qMap[qNum];
+
+  const LABEL_COLS=4, DATA_START=4, DATA_STEP=2, MAX_SESS=12, AVG_COL=28, TOTAL_COLS=32;
+  function emptyRow(){ return new Array(TOTAL_COLS).fill(''); }
+
+  (cfg.students||[]).forEach(s=>{
+    const myTests=textbookTests[s.id]||{};
+
+    // 전범위 시험 결과
+    const testResultLines=[];
+    (s.textbooks||[]).forEach(t=>{
+      const bk=t.tbId?(cfg.textbooks||[]).find(b=>b.id===t.tbId):null;
+      const tbName=bk?bk.name:(t.name||'교재');
+      const tbId=t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
+      const attempts=myTests[tbId]||[];
+      const passA=attempts.find(a=>a.passed);
+      if(!passA) return;
+      const scoreStr=passA.manualComplete?'완료':passA.score+'점';
+      const suffix=passA.attempt>1?`전범위 서술형 ${passA.attempt}차 시험 결과`:`전범위 서술형 시험 결과`;
+      testResultLines.push(`${tbName} ${suffix} : ${scoreStr} 합격`);
+    });
+
+    const rows=[], merges=[];
+    let testResultRow=-1;
+
+    months.forEach(m=>{
+      const dates=sessionDatesForMonth(s.classType,y,m);
+      const hRow=emptyRow();
+      hRow[0]=String(m)+'월';
+      for(let i=0;i<MAX_SESS;i++) hRow[DATA_START+i*DATA_STEP]=`${i+1}차`;
+      hRow[AVG_COL]='평균';
+      const hRowIdx=rows.length;
+      rows.push(hRow);
+      merges.push({s:{r:hRowIdx,c:0},e:{r:hRowIdx,c:3}});
+      for(let i=0;i<MAX_SESS;i++){const c=DATA_START+i*DATA_STEP;merges.push({s:{r:hRowIdx,c:c},e:{r:hRowIdx,c:c+1}});}
+      merges.push({s:{r:hRowIdx,c:AVG_COL},e:{r:hRowIdx,c:AVG_COL+3}});
+
+      const attRow=emptyRow(); attRow[0]='출결';
+      for(let i=0;i<MAX_SESS;i++){const d=dates[i];if(d){const l=(mdb.lessons||{})[s.id+'_'+d]||{};attRow[DATA_START+i*DATA_STEP]=l.attendance==='absent'?'X':'O';}}
+      const attRowIdx=rows.length; rows.push(attRow);
+      merges.push({s:{r:attRowIdx,c:0},e:{r:attRowIdx,c:3}});
+      for(let i=0;i<MAX_SESS;i++){const c=DATA_START+i*DATA_STEP;merges.push({s:{r:attRowIdx,c:c},e:{r:attRowIdx,c:c+1}});}
+      merges.push({s:{r:attRowIdx,c:AVG_COL},e:{r:attRowIdx,c:AVG_COL+3}});
+
+      const testRow=emptyRow(); testRow[0]='복습 테스트';
+      const testScores=[];
+      for(let i=0;i<MAX_SESS;i++){const d=dates[i];if(d){const l=(mdb.lessons||{})[s.id+'_'+d]||{};if(l.attendance==='absent'){testRow[DATA_START+i*DATA_STEP]='X';continue;}const ts=l.testScore;if(!ts&&ts!==0){testRow[DATA_START+i*DATA_STEP]='X';continue;}const tsStr=String(ts);const hasStar=tsStr.includes('*')||l.testIsFullRange;const val=hasStar?(tsStr.includes('*')?tsStr:tsStr+'*'):tsStr;testRow[DATA_START+i*DATA_STEP]=val;if(!hasStar){const n=parseFloat(tsStr);if(!isNaN(n))testScores.push(n);}}}
+      const testAvg=testScores.length?Math.ceil(testScores.reduce((a,b)=>a+b,0)/testScores.length*100)/100:'';
+      testRow[AVG_COL]=testAvg;
+      const testRowIdx=rows.length; rows.push(testRow);
+      merges.push({s:{r:testRowIdx,c:0},e:{r:testRowIdx,c:3}});
+      for(let i=0;i<MAX_SESS;i++){const c=DATA_START+i*DATA_STEP;merges.push({s:{r:testRowIdx,c:c},e:{r:testRowIdx,c:c+1}});}
+      merges.push({s:{r:testRowIdx,c:AVG_COL},e:{r:testRowIdx,c:AVG_COL+3}});
+
+      const hwRow=emptyRow(); hwRow[0]='과제';
+      const hwScores=[];
+      for(let i=0;i<MAX_SESS;i++){const d=dates[i];if(d){const l=(mdb.lessons||{})[s.id+'_'+d]||{};if(l.attendance==='absent'){hwRow[DATA_START+i*DATA_STEP]='X';continue;}const hw=l.homeworkScore;if(!hw&&hw!==0){continue;}hwRow[DATA_START+i*DATA_STEP]=String(hw);const n=parseFloat(hw);if(!isNaN(n))hwScores.push(n);}}
+      const hwAvg=hwScores.length?Math.ceil(hwScores.reduce((a,b)=>a+b,0)/hwScores.length*100)/100:'';
+      hwRow[AVG_COL]=hwAvg;
+      const hwRowIdx=rows.length; rows.push(hwRow);
+      merges.push({s:{r:hwRowIdx,c:0},e:{r:hwRowIdx,c:3}});
+      for(let i=0;i<MAX_SESS;i++){const c=DATA_START+i*DATA_STEP;merges.push({s:{r:hwRowIdx,c:c},e:{r:hwRowIdx,c:c+1}});}
+      merges.push({s:{r:hwRowIdx,c:AVG_COL},e:{r:hwRowIdx,c:AVG_COL+3}});
+
+      rows.push(emptyRow());
+    });
+
+    if(testResultLines.length){
+      testResultRow=rows.length;
+      const tr=emptyRow(); tr[0]='전범위\n시험결과'; tr[DATA_START]=testResultLines.join('\n');
+      rows.push(tr);
+      merges.push({s:{r:testResultRow,c:0},e:{r:testResultRow,c:3}});
+      merges.push({s:{r:testResultRow,c:DATA_START},e:{r:testResultRow,c:AVG_COL-1}});
+    }
+
+    // 로드맵 섹션 추가 (분기별 월 범위)
+    rows.push(emptyRow());
+    // 로드맵 헤더 행을 출결/시험 데이터 아래에 추가
+    const rmSheet=_buildRoadmapSheet(s.id,s,qNum);
+    // 로드맵 시트의 행들을 현재 ws에 추가 (별도 시트 없이 하단에 삽입)
+    const rmData=XLSX.utils.sheet_to_json(rmSheet,{header:1,defval:''});
+    const rmStartRow=rows.length;
+    rmData.forEach(r=>rows.push(r.concat(new Array(Math.max(0,TOTAL_COLS-r.length)).fill(''))));
+    // 로드맵 셀 병합 (오프셋 적용)
+    if(rmSheet['!merges']){
+      rmSheet['!merges'].forEach(mg=>{
+        merges.push({s:{r:mg.s.r+rmStartRow,c:mg.s.c},e:{r:mg.e.r+rmStartRow,c:mg.e.c}});
+      });
+    }
+
+    const ws=XLSX.utils.aoa_to_sheet(rows);
+    Object.keys(ws).forEach(addr=>{
+      if(addr.startsWith('!')) return;
+      if(!ws[addr]) return;
+      ws[addr].s={alignment:{horizontal:'center',vertical:'center',wrapText:false}};
+    });
+    ws['!merges']=merges;
+    if(testResultRow>=0){
+      if(!ws['!rows']) ws['!rows']=[];
+      ws['!rows'][testResultRow]={hpt:testResultLines.length*20+10};
+    }
+    ws['!cols']=[{wch:10},{wch:3},{wch:3},{wch:3}];
+    for(let i=0;i<MAX_SESS;i++) ws['!cols'].push({wch:5},{wch:5});
+    ws['!cols'].push({wch:3},{wch:3},{wch:3},{wch:9});
+
+    XLSX.utils.book_append_sheet(wb,ws,(s.name||'학생').slice(0,31));
+  });
+
+  if(!wb.SheetNames.length){toast('학생이 없습니다.',true);return;}
+  XLSX.writeFile(wb,`ES분기레포트_${y}_${qNum}분기_로드맵.xlsx`,{cellStyles:true});
+  toast('로드맵 분기 레포트 다운로드 완료');
+}
 
 
 /* ── EXCEL ── */
