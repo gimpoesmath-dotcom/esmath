@@ -3724,6 +3724,13 @@ function rPoints(){
   // 탭 1: 출결 포인트 수동 정산
   // ══════════════════════════════════════
   if(ptTab==='attend'){
+    // 정산 기준월 lessons 캐시 백그라운드 로드
+    const _attendKey=`${settleYear}-${String(settleMonth).padStart(2,'0')}`;
+    if((settleYear!==st.year||settleMonth!==st.month) && !prevMonthLessonsCache[_attendKey]){
+      _loadLessonsForMonth(settleYear, settleMonth).then(data=>{
+        prevMonthLessonsCache[_attendKey]=data;
+      });
+    }
     // 정산 기준월 선택
     h += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <span style="font-size:13px;font-weight:600">정산 기준월</span>
@@ -3760,9 +3767,14 @@ function rPoints(){
         const validSess = sJoinDate ? sessions.filter(sess=>sess.dateStr>=sJoinDate) : sessions;
         const canEarnAttendSettle = reqSess>0 && sessions.length>=reqSess && validSess.length>=reqSess;
 
+        // 정산 기준월의 lessons 사용 (현재 탭 달과 다를 수 있으므로 캐시 참조)
+        const _attendSettleKey=`${settleYear}-${String(settleMonth).padStart(2,'0')}`;
+        const _attendLessons=(settleYear===st.year&&settleMonth===st.month)
+          ? mdb.lessons
+          : (prevMonthLessonsCache[_attendSettleKey]||mdb.lessons);
         let absCount=0, lateCount=0, attendCount=0;
         validSess.forEach(sess=>{
-          const l = mdb.lessons[lk(s.id, sess.dateStr)];
+          const l = _attendLessons[lk(s.id, sess.dateStr)];
           if(!l) return;
           if(l.attendance==='absent') absCount++;
           else if(l.attendance==='late') lateCount++;
@@ -4164,7 +4176,7 @@ function rPoints(){
               h += `<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;background:var(--bg2);flex-wrap:wrap">
                 <div style="flex:1;min-width:80px">
                   <div style="font-size:11px;font-weight:600">${esc(item.label)}</div>
-                  <div style="font-size:10px;color:var(--text3)">${esc(item.date||'')}${item.by?' · '+esc(item.by):''}</div>
+                  <div style="font-size:10px;color:var(--text3)">${esc(item.date||'')}${item.by?' · '+esc(item.by):''}${item.note?' · '+esc(item.note):''}</div>
                 </div>
                 <span style="font-size:13px;font-weight:700;color:${isPlus?'#1e6e3a':'var(--red)'};white-space:nowrap">${isPlus?'+':''}${item.points.toLocaleString()}P</span>
                 ${isPrin?`<button class="btn btn-sm" style="color:var(--red);padding:1px 5px;font-size:10px"
@@ -4619,6 +4631,15 @@ function matrixNameFilter(val){
   render();
 }
 
+// 한글 검색 보조: 입력값과 이름을 NFC 정규화하여 비교 (조합 중 자모 분리 방지)
+function koreanNameMatch(name, query){
+  if(!query) return true;
+  // NFC 정규화로 완성형 비교
+  const nName=(name||'').normalize('NFC').toLowerCase();
+  const nQuery=query.normalize('NFC').toLowerCase();
+  return nName.includes(nQuery);
+}
+
 /* ── MATRIX ── */
 function rMatrix(){
   const isPrin=session?.role==='principal';
@@ -4733,7 +4754,7 @@ function rMatrix(){
     if(_levelF) studs=studs.filter(s=>s.level===_levelF);
     if(_teacherF) studs=studs.filter(s=>isStudentOfTeacher(s,_teacherF));
     const _nameF=st.studentNameFilter||'';
-    if(_nameF) studs=studs.filter(s=>s.name&&s.name.includes(_nameF));
+    if(_nameF) studs=studs.filter(s=>koreanNameMatch(s.name,_nameF));
     if(!studs.length) return;
 
     const monthSessions=sessionsForMonthWithCycle(cls,st.year,st.month);
@@ -5747,19 +5768,11 @@ function rSchedule(){
 
 /* 토요일 보강 시간표 — 이번 달 + 인접 달 보강일들의 학생을 1교시(10-12)/2교시(12-14)별로 담당 그룹핑하여 표시 */
 function renderSaturdayTable(){
-  // 현재 달 + 이전 달 + 다음 달 보강일 모두 합산 표시
+  // 현재 달 보강일만 표시 (이전달/다음달 제외)
   const md=cfg.makeupDays||{};
   const curKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
-  const pm=st.month===1?12:st.month-1, py=st.month===1?st.year-1:st.year;
-  const prevKey=`${py}-${String(pm).padStart(2,'0')}`;
-  const nm=st.month===12?1:st.month+1, ny=st.month===12?st.year+1:st.year;
-  const nextKey=`${ny}-${String(nm).padStart(2,'0')}`;
-  // 모든 달 보강일 수집 후 날짜순 정렬
-  const allEntries=[
-    ...(md[prevKey]||[]),
-    ...(md[curKey]||[]),
-    ...(md[nextKey]||[]),
-  ].sort((a,b)=>a.date.localeCompare(b.date));
+  // 현재 달 보강일만 날짜순 정렬
+  const allEntries=[...(md[curKey]||[])].sort((a,b)=>a.date.localeCompare(b.date));
   // 중복 제거 (같은 날짜 있을 경우)
   const seenDates=new Set();
   const days=allEntries.filter(e=>{ if(seenDates.has(e.date)) return false; seenDates.add(e.date); return true; });
@@ -7805,6 +7818,11 @@ function rModal(){
     const preSelSid = st.modalArg1||'';
     const studs = cfg.students||[];
     const MANUAL_TYPES=[
+      {label:'PERFECT 출석상', pts:5000},
+      {label:'STEADY 출석상', pts:2000},
+      {label:'DAILY 챌린지상', pts:2000},
+      {label:'MASTER 인증상 (High)', pts:5000},
+      {label:'MASTER 인증상 (Low)', pts:2000},
       {label:'TOP HONOR (내신 100점/고등 1등급)', pts:20000},
       {label:'HIGH HONOR 중등 (내신 90점↑)', pts:10000},
       {label:'HIGH HONOR 고등 (내신 90점↑)', pts:20000},
