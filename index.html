@@ -3724,13 +3724,6 @@ function rPoints(){
   // 탭 1: 출결 포인트 수동 정산
   // ══════════════════════════════════════
   if(ptTab==='attend'){
-    // 정산 기준월 lessons 캐시 백그라운드 로드
-    const _attendKey=`${settleYear}-${String(settleMonth).padStart(2,'0')}`;
-    if((settleYear!==st.year||settleMonth!==st.month) && !prevMonthLessonsCache[_attendKey]){
-      _loadLessonsForMonth(settleYear, settleMonth).then(data=>{
-        prevMonthLessonsCache[_attendKey]=data;
-      });
-    }
     // 정산 기준월 선택
     h += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <span style="font-size:13px;font-weight:600">정산 기준월</span>
@@ -3767,14 +3760,11 @@ function rPoints(){
         const validSess = sJoinDate ? sessions.filter(sess=>sess.dateStr>=sJoinDate) : sessions;
         const canEarnAttendSettle = reqSess>0 && sessions.length>=reqSess && validSess.length>=reqSess;
 
-        // 정산 기준월의 lessons 사용 (현재 탭 달과 다를 수 있으므로 캐시 참조)
-        const _attendSettleKey=`${settleYear}-${String(settleMonth).padStart(2,'0')}`;
-        const _attendLessons=(settleYear===st.year&&settleMonth===st.month)
-          ? mdb.lessons
-          : (prevMonthLessonsCache[_attendSettleKey]||mdb.lessons);
+        // 출결 카운트 — mdb.lessons는 이전달+현재달+다음달 병합이므로 settleMonth 날짜도 포함됨
+        // 월간요약 calcMonthStats와 동일하게 sessions 전체 기준으로 카운트
         let absCount=0, lateCount=0, attendCount=0;
-        validSess.forEach(sess=>{
-          const l = _attendLessons[lk(s.id, sess.dateStr)];
+        sessions.forEach(sess=>{
+          const l = mdb.lessons[lk(s.id, sess.dateStr)];
           if(!l) return;
           if(l.attendance==='absent') absCount++;
           else if(l.attendance==='late') lateCount++;
@@ -4054,14 +4044,6 @@ function rPoints(){
     }
     h += `</div>`;
     h += `</div>`; // 학교 성적 포인트 wrapper 닫기
-
-    // 성적 보상 수동 적립 안내
-    h += `<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">✏️ 성적 보상 수동 적립</div>
-    <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--rl);background:var(--bg);margin-bottom:8px">
-      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">자동 목록 외 추가 적립이 필요한 경우 직접 입력하세요. <b>성적표 인증된 학생만 지급</b>.</div>
-      ${isPrin?`<button class="btn btn-primary btn-sm" onclick="openM('addManualPoint')">✏️ 수동 적립</button>`:''}
-      <div style="font-size:11px;color:var(--text3);margin-top:6px">💡 성적 기록은 학생 관리 → 상세 탭에서 확인 및 입력할 수 있습니다.</div>
-    </div>
 
     <!-- 이달 수상자 현황 요약 -->
     <div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 8px">🏆 ${settleYl} 수상 현황 요약</div>
@@ -4627,8 +4609,19 @@ function exportWeeklyExcel(){
 }
 
 function matrixNameFilter(val){
-  st.studentNameFilter=val;
-  render();
+  st.studentNameFilter = val;
+  // DOM show/hide 방식으로 render() 없이 필터 적용 (한글 IME 조합 끊김 방지)
+  const kw = (val||'').normalize('NFC').toLowerCase();
+  document.querySelectorAll('[data-matrix-name]').forEach(el=>{
+    const name = (el.getAttribute('data-matrix-name')||'').normalize('NFC').toLowerCase();
+    el.closest('tr').style.display = (!kw || name.includes(kw)) ? '' : 'none';
+  });
+  // X 버튼 토글
+  const xBtn = document.getElementById('matrixNameClearBtn');
+  if(xBtn) xBtn.style.display = kw ? '' : 'none';
+  // 필터 초기화 버튼 토글
+  const resetBtn = document.getElementById('matrixFilterResetBtn');
+  if(resetBtn) resetBtn.style.display = (kw||st.studentGradeFilter||st.studentLevelFilter||st.studentTeacherFilter) ? '' : 'none';
 }
 
 // 한글 검색 보조: 입력값과 이름을 NFC 정규화하여 비교 (조합 중 자모 분리 방지)
@@ -4716,14 +4709,18 @@ function rMatrix(){
   const _nameF0=st.studentNameFilter||'';
   const isFiltered0b=_gradeF0||_levelF0||_teacherF0||_nameF0;
   let filterBar=`<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px">`;
-  // 이름 검색 입력창
+  // 이름 검색 입력창 — compositionend로 IME 조합 완료 후에만 필터 적용 (한글 끊김 방지)
   filterBar+=`<div style="display:inline-flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--border2);border-radius:20px;padding:2px 10px">
     <span style="font-size:12px;color:var(--text3)">🔍</span>
-    <input type="text" id="matrixNameSearch" placeholder="이름 검색" value="${esc(_nameF0)}" oninput="matrixNameFilter(this.value)" style="border:none;outline:none;background:transparent;font-size:12px;font-family:inherit;width:90px;padding:2px 0;color:var(--text)">
-    ${_nameF0?`<span onclick="matrixNameFilter('')" style="cursor:pointer;font-size:11px;color:var(--text3);padding:0 2px" title="검색 초기화">✕</span>`:''}
+    <input type="text" id="matrixNameSearch" placeholder="이름 검색" value="${esc(_nameF0)}"
+      oninput="if(!this._composing) matrixNameFilter(this.value)"
+      oncompositionstart="this._composing=true"
+      oncompositionend="this._composing=false; matrixNameFilter(this.value)"
+      style="border:none;outline:none;background:transparent;font-size:12px;font-family:inherit;width:90px;padding:2px 0;color:var(--text)">
+    <span id="matrixNameClearBtn" onclick="matrixNameFilter('');document.getElementById('matrixNameSearch').value=''" style="cursor:pointer;font-size:11px;color:var(--text3);padding:0 2px;display:${_nameF0?'':'none'}" title="검색 초기화">✕</span>
   </div>`;
   if(gradeSet.length){ filterBar+=renderGradeGroup('초등','#5a3c00','#fef3e2','#e8c87a',elems0); filterBar+=renderGradeGroup('중등','#1e4a80','#e5effc','#90b8e8',middle0); filterBar+=renderGradeGroup('고등','#3a1e6e','#f0e8fc','#c090e0',high0); }
-  if(isFiltered0b) filterBar+=`<button class="btn btn-sm" onclick="st.studentGradeFilter='';st.studentLevelFilter='';st.studentTeacherFilter='';st.studentNameFilter='';render()" style="font-size:11px">✕ 필터 초기화</button>`;
+  if(isFiltered0b) filterBar+=`<button id="matrixFilterResetBtn" class="btn btn-sm" onclick="st.studentGradeFilter='';st.studentLevelFilter='';st.studentTeacherFilter='';st.studentNameFilter='';render()" style="font-size:11px">✕ 필터 초기화</button>`;
   filterBar+=`</div>`;
 
   let h=`<div class="toolbar">
@@ -4849,7 +4846,7 @@ function renderMatrixTable(studs,mergedCols,todayStr,cls){
     const testAvg=null; // 시험평균 칩 미표시
     const avgChip='';
     const specialNote=s.specialNote||'';
-    h+=`<tr class="${ri%2===0?'row-e':'row-o'}"><td class="col-student">
+    h+=`<tr class="${ri%2===0?'row-e':'row-o'}" data-matrix-name="${esc(s.name)}"><td class="col-student">
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
         <span style="font-weight:600">${s.name}</span>
         ${s.grade?gradeBadge(s.grade):''}
