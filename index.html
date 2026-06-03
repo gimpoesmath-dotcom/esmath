@@ -1,4 +1,4 @@
-<!-- v20260603_fix_matrix_schedule_roadmap -->
+<!-- v20260603_fix_matrix_schedule_roadmap_pt_monthly_sync -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -1291,8 +1291,26 @@ function diagnoseMakeupData(){
   if(!container) return;
   const studs=cfg.students||[];
   const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
-  const days=(cfg.makeupDays||{})[monthKey]||[];
-  const lessons=Object.values(mdb.lessons||{});
+  // 현재 달 보강일 + 다음 달 보강일을 모두 포함 (5월 결석 → 6월 보강 케이스 대응)
+  const nextY=st.month===12?st.year+1:st.year;
+  const nextM=st.month===12?1:st.month+1;
+  const nextKey=`${nextY}-${String(nextM).padStart(2,'0')}`;
+  const days=[
+    ...(cfg.makeupDays||{})[monthKey]||[],
+    ...(cfg.makeupDays||{})[nextKey]||[]
+  ];
+  // lessons: mdb.lessons에 이전달+현재달+다음달 병합이 이미 되어 있음
+  // 단, 진단은 현재 달 결석 lesson만 대상으로 함 (이전달 결석 포함 시 범위 과다)
+  // → 결석일 기준: 현재 달 + 이전 달까지 포함 (5월 결석 → 6월 보강 대응)
+  const prevY2=st.month===1?st.year-1:st.year;
+  const prevM2=st.month===1?12:st.month-1;
+  const prevKey2=`${prevY2}-${String(prevM2).padStart(2,'0')}`;
+  const allowedAbsentMonths=new Set([prevKey2, monthKey]);
+  const lessons=Object.values(mdb.lessons||{}).filter(l=>{
+    // 결석 lesson만 (makeupRequest 있거나 absent인 것) + 날짜가 이전달~현재달인 것만
+    const lMonth=l.date?l.date.slice(0,7):'';
+    return allowedAbsentMonths.has(lMonth);
+  });
 
   // 진단 항목들
   const issues={
@@ -1379,7 +1397,8 @@ function diagnoseMakeupData(){
   }
 
   h=`<div style="padding:8px 0">
-    <div style="font-weight:700;margin-bottom:8px">${st.year}년 ${st.month}월 보강 데이터 진단 결과: 총 ${totalIssues}건</div>`;
+    <div style="font-weight:700;margin-bottom:4px">${st.year}년 ${st.month}월 보강 데이터 진단 결과: 총 ${totalIssues}건</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">📌 진단 범위: 이전달~현재달 결석 lesson · 현재달+다음달 보강일 (이달 결석 → 다음달 보강 케이스 정상 처리)</div>`;
 
   // 옛 형식
   if(issues.oldFormat.length){
@@ -1442,11 +1461,11 @@ function diagnoseMakeupData(){
     h+=`</div>`;
   }
 
-  // 고아 보강 신청 (lesson에만 있음)
+  // 보강 데이터 확인 (lesson에만 있음)
   if(issues.orphanRequest.length){
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fce6e6;border:1px solid #e8a8a8;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <b style="font-size:13px">👻 고아 보강 신청 (${issues.orphanRequest.length}건)</b>
+        <b style="font-size:13px">🔍 보강 데이터 확인 (${issues.orphanRequest.length}건)</b>
         <button class="btn btn-sm btn-primary" onclick="fixOrphanRequests()">일괄 정리</button>
       </div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:6px">결석 lesson에 makeupRequest 정보는 있지만, 토요보강 데이터에서는 학생이 빠진 경우입니다.</div>`;
@@ -1503,11 +1522,18 @@ async function fixOldFormat(){
   }catch(e){ toast('변환 실패: '+e.message,true); }
 }
 
-// 고아 보강 신청 정리 - lesson에서 makeupRequest 제거
+// 보강 데이터 확인 - lesson에서 makeupRequest 제거
 async function fixOrphanRequests(){
-  if(!confirm('lesson에 남아있는 고아 보강 신청 정보를 모두 제거하시겠어요?\n(결석 기록은 그대로 유지되고, 보강 신청 정보만 삭제됩니다)')) return;
+  if(!confirm('보강 데이터 연결이 끊긴 항목을 모두 제거하시겠어요?\n(결석 기록은 그대로 유지되고, 보강 신청 정보만 삭제됩니다)')) return;
   const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
-  const days=(cfg.makeupDays||{})[monthKey]||[];
+  // 현재 달 + 다음 달 보강일 모두 포함 (5월 결석 → 6월 보강 케이스 대응)
+  const nextY2=st.month===12?st.year+1:st.year;
+  const nextM2=st.month===12?1:st.month+1;
+  const nextKey2=`${nextY2}-${String(nextM2).padStart(2,'0')}`;
+  const days=[
+    ...(cfg.makeupDays||{})[monthKey]||[],
+    ...(cfg.makeupDays||{})[nextKey2]||[]
+  ];
   const updated=[];
   Object.values(mdb.lessons||{}).forEach(l=>{
     if(!l.makeupRequest) return;
@@ -1526,7 +1552,7 @@ async function fixOrphanRequests(){
   if(updated.length===0){ toast('정리할 데이터가 없습니다'); return; }
   try{
     for(const l of updated){ await persistLesson(l); }
-    toast(`${updated.length}건의 고아 보강 정보를 정리했습니다`);
+    toast(`${updated.length}건의 보강 데이터를 정리했습니다`);
     diagnoseMakeupData();
     render();
   }catch(e){ toast('정리 실패: '+e.message,true); }
@@ -3237,36 +3263,10 @@ function rMonthly(){
     });
   }
 
-  // 상 계산
+  // 상 계산 — 전역 함수 calcMonthAwardsFromSummary 재활용 (현재 st.year/st.month 기준)
+  // todayStrAw 체크는 전역 함수에서 sessions.length>=requiredSessions로 처리
   function calcAwards(sid, classType){
-    const stats = calcMonthStats(sid, classType);
-    const awards = [];
-    const ct2 = CT()[classType];
-    const requiredSessions = ct2 ? (ct2.sessions || 0) : 0;
-    const todayStrAw = dk(new Date());
-    // 수상 판단은 이번달 귀속 사이클만 사용 (이전달 overflow 제외)
-    const _ownCycleAw=_getAllCycles(classType).find(c=>c.ownerMonth===`${st.year}-${String(st.month).padStart(2,'0')}`);
-    const allSessions = _ownCycleAw ? _ownCycleAw.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
-    const passedSessions = allSessions.filter(s => s.dateStr <= todayStrAw).length;
-    const cycleComplete = requiredSessions > 0 && passedSessions >= requiredSessions;
-
-    // 등록일 기준: 사이클 전체 참여 여부 확인
-    const stu = (cfg.students||[]).find(x=>x.id===sid);
-    const joinDate = stu?.joinDate||'';
-    const validSessions = joinDate ? allSessions.filter(s=>s.dateStr>=joinDate) : allSessions;
-    const canEarnAward = cycleComplete && validSessions.length >= requiredSessions;
-
-    if(canEarnAward){
-      if(stats.absent===0 && stats.late===0 && stats.attend>=requiredSessions)
-        awards.push({id:'perfect', label:'PERFECT', sub:'출석상', icon:'🏅', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'});
-      else if(stats.absent===0 && stats.late>=1 && stats.late<=2 && (stats.attend+stats.late)>=requiredSessions)
-        awards.push({id:'steady',  label:'STEADY',  sub:'출석상', icon:'⭐', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'});
-    }
-    if(canEarnAward && stats.testAvg!==null && stats.testAvg>=80)
-      awards.push({id:'daily', label:'DAILY', sub:'챌린지상', icon:'📊', color:'#7a4e00', bg:'#fdf0d8', border:'#e0c060'});
-    if(canEarnAward && hasMasterScore(sid))
-      awards.push({id:'master', label:'MASTER', sub:'인증상', icon:'👑', color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'});
-    return { awards, stats };
+    return calcMonthAwardsFromSummary(sid, classType, st.year, st.month, null);
   }
 
   // 상별 집계
@@ -3426,6 +3426,76 @@ function rMonthly(){
 /* ── POINTS TAB ── */
 
 
+
+// ── 월간 요약과 동일한 로직으로 특정 월의 수상 계산 (전역 버전) ──
+// 월간 요약 탭의 calcAwards()와 동일 로직 — year/month 파라미터 지원
+function calcMonthAwardsFromSummary(sid, classType, year, month, lessonsOverride){
+  const _lessons = lessonsOverride || mdb.lessons;
+  const targetMonthStr = `${year}-${String(month).padStart(2,'0')}`;
+  const allCycles = _getAllCycles(classType);
+  const ownCycle = allCycles.find(c => c.ownerMonth === targetMonthStr);
+  const allSessions = ownCycle ? ownCycle.dates.map((d,i) => ({sessionNo:i+1, dateStr:d})) : [];
+
+  const ct2 = CT()[classType];
+  const requiredSessions = ct2 ? (ct2.sessions || 0) : 0;
+
+  // 등록일 기준 유효 회차
+  const stu = (cfg.students||[]).find(x => x.id === sid);
+  const joinDate = stu?.joinDate || '';
+  const validSessions = joinDate ? allSessions.filter(s => s.dateStr >= joinDate) : allSessions;
+
+  // 사이클 완료 여부 — 정산 기준월(이전달)이면 이미 완료된 것으로 간주
+  // (오늘 기준 체크가 아니라 회차 수 기준으로 판단)
+  const cycleComplete = requiredSessions > 0 && allSessions.length >= requiredSessions;
+  const canEarnAward = cycleComplete && validSessions.length >= requiredSessions;
+
+  // 출결 통계
+  let attend=0, absent=0, late=0, testScores=[];
+  validSessions.forEach(sess => {
+    const l = _lessons[lk(sid, sess.dateStr)];
+    if(!l) return;
+    if(l.attendance==='attend') attend++;
+    else if(l.attendance==='absent') absent++;
+    else if(l.attendance==='late') late++;
+    if(!l.testIsFullRange){ const ts=parseFloat(l.testScore); if(!isNaN(ts)) testScores.push(ts); }
+  });
+  const testAvg = testScores.length ? Math.round(testScores.reduce((a,b)=>a+b,0)/testScores.length) : null;
+
+  // MASTER 여부
+  const myTests = textbookTests[sid]||{};
+  const _cycles = allCycles;
+  function _getOwnerM(dateStr){
+    for(const c of _cycles){ if(c.dates.includes(dateStr)) return c.ownerMonth; }
+    return dateStr ? dateStr.substring(0,7) : '';
+  }
+  let hasMaster = false;
+  if(canEarnAward){
+    hasMaster = Object.values(myTests).some(arr => {
+      const first = arr.find(a => Number(a.attempt)===1);
+      if(!first || first.manualComplete) return false;
+      const sc = parseFloat(first.score);
+      if(isNaN(sc) || sc < 90) return false;
+      const bk = (cfg.textbooks||[]).find(b => b.id === first.textbookId);
+      if((bk?.masterTier||'high')==='none') return false;
+      const testDate = first.date||'';
+      if(testDate && _getOwnerM(testDate) !== targetMonthStr) return false;
+      return true;
+    });
+  }
+
+  const awards = [];
+  if(canEarnAward){
+    if(absent===0 && late===0 && attend>=requiredSessions)
+      awards.push({id:'perfect', label:'PERFECT', sub:'출석상', icon:'🏅', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'});
+    else if(absent===0 && late>=1 && late<=2 && (attend+late)>=requiredSessions)
+      awards.push({id:'steady',  label:'STEADY',  sub:'출석상', icon:'⭐', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'});
+    if(testAvg!==null && testAvg>=80)
+      awards.push({id:'daily', label:'DAILY', sub:'챌린지상', icon:'📊', color:'#7a4e00', bg:'#fdf0d8', border:'#e0c060'});
+    if(hasMaster)
+      awards.push({id:'master', label:'MASTER', sub:'인증상', icon:'👑', color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'});
+  }
+  return { awards, stats:{attend, absent, late, testAvg, totalSessions:allSessions.length} };
+}
 
 // 포인트 계산 상수
 const PT = {
@@ -3919,21 +3989,44 @@ function rPoints(){
       });
     }
 
+    // ── 월간 요약 기준으로 수상 여부 판단 ──
+    // calcMonthAwardsFromSummary: 월간 요약 탭과 동일한 로직으로 해당 월 수상자 계산
     filtered.forEach((s,i)=>{
       const ct = CT()[s.classType];
-      const earned = calcMonthPoints(s.id, s.classType, settleYear, settleMonth, _settleLessons)
-        .filter(e=>e.type==='DAILY'||e.type==='MASTER_HIGH'||e.type==='MASTER_LOW');
+      // 월간 요약 기준 수상 여부 (DAILY/MASTER)
+      const summaryAwards = calcMonthAwardsFromSummary(s.id, s.classType, settleYear, settleMonth, _settleLessons);
+      const summaryAwardIds = summaryAwards.awards.map(a=>a.id);
+      const hasDaily  = summaryAwardIds.includes('daily');
+      const hasMaster = summaryAwardIds.includes('master');
+
+      // 포인트 계산 (기존 calcMonthPoints 사용 — 금액/노트 추출용)
+      const allEarned = calcMonthPoints(s.id, s.classType, settleYear, settleMonth, _settleLessons);
+      // 월간 요약 수상자에 포함된 항목만 표시
+      const earned = allEarned.filter(e=>{
+        if(e.type==='DAILY') return hasDaily;
+        if(e.type==='MASTER_HIGH'||e.type==='MASTER_LOW') return hasMaster;
+        return false;
+      });
+
       const alreadySettled = (pointsData[s.id]?.history||[])
         .some(h=>h.year===settleYear&&h.month===settleMonth&&(h.type==='DAILY'||h.type==='MASTER_HIGH'||h.type==='MASTER_LOW'));
       if(!earned.length && !alreadySettled) return;
 
+      // 수상 배지 표시 (월간 요약 기준 DAILY/MASTER 배지)
+      const awardBadges = summaryAwards.awards
+        .filter(a=>a.id==='daily'||a.id==='master')
+        .map(a=>`<span style="display:inline-flex;align-items:center;gap:2px;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:700;background:${a.bg};color:${a.color};border:1px solid ${a.border}">${a.icon} ${a.label} ${a.sub}</span>`)
+        .join(' ');
+
       h += `<div data-pt-name="${esc(s.name)}" style="border:1px solid var(--border);border-radius:var(--r);background:#fff;overflow:hidden;display:flex;flex-direction:column">
         <div style="padding:7px 10px;flex:1">
-          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px">
+          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:4px">
             <b style="font-size:20px">${esc(s.name)}</b>
             ${s.grade?`<span style="font-size:9px;padding:1px 5px;border-radius:8px;background:#eef0f3;color:#3a4555;border:1px solid #d8dde5">${s.grade}</span>`:''}
             ${ct?`<span class="badge ${ct.badge||'b-mwf'}" style="font-size:9px">${ct.label}</span>`:''}
           </div>
+          ${awardBadges?`<div style="margin-bottom:5px;display:flex;flex-wrap:wrap;gap:3px">${awardBadges}</div>`:''}
+          <div style="font-size:10px;color:var(--text3);margin-bottom:4px">📊 출 ${summaryAwards.stats.attend} 지 ${summaryAwards.stats.late} 결 ${summaryAwards.stats.absent}${summaryAwards.stats.testAvg!==null?' · 시험평균 '+summaryAwards.stats.testAvg+'점':''} <span style="color:var(--blue)">— ${settleYear}년 ${settleMonth}월 월간요약 기준</span></div>
           ${earned.map(e=>`<div style="font-size:13px;color:var(--text2)">• ${esc(e.label)} <b style="color:#1e6e3a">+${e.points.toLocaleString()}P</b> <span style="color:var(--text3)">${esc(e.note)}</span></div>`).join('')}
           ${alreadySettled?`<div style="font-size:10px;color:#1e6e3a;margin-top:2px">✅ 이미 적립됨</div>`:''}
         </div>
@@ -3942,7 +4035,12 @@ function rPoints(){
     });
 
     const anyOther = filtered.some(s=>{
-      const earned=calcMonthPoints(s.id,s.classType,settleYear,settleMonth,_settleLessons).filter(e=>e.type==='DAILY'||e.type==='MASTER_HIGH'||e.type==='MASTER_LOW');
+      const summaryAwards = calcMonthAwardsFromSummary(s.id, s.classType, settleYear, settleMonth, _settleLessons);
+      const summaryAwardIds = summaryAwards.awards.map(a=>a.id);
+      const hasDaily  = summaryAwardIds.includes('daily');
+      const hasMaster = summaryAwardIds.includes('master');
+      const earned = calcMonthPoints(s.id,s.classType,settleYear,settleMonth,_settleLessons)
+        .filter(e=>(e.type==='DAILY'&&hasDaily)||(( e.type==='MASTER_HIGH'||e.type==='MASTER_LOW')&&hasMaster));
       const done=(pointsData[s.id]?.history||[]).some(h=>h.year===settleYear&&h.month===settleMonth&&(h.type==='DAILY'||h.type==='MASTER_HIGH'||h.type==='MASTER_LOW'));
       return earned.length||done;
     });
@@ -4066,7 +4164,7 @@ function rPoints(){
     h += `</div>`; // 학교 성적 포인트 wrapper 닫기
 
     // 이달 수상자 현황 요약
-    h += `<div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 8px">🏆 ${settleYl} 수상 현황 요약</div>
+    h += `<div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px;flex-wrap:wrap"><span style="font-size:12px;font-weight:700;color:var(--text2)">🏆 ${settleYl} 수상 현황 요약</span><span style="font-size:10px;color:var(--text3);background:var(--bg2);padding:2px 8px;border-radius:20px;border:1px solid var(--border)">⏳ 적립 예정 · 이름 없음 = 적립 완료 · 월간요약 기준</span></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">`;
 
     // 수상 현황 계산
@@ -4080,16 +4178,24 @@ function rPoints(){
     const awardNames = {perfect:[], steady:[], daily:[], master:[]};
 
     filtered.forEach(s=>{
-      // 출결 포인트 내역에서 수상 확인
+      // 월간 요약 기준 수상 계산 (calcMonthAwardsFromSummary — 포인트 적립 여부와 무관)
+      const summaryResult = calcMonthAwardsFromSummary(s.id, s.classType, settleYear, settleMonth, _settleLessons);
+      const summaryIds = summaryResult.awards.map(a=>a.id);
+      // 포인트 적립 내역도 함께 확인 (이미 적립 완료 여부)
       const hist = pointsData[s.id]?.history||[];
-      const hasPerf  = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='PERFECT');
-      const hasSteady= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='STEADY');
-      const hasDaily = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='DAILY');
-      const hasMaster= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&(h.type==='MASTER_HIGH'||h.type==='MASTER_LOW'));
-      if(hasPerf)  { awardCount.perfect++; awardNames.perfect.push(s.name); }
-      if(hasSteady){ awardCount.steady++;  awardNames.steady.push(s.name);  }
-      if(hasDaily) { awardCount.daily++;   awardNames.daily.push(s.name);   }
-      if(hasMaster){ awardCount.master++;  awardNames.master.push(s.name);  }
+      const settledPerf  = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='PERFECT');
+      const settledSteady= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='STEADY');
+      const settledDaily = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='DAILY');
+      const settledMaster= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&(h.type==='MASTER_HIGH'||h.type==='MASTER_LOW'));
+      // 월간요약 기준 수상자 OR 이미 적립 완료된 경우 모두 카운트
+      const hasPerf  = summaryIds.includes('perfect')  || settledPerf;
+      const hasSteady= summaryIds.includes('steady')   || settledSteady;
+      const hasDaily = summaryIds.includes('daily')    || settledDaily;
+      const hasMaster= summaryIds.includes('master')   || settledMaster;
+      if(hasPerf)  { awardCount.perfect++; awardNames.perfect.push(s.name+(settledPerf?'':' ⏳')); }
+      if(hasSteady){ awardCount.steady++;  awardNames.steady.push(s.name+(settledSteady?'':' ⏳'));  }
+      if(hasDaily) { awardCount.daily++;   awardNames.daily.push(s.name+(settledDaily?'':' ⏳'));   }
+      if(hasMaster){ awardCount.master++;  awardNames.master.push(s.name+(settledMaster?'':' ⏳')); }
     });
 
     awardDefs2.forEach(def=>{
