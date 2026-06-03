@@ -1197,11 +1197,28 @@ async function persistLessonFb(lesson, knownUpdatedAt, forceOverwrite=false){
   await setDoc(ref, data);
   lessonVersions[key]=now;
   mdb.lessons[key]=data;
-  // 이전달 날짜인 경우 prevMonthLessonsCache도 동기화
+  // 이전달/다음달 날짜인 경우 prevMonthLessonsCache 및 sessionStorage도 동기화
   const cacheKey=`${lessonYear}-${String(lessonMonth).padStart(2,'0')}`;
   if(lessonYear!==st.year || lessonMonth!==st.month){
     if(!prevMonthLessonsCache[cacheKey]) prevMonthLessonsCache[cacheKey]={};
     prevMonthLessonsCache[cacheKey][key]=data;
+    // sessionStorage 캐시도 업데이트 (오래된 캐시로 인한 데이터 누락 방지)
+    try{
+      const ssCached=sessionStorage.getItem(`lessons_cache_${cacheKey}`);
+      const ssObj=ssCached?JSON.parse(ssCached):{};
+      ssObj[key]=data;
+      sessionStorage.setItem(`lessons_cache_${cacheKey}`, JSON.stringify(ssObj));
+    }catch(e){}
+  } else {
+    // 현재 달 데이터도 sessionStorage 캐시가 있으면 업데이트 (다른 탭에서 참조 시 일관성)
+    try{
+      const ssCached=sessionStorage.getItem(`lessons_cache_${cacheKey}`);
+      if(ssCached){
+        const ssObj=JSON.parse(ssCached);
+        ssObj[key]=data;
+        sessionStorage.setItem(`lessons_cache_${cacheKey}`, JSON.stringify(ssObj));
+      }
+    }catch(e){}
   }
   // 저장 완료 syncBar 표시
   setSyncState('ok', new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' 저장됨');
@@ -1730,10 +1747,13 @@ async function switchMonth(y,m){
   const py=m===1?y-1:y;
   const prevKey=`${py}-${String(pm).padStart(2,'0')}`;
   delete prevMonthLessonsCache[prevKey];
+  // sessionStorage 캐시도 무효화 (다른 탭에서 수정된 데이터 반영)
+  try{ sessionStorage.removeItem(`lessons_cache_${prevKey}`); }catch(e){}
   const nm=m===12?1:m+1;
   const ny=m===12?y+1:y;
   const nextKey2=`${ny}-${String(nm).padStart(2,'0')}`;
   delete prevMonthLessonsCache[nextKey2];
+  try{ sessionStorage.removeItem(`lessons_cache_${nextKey2}`); }catch(e){}
   setSyncState('syncing',`${y}년 ${m}월 불러오는 중...`);
   await loadMonthData();
   setSyncState('ok','준비 완료');
@@ -8432,15 +8452,20 @@ function rModal(){
     const absentDate=st.modalArg2; // 결석한 날짜
     const s=(cfg.students||[]).find(x=>x.id===sid);
     if(!s){ closeM(); return; }
-    // 설정에 등록된 토요보강일만 표시 (이번 달 또는 다음 달 초까지)
+    // 설정에 등록된 토요보강일만 표시 (이전 달 + 이번 달 + 다음 달)
     const allMkDates=getAllMakeupDates();
     const ys=st.year, ms=st.month;
-    // 이번 달 + 다음 달의 등록된 보강일만 (보통 결석한 달의 보강일에 신청)
+    // 결석일 기준 달(absentDate 슬라이스)의 보강일 + 다음 달까지 포함
+    const absentMonthKey=absentDate.slice(0,7);
+    const absentYear=parseInt(absentDate.slice(0,4)), absentMonth=parseInt(absentDate.slice(5,7));
+    const nextAY=absentMonth===12?absentYear+1:absentYear, nextAM=absentMonth===12?1:absentMonth+1;
+    const nextAbsentKey=`${nextAY}-${String(nextAM).padStart(2,'0')}`;
+    // 현재 탭 달도 포함 (어느 달에서 모달을 열든 결석달+다음달+현재탭달 모두)
     const monthKey=`${ys}-${String(ms).padStart(2,'0')}`;
-    const nextY=ms===12?ys+1:ys;
-    const nextM=ms===12?1:ms+1;
+    const nextY=ms===12?ys+1:ys, nextM=ms===12?1:ms+1;
     const nextKey=`${nextY}-${String(nextM).padStart(2,'0')}`;
-    const saturdays=allMkDates.filter(d=>d.startsWith(monthKey)||d.startsWith(nextKey));
+    const allowedKeys=new Set([absentMonthKey, nextAbsentKey, monthKey, nextKey]);
+    const saturdays=allMkDates.filter(d=>allowedKeys.has(d.slice(0,7)));
     // 이미 등록된 보강 정보
     const existingMakeup=findStudentMakeupInMonth(sid, ys, ms);
     // 학생의 평일/금 담당 (기본값)
@@ -8454,7 +8479,12 @@ function rModal(){
         <select id="mkReqDate" style="width:100%" ${!saturdays.length?'disabled':''}>
           ${saturdays.length?saturdays.map(d=>{
             const dt=parseDate(d);
-            return `<option value="${d}">${d.slice(0,7)===monthKey?'이번 달':'다음 달'} ${d.slice(5)} (${DAY[dt.getDay()]})</option>`;
+            const dMonthKey=d.slice(0,7);
+            const dYear=parseInt(d.slice(0,4)), dMon=parseInt(d.slice(5,7));
+            const relLabel=dMonthKey===absentMonthKey?`결석 당월(${dMon}월)`
+              :dMonthKey===nextAbsentKey?`결석 다음달(${dMon}월)`
+              :`${dYear}년 ${dMon}월`;
+            return `<option value="${d}">${relLabel} ${d.slice(5)} (${DAY[dt.getDay()]})</option>`;
           }).join(''):'<option value="">등록된 보강일 없음</option>'}
         </select>
       </div>
@@ -9222,6 +9252,20 @@ function autoRemoveMakeupRequest(lesson){
     delete entry.studentIds;
   }
   delete lesson.makeupRequest;
+  // prevMonthLessonsCache에도 반영
+  const lKey=lesson.studentId+'_'+lesson.date;
+  const lessonMonth=lesson.date?lesson.date.slice(0,7):'';
+  if(lessonMonth && prevMonthLessonsCache[lessonMonth] && prevMonthLessonsCache[lessonMonth][lKey]){
+    delete prevMonthLessonsCache[lessonMonth][lKey].makeupRequest;
+    try{
+      const ssCached=sessionStorage.getItem(`lessons_cache_${lessonMonth}`);
+      if(ssCached){
+        const ssObj=JSON.parse(ssCached);
+        if(ssObj[lKey]) delete ssObj[lKey].makeupRequest;
+        sessionStorage.setItem(`lessons_cache_${lessonMonth}`, JSON.stringify(ssObj));
+      }
+    }catch(e){}
+  }
   // cfg 저장은 비동기로 백그라운드 처리 (출결 변경과 함께 일어나도록)
   gasCall('saveConfig',{config:cfg}).catch(e=>console.warn('cfg 저장 실패:',e));
   toast('결석 해제 → 보강 신청 자동 취소됨');
@@ -9241,12 +9285,19 @@ async function removeStudentFromMakeup(sid, makeupDate){
     delete entry.studentIds;
   }
   // 2) 학생의 lesson에서 makeupRequest도 제거 (역참조)
+  // mdb.lessons + prevMonthLessonsCache 모든 캐시에서 검색 (다른 달 결석일 포함)
   const updatedLessons=[];
-  Object.values(mdb.lessons||{}).forEach(l=>{
-    if(l.studentId===sid && l.makeupRequest && l.makeupRequest.date===makeupDate){
-      delete l.makeupRequest;
-      updatedLessons.push(l);
-    }
+  const allLessonSources=[mdb.lessons, ...Object.values(prevMonthLessonsCache)];
+  const seenKeys=new Set();
+  allLessonSources.forEach(src=>{
+    Object.values(src||{}).forEach(l=>{
+      if(seenKeys.has(l.studentId+'_'+l.date)) return;
+      if(l.studentId===sid && l.makeupRequest && l.makeupRequest.date===makeupDate){
+        seenKeys.add(l.studentId+'_'+l.date);
+        delete l.makeupRequest;
+        updatedLessons.push(l);
+      }
+    });
   });
   // 3) 저장
   try{
