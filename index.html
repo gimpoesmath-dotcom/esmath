@@ -10765,7 +10765,7 @@ window.debugAwardDiff = function(year, month){
     console.log('
 ▼ 차이 있는 학생:');
     diffs.forEach(r=>{
-      console.group(`${r.name} (${r.classType}) — 월간요약: ${r.monthly_award} / 포인트: ${r.points_award}`);
+      console.group(`${r.name} (${r.classType}) - 월간요약: ${r.monthly_award} / 포인트: ${r.points_award}`);
       console.log(`등록일: ${r.joinDate||'없음'} | 사이클: ${r.cycleDates[0]}~${r.cycleDates[r.cycleDates.length-1]} | 전체${r.sessions_total}회/유효${r.validSessions}회/필요${r.reqSess}회`);
       console.log(`월간요약 출 ${r.monthly_attend} 지 ${r.monthly_late} 결 ${r.monthly_absent}`);
       console.log(`포인트탭 출 ${r.points_attend} 지 ${r.points_late} 결 ${r.points_absent}`);
@@ -10795,6 +10795,8 @@ window.debugAwardDiff = function(year, month){
   return diffs;
 };
 console.log('✅ debugAwardDiff 로드됨. 사용법: debugAwardDiff(2026, 5)');
+
+window.debugAwardDiff=function(year,month){var tk=year+'-'+(month<10?'0':'')+month,py=month===1?year-1:year,pm=month===1?12:month-1,pk=py+'-'+(pm<10?'0':'')+pm,mL=mdb.lessons,pL=Object.assign({},mdb.lessons,prevMonthLessonsCache[pk]||{},prevMonthLessonsCache[tk]||{});var rows=(cfg.students||[]).map(function(s){var m=calcMonthAwardsFromSummary(s.id,s.classType,year,month,mL),p=calcMonthAwardsFromSummary(s.id,s.classType,year,month,pL),ma=m.awards.map(function(a){return a.id;}).sort().join(',')||'none',pa=p.awards.map(function(a){return a.id;}).sort().join(',')||'none';return{name:s.name,m_attend:m.stats.attend,m_absent:m.stats.absent,m_late:m.stats.late,m_awards:ma,p_attend:p.stats.attend,p_absent:p.stats.absent,p_late:p.stats.late,p_awards:pa,DIFF:ma!==pa?'DIFF':'OK'};});var diffs=rows.filter(function(r){return r.DIFF==='DIFF';});console.log(year+'/'+month+' total:'+rows.length+' diff:'+diffs.length);if(diffs.length)console.table(diffs);else console.log('ALL MATCH');console.table(rows);};
 </script>
 </body>
 </html>
