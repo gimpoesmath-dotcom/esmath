@@ -3216,8 +3216,12 @@ function rMonthly(){
     // 통계는 이번달 귀속 사이클만 사용 (이전달 overflow 제외)
     const _ownCycleSt=_getAllCycles(classType).find(c=>c.ownerMonth===`${st.year}-${String(st.month).padStart(2,'0')}`);
     const sessions = _ownCycleSt ? _ownCycleSt.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
+    // 등록일 기준 유효 회차만 카운트 (중간 등록 학생 정확성)
+    const stu2=(cfg.students||[]).find(x=>x.id===sid);
+    const jd2=stu2?.joinDate||'';
+    const validSess2 = jd2 ? sessions.filter(s=>s.dateStr>=jd2) : sessions;
     let attend=0, absent=0, late=0, testScores=[];
-    sessions.forEach(sess=>{
+    validSess2.forEach(sess=>{
       const l = mdb.lessons[lk(sid, sess.dateStr)];
       if(!l) return;
       if(l.attendance==='attend') attend++;
@@ -3226,7 +3230,7 @@ function rMonthly(){
       if(!l.testIsFullRange){ const ts=parseFloat(l.testScore); if(!isNaN(ts)) testScores.push(ts); }
     });
     const testAvg = testScores.length ? Math.round(testScores.reduce((a,b)=>a+b,0)/testScores.length) : null;
-    return { attend, absent, late, testAvg, totalSessions: sessions.length };
+    return { attend, absent, late, testAvg, totalSessions: sessions.length, validCount: validSess2.length };
   }
 
   // 전범위 1차 90점 이상 여부 — 해당 사이클(ownerMonth) 기준
@@ -3485,9 +3489,10 @@ function calcMonthAwardsFromSummary(sid, classType, year, month, lessonsOverride
 
   const awards = [];
   if(canEarnAward){
-    if(absent===0 && late===0 && attend>=requiredSessions)
+    const _vLen = validSessions.length; // 등록일 기준 유효 회차 수 기준으로 판단
+    if(absent===0 && late===0 && attend>=_vLen)
       awards.push({id:'perfect', label:'PERFECT', sub:'출석상', icon:'🏅', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'});
-    else if(absent===0 && late>=1 && late<=2 && (attend+late)>=requiredSessions)
+    else if(absent===0 && late>=1 && late<=2 && (attend+late)>=_vLen)
       awards.push({id:'steady',  label:'STEADY',  sub:'출석상', icon:'⭐', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'});
     if(testAvg!==null && testAvg>=80)
       awards.push({id:'daily', label:'DAILY', sub:'챌린지상', icon:'📊', color:'#7a4e00', bg:'#fdf0d8', border:'#e0c060'});
@@ -3545,10 +3550,11 @@ function calcMonthPoints(sid, classType, year, month, lessonsOverride){
   const cycleComplete = stdSessions > 0 && sessions.length >= stdSessions;
   const canEarnAttend = cycleComplete && validSessions.length >= stdSessions;
   if(canEarnAttend){
-    if(absent===0 && late===0 && attend>=stdSessions){
+    const _vLen = validSessions.length; // 등록일 기준 유효 회차 수 기준으로 판단
+    if(absent===0 && late===0 && attend>=_vLen){
       earned.push({type:'PERFECT', label:'PERFECT 출석상', points:PT.PERFECT,
         note:`결석 0 · 지각 0 (${stdSessions}회 완료)`});
-    } else if(absent===0 && late>=1 && late<=2 && (attend+late)>=stdSessions){
+    } else if(absent===0 && late>=1 && late<=2 && (attend+late)>=_vLen){
       earned.push({type:'STEADY', label:'STEADY 출석상', points:PT.STEADY,
         note:`결석 0 · 지각 ${late}회 (${stdSessions}회 완료)`});
     }
@@ -3826,6 +3832,14 @@ function rPoints(){
       <span style="font-size:12px;color:var(--text3)">어나더클래스에서 출결 확인 후 아래에서 각 학생 선택</span>
     </div>`;
 
+    // 출결카드용 lessons — 이전달 병합 (사이클이 월 경계 걸치는 경우 대응)
+    const _atndKey     = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
+    const _atndPrevY   = settleMonth===1 ? settleYear-1 : settleYear;
+    const _atndPrevM   = settleMonth===1 ? 12 : settleMonth-1;
+    const _atndPrevKey = `${_atndPrevY}-${String(_atndPrevM).padStart(2,'0')}`;
+    const _atndBase    = prevMonthLessonsCache[_atndKey] || mdb.lessons;
+    const _attendLessons = Object.assign({}, prevMonthLessonsCache[_atndPrevKey]||{}, _atndBase);
+
     // 미정산 / 정산완료 구분
     const unsetList  = filtered.filter(s=>!isAttendSettled(s.id,settleYear,settleMonth)).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
     const doneList   = filtered.filter(s=>isAttendSettled(s.id,settleYear,settleMonth)).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
@@ -3850,11 +3864,10 @@ function rPoints(){
         const validSess = sJoinDate ? sessions.filter(sess=>sess.dateStr>=sJoinDate) : sessions;
         const canEarnAttendSettle = reqSess>0 && sessions.length>=reqSess && validSess.length>=reqSess;
 
-        // 출결 카운트 — mdb.lessons는 이전달+현재달+다음달 병합이므로 settleMonth 날짜도 포함됨
-        // 월간요약 calcMonthStats와 동일하게 sessions 전체 기준으로 카운트
+        // 출결 카운트 — validSess(등록일 이후) 기준, _attendLessons(이전달 포함) 참조
         let absCount=0, lateCount=0, attendCount=0;
-        sessions.forEach(sess=>{
-          const l = mdb.lessons[lk(s.id, sess.dateStr)];
+        validSess.forEach(sess=>{
+          const l = _attendLessons[lk(s.id, sess.dateStr)];
           if(!l) return;
           if(l.attendance==='absent') absCount++;
           else if(l.attendance==='late') lateCount++;
@@ -3865,8 +3878,9 @@ function rPoints(){
 
         let sysRecommend = 'none';
         if(canEarnAttendSettle){
-          if(absCount===0 && lateCount===0 && attendCount>=reqSess) sysRecommend='perfect';
-          else if(absCount===0 && lateCount>=1 && lateCount<=2 && (attendCount+lateCount)>=reqSess) sysRecommend='steady';
+          const _vLen = validSess.length;
+          if(absCount===0 && lateCount===0 && attendCount>=_vLen) sysRecommend='perfect';
+          else if(absCount===0 && lateCount>=1 && lateCount<=2 && (attendCount+lateCount)>=_vLen) sysRecommend='steady';
         }
         const recBadge = !isCycleComplete
           ? `<span style="font-size:10px;padding:1px 7px;border-radius:20px;background:#f0f0f0;color:#888;border:1px solid #ddd;font-weight:600">기준 회차(${reqSess}회) 미완료</span>`
@@ -3978,14 +3992,32 @@ function rPoints(){
     <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">DAILY 챌린지상 / MASTER 인증상 — 시스템 자동 계산 결과</div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:16px">`;
 
-    // 정산 기준월 데이터 사용 (캐시에 있으면 사용, 없으면 현재 mdb.lessons)
-    const _settleLessons = prevMonthLessonsCache[`${settleYear}-${String(settleMonth).padStart(2,'0')}`] || mdb.lessons;
-
-    // 정산 기준월 캐시 없으면 백그라운드 로드 (render는 버튼 클릭 시에만)
+    // 정산 기준월 데이터 사용 — 이전달 캐시도 병합 (사이클이 월 경계 걸치는 경우 대응)
+    // 예: 5월 사이클에 4월 30일(1회차)가 포함된 경우 → 4월 lesson도 필요
     const _settleKey = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
+    const _settlePrevY = settleMonth===1 ? settleYear-1 : settleYear;
+    const _settlePrevM = settleMonth===1 ? 12 : settleMonth-1;
+    const _settlePrevKey = `${_settlePrevY}-${String(_settlePrevM).padStart(2,'0')}`;
+    const _settleNextY = settleMonth===12 ? settleYear+1 : settleYear;
+    const _settleNextM = settleMonth===12 ? 1 : settleMonth+1;
+    const _settleNextKey = `${_settleNextY}-${String(_settleNextM).padStart(2,'0')}`;
+    // 이전달 + 현재(정산)달 병합 (현재달이 우선)
+    const _settleBase = prevMonthLessonsCache[_settleKey] || (settleYear===st.year&&settleMonth===st.month ? mdb.lessons : null);
+    const _settleLessons = _settleBase
+      ? Object.assign({}, prevMonthLessonsCache[_settlePrevKey]||{}, prevMonthLessonsCache[_settleNextKey]||{}, _settleBase)
+      : mdb.lessons;
+
+    // 정산 기준월 캐시 없으면 백그라운드 로드
     if((settleYear!==st.year||settleMonth!==st.month) && !prevMonthLessonsCache[_settleKey]){
       _loadLessonsForMonth(settleYear, settleMonth).then(data=>{
         prevMonthLessonsCache[_settleKey]=data;
+        render(); // 로드 완료 후 재렌더
+      });
+    }
+    // 이전달 캐시도 없으면 백그라운드 로드
+    if(!prevMonthLessonsCache[_settlePrevKey]){
+      _loadLessonsForMonth(_settlePrevY, _settlePrevM).then(data=>{
+        prevMonthLessonsCache[_settlePrevKey]=data;
       });
     }
 
