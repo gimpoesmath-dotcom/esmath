@@ -3837,8 +3837,14 @@ function rPoints(){
     const _atndPrevY   = settleMonth===1 ? settleYear-1 : settleYear;
     const _atndPrevM   = settleMonth===1 ? 12 : settleMonth-1;
     const _atndPrevKey = `${_atndPrevY}-${String(_atndPrevM).padStart(2,'0')}`;
-    const _atndBase    = prevMonthLessonsCache[_atndKey] || mdb.lessons;
-    const _attendLessons = Object.assign({}, prevMonthLessonsCache[_atndPrevKey]||{}, _atndBase);
+    // mdb.lessons를 base로 깔고 정산달 캐시로 덮어씌우기
+    const _atndBase    = prevMonthLessonsCache[_atndKey] || null;
+    const _attendLessons = Object.assign(
+      {},
+      mdb.lessons,                              // base: 이전달+현재달+다음달 병합
+      prevMonthLessonsCache[_atndPrevKey]||{},  // 정산달 이전달 캐시
+      _atndBase||{}                             // 정산달 캐시 (있으면 우선)
+    );
 
     // 미정산 / 정산완료 구분
     const unsetList  = filtered.filter(s=>!isAttendSettled(s.id,settleYear,settleMonth)).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
@@ -4002,10 +4008,16 @@ function rPoints(){
     const _settleNextM = settleMonth===12 ? 1 : settleMonth+1;
     const _settleNextKey = `${_settleNextY}-${String(_settleNextM).padStart(2,'0')}`;
     // 이전달 + 현재(정산)달 병합 (현재달이 우선)
-    const _settleBase = prevMonthLessonsCache[_settleKey] || (settleYear===st.year&&settleMonth===st.month ? mdb.lessons : null);
-    const _settleLessons = _settleBase
-      ? Object.assign({}, prevMonthLessonsCache[_settlePrevKey]||{}, prevMonthLessonsCache[_settleNextKey]||{}, _settleBase)
-      : mdb.lessons;
+    // mdb.lessons(이전달+현재달+다음달 병합)를 base로 깔고
+    // 정산달 캐시가 있으면 덮어씌워서 정확한 데이터 사용
+    // → 4월 30일처럼 사이클이 이전달에 걸친 날짜도 반드시 포함됨
+    const _settleBase = prevMonthLessonsCache[_settleKey] || null;
+    const _settleLessons = Object.assign(
+      {},
+      mdb.lessons,                                      // base: 이전달+현재달+다음달 병합
+      prevMonthLessonsCache[_settlePrevKey]||{},        // 정산달 이전달 캐시
+      _settleBase||{}                                   // 정산달 캐시 (있으면 우선)
+    );
 
     // 정산 기준월 캐시 없으면 백그라운드 로드
     if((settleYear!==st.year||settleMonth!==st.month) && !prevMonthLessonsCache[_settleKey]){
@@ -10651,6 +10663,138 @@ function toast(msg,isErr=false){
     await showApp();
   }catch(e){ localStorage.removeItem('session'); }
 })();
+
+// ══════════════════════════════════════════════════════
+// 🔍 디버그: 월간요약 vs 포인트탭 출결 수상 비교
+// 콘솔에서 debugAwardDiff(2026, 5) 로 실행
+// ══════════════════════════════════════════════════════
+window.debugAwardDiff = function(year, month){
+  const targetKey = `${year}-${String(month).padStart(2,'0')}`;
+  const prevY = month===1 ? year-1 : year;
+  const prevM = month===1 ? 12 : month-1;
+  const prevKey = `${prevY}-${String(prevM).padStart(2,'0')}`;
+
+  // lessons 소스 구성
+  // 월간요약: mdb.lessons (현재 탭 기준 병합)
+  const monthlyLessons = mdb.lessons;
+  // 포인트탭: settleMonth 캐시 + 이전달 병합
+  const settleBase = prevMonthLessonsCache[targetKey] || mdb.lessons;
+  const pointsLessons = Object.assign({}, prevMonthLessonsCache[prevKey]||{}, settleBase);
+
+  const studs = cfg.students||[];
+  const results = [];
+
+  studs.forEach(s=>{
+    // ── 월간요약 기준 (calcMonthAwardsFromSummary, lessons=null → mdb.lessons) ──
+    const monthly = calcMonthAwardsFromSummary(s.id, s.classType, year, month, monthlyLessons);
+
+    // ── 포인트탭 출결카드 기준 ──
+    const _ownCycle = _getAllCycles(s.classType).find(c=>c.ownerMonth===targetKey);
+    const sessions  = _ownCycle ? _ownCycle.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
+    const ctInfo    = CT()[s.classType];
+    const reqSess   = ctInfo ? (ctInfo.sessions||0) : 0;
+    const sJoinDate = s.joinDate||'';
+    const validSess = sJoinDate ? sessions.filter(sess=>sess.dateStr>=sJoinDate) : sessions;
+    const canEarn   = reqSess>0 && sessions.length>=reqSess && validSess.length>=reqSess;
+    let absCount=0, lateCount=0, attendCount=0;
+    validSess.forEach(sess=>{
+      const l = pointsLessons[lk(s.id, sess.dateStr)];
+      if(!l) return;
+      if(l.attendance==='absent') absCount++;
+      else if(l.attendance==='late') lateCount++;
+      else if(l.attendance==='attend') attendCount++;
+    });
+    const vLen = validSess.length;
+    let ptRecommend = 'none';
+    if(canEarn){
+      if(absCount===0&&lateCount===0&&attendCount>=vLen) ptRecommend='perfect';
+      else if(absCount===0&&lateCount>=1&&lateCount<=2&&(attendCount+lateCount)>=vLen) ptRecommend='steady';
+    }
+
+    // ── 비교 ──
+    const mAwardIds = monthly.awards.map(a=>a.id);
+    const mAttend   = mAwardIds.includes('perfect') ? 'perfect' : mAwardIds.includes('steady') ? 'steady' : 'none';
+    const diff      = mAttend !== ptRecommend;
+
+    results.push({
+      name: s.name,
+      classType: s.classType,
+      joinDate: s.joinDate||'',
+      cycle: targetKey,
+      cycleDates: sessions.map(s=>s.dateStr),
+      sessions_total: sessions.length,
+      validSessions: vLen,
+      reqSess,
+      canEarn_monthly: monthly.awards.length > 0 || monthly.stats.attend > 0,
+      canEarn_points: canEarn,
+
+      monthly_attend: monthly.stats.attend,
+      monthly_absent: monthly.stats.absent,
+      monthly_late:   monthly.stats.late,
+      monthly_award:  mAttend,
+
+      points_attend:  attendCount,
+      points_absent:  absCount,
+      points_late:    lateCount,
+      points_award:   ptRecommend,
+
+      DIFF: diff ? '⚠️ 다름' : '✅ 일치',
+
+      // 회차별 세부 비교
+      sessionDetail: sessions.map(sess=>{
+        const lm = monthlyLessons[lk(s.id, sess.dateStr)];
+        const lp = pointsLessons[lk(s.id, sess.dateStr)];
+        const inValid = !sJoinDate || sess.dateStr >= sJoinDate;
+        return {
+          date: sess.dateStr,
+          inValidSess: inValid,
+          monthly_att:  lm?.attendance||'(없음)',
+          points_att:   lp?.attendance||'(없음)',
+          same: (lm?.attendance||'') === (lp?.attendance||'')
+        };
+      }).filter(d=>!d.same || d.monthly_att==='(없음)' || d.points_att==='(없음)')
+    });
+  });
+
+  const diffs = results.filter(r=>r.DIFF==='⚠️ 다름');
+  console.log(`
+=== ${year}년 ${month}월 월간요약 vs 포인트탭 출결 비교 ===`);
+  console.log(`전체 ${results.length}명 중 차이: ${diffs.length}명`);
+
+  if(diffs.length){
+    console.log('
+▼ 차이 있는 학생:');
+    diffs.forEach(r=>{
+      console.group(`${r.name} (${r.classType}) — 월간요약: ${r.monthly_award} / 포인트: ${r.points_award}`);
+      console.log(`등록일: ${r.joinDate||'없음'} | 사이클: ${r.cycleDates[0]}~${r.cycleDates[r.cycleDates.length-1]} | 전체${r.sessions_total}회/유효${r.validSessions}회/필요${r.reqSess}회`);
+      console.log(`월간요약 출 ${r.monthly_attend} 지 ${r.monthly_late} 결 ${r.monthly_absent}`);
+      console.log(`포인트탭 출 ${r.points_attend} 지 ${r.points_late} 결 ${r.points_absent}`);
+      if(r.sessionDetail.length){
+        console.log('회차별 차이:');
+        r.sessionDetail.forEach(d=>console.log(`  ${d.date} ${d.inValidSess?'[유효]':'[제외]'} 월간:${d.monthly_att} / 포인트:${d.points_att} ${d.same?'':'← 다름'}`));
+      }
+      console.groupEnd();
+    });
+  } else {
+    console.log('✅ 모든 학생 일치');
+  }
+
+  console.log('
+전체 결과(표):');
+  console.table(results.map(r=>({
+    이름: r.name,
+    반: r.classType,
+    등록일: r.joinDate,
+    유효회차: r.validSessions,
+    필요회차: r.reqSess,
+    월간요약: `출${r.monthly_attend}지${r.monthly_late}결${r.monthly_absent}→${r.monthly_award}`,
+    포인트탭: `출${r.points_attend}지${r.points_late}결${r.points_absent}→${r.points_award}`,
+    결과: r.DIFF
+  })));
+
+  return diffs;
+};
+console.log('✅ debugAwardDiff 로드됨. 사용법: debugAwardDiff(2026, 5)');
 </script>
 </body>
 </html>
