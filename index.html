@@ -3846,48 +3846,84 @@ function rPoints(){
       _atndBase||{}                             // 정산달 캐시 (있으면 우선)
     );
 
-    // 미정산 / 정산완료 구분
-    const unsetList  = filtered.filter(s=>!isAttendSettled(s.id,settleYear,settleMonth)).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
-    const doneList   = filtered.filter(s=>isAttendSettled(s.id,settleYear,settleMonth)).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+    // ── 미정산 목록 먼저 전계산 (출결 상태 포함) — 필터링에 사용 ──
+    const _atndMonthKey = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
+    const _unsetRaw = filtered
+      .filter(s=>!isAttendSettled(s.id,settleYear,settleMonth))
+      .sort((a,b)=>a.name.localeCompare(b.name,'ko'))
+      .map(s=>{
+        const _ctInfo = CT()[s.classType];
+        const _reqSess = _ctInfo ? (_ctInfo.sessions||0) : 0;
+        const _ownCycle = _getAllCycles(s.classType).find(c=>c.ownerMonth===_atndMonthKey);
+        const _sessions = _ownCycle ? _ownCycle.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
+        const _sJoin = s.joinDate||'';
+        const _validSess = _sJoin ? _sessions.filter(sess=>sess.dateStr>=_sJoin) : _sessions;
+        const _canEarn = _reqSess>0 && _sessions.length>=_reqSess && _validSess.length>=_reqSess;
+        const _isCycleDone = _reqSess>0 && _sessions.length>=_reqSess;
+        let _abs=0, _late=0, _att=0;
+        _validSess.forEach(sess=>{
+          const l=_attendLessons[lk(s.id,sess.dateStr)];
+          if(!l) return;
+          if(l.attendance==='absent') _abs++;
+          else if(l.attendance==='late') _late++;
+          else if(l.attendance==='attend') _att++;
+        });
+        let _sys='nodata';
+        if(!_isCycleDone) _sys='incomplete';
+        else if(!_canEarn) _sys='nodata';
+        else if(_abs===0&&_late===0&&_att>=_validSess.length) _sys='perfect';
+        else if(_abs===0&&_late>=1&&_late<=2&&(_att+_late)>=_validSess.length) _sys='steady';
+        else if(_abs>0) _sys='absent';
+        return {s, sessions:_sessions, reqSess:_reqSess, validSess:_validSess, canEarn:_canEarn, isCycleComplete:_isCycleDone, absCount:_abs, lateCount:_late, attendCount:_att, totalRec:_abs+_late+_att, sysRecommend:_sys};
+      });
 
-    if(unsetList.length){
+    // 출결 상태 필터
+    const attendFilter = st.ptAttendFilter||'all';
+    const _fCounts = {
+      perfect:    _unsetRaw.filter(r=>r.sysRecommend==='perfect').length,
+      steady:     _unsetRaw.filter(r=>r.sysRecommend==='steady').length,
+      absent:     _unsetRaw.filter(r=>r.sysRecommend==='absent').length,
+      nodata:     _unsetRaw.filter(r=>r.sysRecommend==='nodata'||r.sysRecommend==='incomplete').length,
+    };
+    const unsetData = attendFilter==='all'     ? _unsetRaw
+      : attendFilter==='perfect'  ? _unsetRaw.filter(r=>r.sysRecommend==='perfect')
+      : attendFilter==='steady'   ? _unsetRaw.filter(r=>r.sysRecommend==='steady')
+      : attendFilter==='absent'   ? _unsetRaw.filter(r=>r.sysRecommend==='absent')
+      : attendFilter==='nodata'   ? _unsetRaw.filter(r=>r.sysRecommend==='nodata'||r.sysRecommend==='incomplete')
+      : _unsetRaw;
+    const unsetList = unsetData.map(r=>r.s);
+
+    // 정산완료 목록
+    const doneList = filtered.filter(s=>isAttendSettled(s.id,settleYear,settleMonth)).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+
+    if(_unsetRaw.length){
+      // ── 출결 상태 필터 버튼 ──
+      const _fBtn=(val,label,col,bg,cnt)=>{
+        const act=attendFilter===val;
+        return `<button onclick="st.ptAttendFilter='${val}';render()"
+          style="padding:3px 11px;font-size:11px;border-radius:20px;cursor:pointer;font-family:inherit;font-weight:${act?700:500};
+          background:${act?col:bg};color:${act?'#fff':col};border:1.5px solid ${col}">
+          ${label} <b>${cnt}</b>
+        </button>`;
+      };
+      h += `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:var(--bg2);border-radius:var(--r);border:1px solid var(--border)">
+        <span style="font-size:11px;font-weight:600;color:var(--text2)">출결 필터</span>
+        ${_fBtn('all',     '전체',      '#444',    '#e8e8e8', _unsetRaw.length)}
+        ${_fBtn('perfect', '🏅 PERFECT','#1e6e3a', '#e2f2e9', _fCounts.perfect)}
+        ${_fBtn('steady',  '⭐ STEADY', '#1558a8', '#e5effc', _fCounts.steady)}
+        ${_fBtn('absent',  '❌ 결석있음','#a02828', '#fce6e6', _fCounts.absent)}
+        ${_fBtn('nodata',  '📋 기록없음','#888',    '#f5f5f5', _fCounts.nodata)}
+      </div>`;
+
       h += `<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">
-        미정산 (${unsetList.length}명) — 시스템 출결은 참고용 · 어나더클래스 확인 후 최종 선택
+        미정산 ${attendFilter!=='all'?`(필터: ${unsetList.length}명 / 전체 ${_unsetRaw.length}명)`:`(${_unsetRaw.length}명)`} — 시스템 출결은 참고용 · 어나더클래스 확인 후 최종 선택
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:16px">`;
 
-      unsetList.forEach(s=>{
+      unsetData.forEach(({s, sessions, reqSess, validSess, canEarn: canEarnAttendSettle, isCycleComplete, absCount, lateCount, attendCount, totalRec, sysRecommend})=>{
         const ct  = CT()[s.classType];
         const sel = (st.ptAttendSel||{})[s.id]||'none';
         const selPt = sel==='perfect'?PT.PERFECT:sel==='steady'?PT.STEADY:0;
-
-        const _ownCycle=_getAllCycles(s.classType).find(c=>c.ownerMonth===`${settleYear}-${String(settleMonth).padStart(2,'0')}`);
-        const sessions = _ownCycle ? _ownCycle.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
-        const ctInfo = CT()[s.classType];
-        const reqSess = ctInfo ? (ctInfo.sessions||0) : 0;
-        // 등록일 기준 참여 가능 회차
-        const sJoinDate = s.joinDate||'';
-        const validSess = sJoinDate ? sessions.filter(sess=>sess.dateStr>=sJoinDate) : sessions;
-        const canEarnAttendSettle = reqSess>0 && sessions.length>=reqSess && validSess.length>=reqSess;
-
-        // 출결 카운트 — validSess(등록일 이후) 기준, _attendLessons(이전달 포함) 참조
-        let absCount=0, lateCount=0, attendCount=0;
-        validSess.forEach(sess=>{
-          const l = _attendLessons[lk(s.id, sess.dateStr)];
-          if(!l) return;
-          if(l.attendance==='absent') absCount++;
-          else if(l.attendance==='late') lateCount++;
-          else if(l.attendance==='attend') attendCount++;
-        });
-        const totalRec = absCount+lateCount+attendCount;
-        const isCycleComplete = reqSess>0 && sessions.length>=reqSess;
-
-        let sysRecommend = 'none';
-        if(canEarnAttendSettle){
-          const _vLen = validSess.length;
-          if(absCount===0 && lateCount===0 && attendCount>=_vLen) sysRecommend='perfect';
-          else if(absCount===0 && lateCount>=1 && lateCount<=2 && (attendCount+lateCount)>=_vLen) sysRecommend='steady';
-        }
         const recBadge = !isCycleComplete
           ? `<span style="font-size:10px;padding:1px 7px;border-radius:20px;background:#f0f0f0;color:#888;border:1px solid #ddd;font-weight:600">기준 회차(${reqSess}회) 미완료</span>`
           : !canEarnAttendSettle
@@ -3948,7 +3984,7 @@ function rPoints(){
         <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
           ${isPrin&&anySelected?`<button class="btn btn-primary" onclick="confirmAttendSettle(${settleYear},${settleMonth})">✅ ${settleYl} 출결 포인트 적립</button>`:''}
           ${anySelected?`<button class="btn" onclick="st.ptAttendSel={};render()">초기화</button>`:''}
-          ${isPrin&&unsetList.length?`<button class="btn" style="color:var(--text3)" onclick="skipAttendSettle(${settleYear},${settleMonth})">이달 출결 없음으로 완료</button>`:''}
+          ${isPrin&&_unsetRaw.length?`<button class="btn" style="color:var(--text3)" onclick="skipAttendSettle(${settleYear},${settleMonth})">이달 출결 없음으로 완료</button>`:''}
         </div>
       </div>`;
     }
