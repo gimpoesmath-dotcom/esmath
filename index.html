@@ -10762,8 +10762,7 @@ window.debugAwardDiff = function(year, month){
   console.log(`전체 ${results.length}명 중 차이: ${diffs.length}명`);
 
   if(diffs.length){
-    console.log('
-▼ 차이 있는 학생:');
+    console.log('\n▼ 차이 있는 학생:');
     diffs.forEach(r=>{
       console.group(`${r.name} (${r.classType}) - 월간요약: ${r.monthly_award} / 포인트: ${r.points_award}`);
       console.log(`등록일: ${r.joinDate||'없음'} | 사이클: ${r.cycleDates[0]}~${r.cycleDates[r.cycleDates.length-1]} | 전체${r.sessions_total}회/유효${r.validSessions}회/필요${r.reqSess}회`);
@@ -10779,8 +10778,7 @@ window.debugAwardDiff = function(year, month){
     console.log('✅ 모든 학생 일치');
   }
 
-  console.log('
-전체 결과(표):');
+  console.log('\n전체 결과(표):');
   console.table(results.map(r=>({
     이름: r.name,
     반: r.classType,
