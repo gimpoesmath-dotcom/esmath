@@ -3832,19 +3832,24 @@ function rPoints(){
       <span style="font-size:12px;color:var(--text3)">어나더클래스에서 출결 확인 후 아래에서 각 학생 선택</span>
     </div>`;
 
-    // 출결카드용 lessons — 이전달 병합 (사이클이 월 경계 걸치는 경우 대응)
-    // 예: 5월 사이클에 4월 30일(1회차)가 포함된 경우 → 4월 lesson도 반드시 필요
+    // 출결카드용 lessons — 이전달/다음달 모두 병합 (사이클이 월 경계 걸치는 경우 대응)
+    // 예1: 5월 사이클 1회차가 4.30 → 이전달(4월) 로드 필요
+    // 예2: 5월 사이클 마지막회차가 6.2 → 다음달(6월) 로드 필요
     const _atndKey     = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
     const _atndPrevY   = settleMonth===1 ? settleYear-1 : settleYear;
     const _atndPrevM   = settleMonth===1 ? 12 : settleMonth-1;
     const _atndPrevKey = `${_atndPrevY}-${String(_atndPrevM).padStart(2,'0')}`;
-    // mdb.lessons를 base로 깔고 정산달 캐시로 덮어씌우기
+    const _atndNextY   = settleMonth===12 ? settleYear+1 : settleYear;
+    const _atndNextM   = settleMonth===12 ? 1 : settleMonth+1;
+    const _atndNextKey = `${_atndNextY}-${String(_atndNextM).padStart(2,'0')}`;
+    // 이전달 + 정산달 + 다음달 모두 병합 (정산달이 최우선)
     const _atndBase    = prevMonthLessonsCache[_atndKey] || null;
     const _attendLessons = Object.assign(
       {},
-      mdb.lessons,                              // base: 이전달+현재달+다음달 병합
+      mdb.lessons,                              // base: 현재 뷰 병합본
       prevMonthLessonsCache[_atndPrevKey]||{},  // 정산달 이전달 캐시
-      _atndBase||{}                             // 정산달 캐시 (있으면 우선)
+      prevMonthLessonsCache[_atndNextKey]||{},  // 정산달 다음달 캐시
+      _atndBase||{}                             // 정산달 캐시 (최우선)
     );
 
     // 정산달 캐시 없으면 백그라운드 로드 후 재렌더
@@ -3854,10 +3859,17 @@ function rPoints(){
         render();
       });
     }
-    // 이전달 캐시 없으면 백그라운드 로드 (4.30일 같은 경우 반드시 필요)
+    // 이전달 캐시 없으면 백그라운드 로드 (1회차가 이전달인 경우)
     if(!prevMonthLessonsCache[_atndPrevKey]){
       _loadLessonsForMonth(_atndPrevY, _atndPrevM).then(data=>{
         prevMonthLessonsCache[_atndPrevKey]=data;
+        render();
+      });
+    }
+    // 다음달 캐시 없으면 백그라운드 로드 (마지막회차가 다음달인 경우)
+    if(!prevMonthLessonsCache[_atndNextKey]){
+      _loadLessonsForMonth(_atndNextY, _atndNextM).then(data=>{
+        prevMonthLessonsCache[_atndNextKey]=data;
         render();
       });
     }
@@ -3954,6 +3966,23 @@ function rPoints(){
 
         const selBorderColor = sel==='perfect'?'#80c090':sel==='steady'?'#90b8e8':'var(--border)';
 
+        // 사이클 경계 날짜 안내 (이전달/다음달에 걸친 회차)
+        const _settleMonthPfx = _atndMonthKey; // 'YYYY-MM'
+        const _crossDates = sessions.map((sess,i)=>({no:i+1, dateStr:sess.dateStr}))
+          .filter(x=>x.dateStr.substring(0,7)!==_settleMonthPfx);
+        const _crossNotice = _crossDates.length
+          ? `<div style="font-size:10px;color:#7a4e00;background:#fff8e8;border-top:1px solid #f0dda0;padding:3px 8px;display:flex;gap:6px;flex-wrap:wrap">
+              ${_crossDates.map(x=>{
+                const isPrev = x.dateStr.substring(0,7) < _settleMonthPfx;
+                const label = isPrev ? '이전달' : '다음달';
+                const color = isPrev ? '#7a4e00' : '#1558a8';
+                const bg    = isPrev ? '#fff3d0' : '#e5effc';
+                const border= isPrev ? '#e0c060' : '#90b8e8';
+                return `<span style="font-size:10px;padding:1px 6px;border-radius:10px;background:${bg};color:${color};border:1px solid ${border};font-weight:600">${label} ${x.dateStr.substring(5)} · ${x.no}회차</span>`;
+              }).join('')}
+            </div>`
+          : '';
+
         h += `<div data-pt-name="${esc(s.name)}" style="border:1px solid ${selBorderColor};border-radius:var(--r);background:#fff;overflow:hidden">
           <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;flex-wrap:wrap;border-bottom:1px solid var(--border)">
             <b style="font-size:15px">${esc(s.name)}</b>
@@ -3981,6 +4010,7 @@ function rPoints(){
                 border:1px solid ${canEarnAttendSettle?(sel==='steady'?'#1558a8':'#90b8e8'):'#ddd'}">⭐ STEADY</button>
             </div>
           </div>
+          ${_crossNotice}
         </div>`;
       });
       h += `</div>`;
