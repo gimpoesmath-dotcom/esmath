@@ -3833,6 +3833,7 @@ function rPoints(){
     </div>`;
 
     // 출결카드용 lessons — 이전달 병합 (사이클이 월 경계 걸치는 경우 대응)
+    // 예: 5월 사이클에 4월 30일(1회차)가 포함된 경우 → 4월 lesson도 반드시 필요
     const _atndKey     = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
     const _atndPrevY   = settleMonth===1 ? settleYear-1 : settleYear;
     const _atndPrevM   = settleMonth===1 ? 12 : settleMonth-1;
@@ -3845,6 +3846,21 @@ function rPoints(){
       prevMonthLessonsCache[_atndPrevKey]||{},  // 정산달 이전달 캐시
       _atndBase||{}                             // 정산달 캐시 (있으면 우선)
     );
+
+    // 정산달 캐시 없으면 백그라운드 로드 후 재렌더
+    if((settleYear!==st.year||settleMonth!==st.month) && !prevMonthLessonsCache[_atndKey]){
+      _loadLessonsForMonth(settleYear, settleMonth).then(data=>{
+        prevMonthLessonsCache[_atndKey]=data;
+        render();
+      });
+    }
+    // 이전달 캐시 없으면 백그라운드 로드 (4.30일 같은 경우 반드시 필요)
+    if(!prevMonthLessonsCache[_atndPrevKey]){
+      _loadLessonsForMonth(_atndPrevY, _atndPrevM).then(data=>{
+        prevMonthLessonsCache[_atndPrevKey]=data;
+        render();
+      });
+    }
 
     // ── 미정산 목록 먼저 전계산 (출결 상태 포함) — 필터링에 사용 ──
     const _atndMonthKey = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
@@ -3911,8 +3927,8 @@ function rPoints(){
         ${_fBtn('all',     '전체',      '#444',    '#e8e8e8', _unsetRaw.length)}
         ${_fBtn('perfect', '🏅 PERFECT','#1e6e3a', '#e2f2e9', _fCounts.perfect)}
         ${_fBtn('steady',  '⭐ STEADY', '#1558a8', '#e5effc', _fCounts.steady)}
-        ${_fBtn('absent',  '❌ 결석있음','#a02828', '#fce6e6', _fCounts.absent)}
-        ${_fBtn('nodata',  '📋 기록없음','#888',    '#f5f5f5', _fCounts.nodata)}
+
+
       </div>`;
 
       h += `<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">
@@ -4244,7 +4260,7 @@ function rPoints(){
     h += `</div>`; // 학교 성적 포인트 wrapper 닫기
 
     // 이달 수상자 현황 요약
-    h += `<div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px;flex-wrap:wrap"><span style="font-size:12px;font-weight:700;color:var(--text2)">🏆 ${settleYl} 수상 현황 요약</span><span style="font-size:10px;color:var(--text3);background:var(--bg2);padding:2px 8px;border-radius:20px;border:1px solid var(--border)">⏳ 적립 예정 · 이름 없음 = 적립 완료 · 월간요약 기준</span></div>
+    h += `<div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px;flex-wrap:wrap"><span style="font-size:12px;font-weight:700;color:var(--text2)">🏆 ${settleYl} 수상 현황 요약</span><span style="font-size:10px;color:var(--text3);display:inline-flex;align-items:center;gap:6px"><span style="font-size:10px;padding:2px 8px;border-radius:20px;font-weight:600;background:#fdf0d8;color:#7a4e00;border:1px solid #e0c060">⏳ 적립 예정</span><span style="font-size:10px;padding:2px 8px;border-radius:20px;font-weight:600;background:#e2f2e9;color:#1e6e3a;border:1px solid #80c090">✅ 적립 완료</span><span style="font-size:10px;color:var(--text3)">월간요약 기준</span></span></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">`;
 
     // 수상 현황 계산
