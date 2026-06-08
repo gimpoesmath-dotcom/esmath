@@ -1,4 +1,4 @@
-<!-- v20260608_makeup_crossmonth_fix -->
+<!-- v20260608_fix_sessioncache -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -1253,11 +1253,16 @@ async function persistLessonFb(lesson, knownUpdatedAt, forceOverwrite=false){
   await setDoc(ref, data);
   lessonVersions[key]=now;
   mdb.lessons[key]=data;
-  // 이전달 날짜인 경우 prevMonthLessonsCache도 동기화
+  // 이전달(또는 다음달) 날짜인 경우 prevMonthLessonsCache + sessionStorage 모두 동기화
+  // sessionStorage 미갱신 시 새로고침 후 구버전 캐시로 복원되어 makeupRequest 등이 사라지는 버그 방지
   const cacheKey=`${lessonYear}-${String(lessonMonth).padStart(2,'0')}`;
   if(lessonYear!==st.year || lessonMonth!==st.month){
     if(!prevMonthLessonsCache[cacheKey]) prevMonthLessonsCache[cacheKey]={};
     prevMonthLessonsCache[cacheKey][key]=data;
+    try{
+      const updated={...prevMonthLessonsCache[cacheKey]};
+      sessionStorage.setItem(`lessons_cache_${cacheKey}`, JSON.stringify(updated));
+    }catch(e){}
   }
   // 저장 완료 syncBar 표시
   setSyncState('ok', new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})+' 저장됨');
@@ -1379,12 +1384,10 @@ function diagnoseMakeupData(){
   });
 
   // 2) lessons에 makeupRequest 있는데 makeupDays에 학생 없는 케이스
-  // 전월 결석 → 당월 보강처럼 월이 다를 수 있으므로 cfg.makeupDays 전체에서 검색
-  const allMakeupDaysFlat = Object.values(cfg.makeupDays||{}).flat();
   lessons.forEach(l=>{
     if(!l.makeupRequest) return;
     const reqDate=l.makeupRequest.date;
-    const entry=allMakeupDaysFlat.find(e=>e.date===reqDate);
+    const entry=days.find(e=>e.date===reqDate);
     let foundInMakeup=false;
     if(entry){
       const arr=getMakeupStudents(entry);
@@ -1470,19 +1473,20 @@ function diagnoseMakeupData(){
   if(issues.noAbsent.length){
     // 수정 폼용: 이번달 토요보강일 목록, 선생님 목록, 학생별 결석일 목록
     const satDates=days.map(e=>e.date).sort();
-    const teacherOpts=(cfg.teachers||[]).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    const teacherOpts=(cfg.teachers||[]).map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fff5e0;border:1px solid #e8c870;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <b style="font-size:13px">🔗 결석 연결 안 됨 (${issues.noAbsent.length}건)</b>
       </div>
-      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">보강 등록은 되어있지만 어느 결석과 연결되지 않은 경우입니다.<br>① 결석 없이 추가 보강으로 등록된 경우 → 정상 (결석일 없음 선택 후 저장하면 해제)<br>② 결석이 있는데 연결이 안 된 경우 → 결석일을 지정해 연결하세요. (전달 결석도 선택 가능)</div>`;
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">보강 등록은 되어있지만 어느 결석에 대한 보강인지 lesson에 기록이 없습니다. (이전에 결석 → 출석 변경했을 가능성)<br>결석일을 지정해 연결하거나, 교시·담당을 수정할 수 있습니다.</div>`;
     issues.noAbsent.forEach((o,oi)=>{
-      // 해당 학생의 결석 lesson 목록 (전달 포함 — mdb.lessons에 이미 병합됨)
+      // 해당 학생의 결석 lesson 목록
       const absentLessons=Object.values(mdb.lessons||{}).filter(l=>
         l.studentId===o.sid && l.attendance==='absent' && !l.makeupRequest
       ).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-      const absentOpts='<option value="">(결석 미연결 — 추가보강인 경우 그대로 저장)</option>'
-        + absentLessons.map(l=>`<option value="${esc(l.date)}">${esc(l.date)}</option>`).join('');
+      const absentOpts=absentLessons.length
+        ? absentLessons.map(l=>`<option value="${esc(l.date)}">${esc(l.date)}</option>`).join('')
+        : '<option value="">결석일 없음</option>';
       const editId=`noabs_edit_${oi}`;
       h+=`<div style="border:1px solid #e8c870;border-radius:6px;padding:8px;margin-bottom:8px;background:#fffdf5">
         <div style="display:flex;align-items:center;gap:6px;font-size:12px;flex-wrap:wrap">
@@ -1523,9 +1527,8 @@ function diagnoseMakeupData(){
 
   // 고아 보강 신청 (lesson에만 있음)
   if(issues.orphanRequest.length){
-    // 재연결 드롭다운: 전체 달의 보강일 목록 (전달 결석→당달 보강 지원)
-    const allSatDates=Object.values(cfg.makeupDays||{}).flat().map(e=>e.date).sort();
-    const teacherOpts2=(cfg.teachers||[]).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    const satDates2=days.map(e=>e.date).sort();
+    const teacherOpts2=(cfg.teachers||[]).map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fce6e6;border:1px solid #e8a8a8;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <b style="font-size:13px">🔍 미연결 보강 신청 (${issues.orphanRequest.length}건)</b>
@@ -1533,8 +1536,8 @@ function diagnoseMakeupData(){
       </div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:6px">결석 lesson에 makeupRequest 정보는 있지만, 토요보강 데이터에서는 학생이 빠진 경우입니다.<br>보강일을 등록해 연결하거나, 신청 정보를 제거할 수 있습니다.</div>`;
     issues.orphanRequest.forEach((o,oi)=>{
-      const satOpts2=allSatDates.length
-        ? allSatDates.map(d=>`<option value="${d}" ${d===o.reqDate?'selected':''}>${d}</option>`).join('')
+      const satOpts2=satDates2.length
+        ? satDates2.map(d=>`<option value="${d}" ${d===o.reqDate?'selected':''}>${d}</option>`).join('')
         : '<option value="">보강일 없음</option>';
       const editId2=`orphan_edit_${oi}`;
       h+=`<div style="border:1px solid #e8a8a8;border-radius:6px;padding:8px;margin-bottom:8px;background:#fff8f8">
@@ -1623,13 +1626,13 @@ async function fixOldFormat(){
 // 고아 보강 신청 정리 - lesson에서 makeupRequest 제거
 async function fixOrphanRequests(){
   if(!confirm('lesson에 남아있는 미연결 보강 신청 정보를 모두 제거하시겠어요?\n(결석 기록은 그대로 유지되고, 보강 신청 정보만 삭제됩니다)')) return;
-  // 전체 달 makeupDays flat 배열로 검색 (전달 결석→당달 보강 케이스 포함)
-  const allMkFlat=Object.values(cfg.makeupDays||{}).flat();
+  const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
+  const days=(cfg.makeupDays||{})[monthKey]||[];
   const updated=[];
   Object.values(mdb.lessons||{}).forEach(l=>{
     if(!l.makeupRequest) return;
     const reqDate=l.makeupRequest.date;
-    const entry=allMkFlat.find(e=>e.date===reqDate);
+    const entry=days.find(e=>e.date===reqDate);
     let foundInMakeup=false;
     if(entry){
       const arr=getMakeupStudents(entry);
@@ -9474,7 +9477,7 @@ function onSatAddStuChange(){
   if(tSel && defaultT){
     [...tSel.options].forEach(o=>{ o.selected=(o.value===defaultT); });
   }
-  // 2) 결석일 드롭다운 채우기 (이번 달 + 이전 달 회차, 전달 결석→당달 보강 지원)
+  // 2) 결석일 드롭다운 채우기 (학생의 이번 달 회차들)
   const absSel=document.getElementById('satAddAbsent');
   if(!absSel) return;
   if(!sid){
@@ -9484,52 +9487,27 @@ function onSatAddStuChange(){
   }
   const stu=(cfg.students||[]).find(x=>x.id===sid);
   if(!stu){ absSel.disabled=true; return; }
-  // 이전달 + 이번달 회차 모두 포함 (전달 결석 → 이번달 보강 케이스)
-  const pm=st.month===1?12:st.month-1;
-  const py=st.month===1?st.year-1:st.year;
-  const prevSessions=sessionsForMonthWithCycle(stu.classType, py, pm);
-  const currSessions=sessionsForMonthWithCycle(stu.classType, st.year, st.month);
-  const allSessions=[...prevSessions, ...currSessions];
-  if(!allSessions.length){
-    absSel.innerHTML='<option value="">-- 수업 회차가 없습니다 --</option>';
+  // 학생의 이번 달 회차 날짜들
+  const sessions=sessionsForMonthWithCycle(stu.classType, st.year, st.month);
+  if(!sessions.length){
+    absSel.innerHTML='<option value="">-- 이번 달 수업이 없습니다 --</option>';
     absSel.disabled=true;
     return;
   }
-  let opts='<option value="">-- 결석 처리 안 함 (추가 보강만 등록) --</option>';
-  // 구분선: 이전달 그룹
-  if(prevSessions.length){
-    opts+=`<optgroup label="${py}년 ${pm}월 (이전달)">`;
-    prevSessions.forEach(sess=>{
-      const d=sess.dateStr;
-      const dt=parseDate(d);
-      const l=mdb.lessons[lk(sid,d)] || {};
-      const att=l.attendance||'';
-      let attLabel='';
-      if(att==='attend') attLabel=' [출석]';
-      else if(att==='late') attLabel=' [지각]';
-      else if(att==='absent') attLabel=' [결석]';
-      const alreadyLinked=l.makeupRequest?' [보강신청됨]':'';
-      opts+=`<option value="${d}">${sess.sessionNo}회차 · ${d} (${DAY[dt.getDay()]})${attLabel}${alreadyLinked}</option>`;
-    });
-    opts+=`</optgroup>`;
-  }
-  // 이번달 그룹
-  if(currSessions.length){
-    opts+=`<optgroup label="${st.year}년 ${st.month}월 (이번달)">`;
-    currSessions.forEach(sess=>{
-      const d=sess.dateStr;
-      const dt=parseDate(d);
-      const l=mdb.lessons[lk(sid,d)] || {};
-      const att=l.attendance||'';
-      let attLabel='';
-      if(att==='attend') attLabel=' [출석]';
-      else if(att==='late') attLabel=' [지각]';
-      else if(att==='absent') attLabel=' [결석]';
-      const alreadyLinked=l.makeupRequest?' [보강신청됨]':'';
-      opts+=`<option value="${d}">${sess.sessionNo}회차 · ${d} (${DAY[dt.getDay()]})${attLabel}${alreadyLinked}</option>`;
-    });
-    opts+=`</optgroup>`;
-  }
+  let opts='<option value="">-- 결석 처리 안 함 (보강만 등록) --</option>';
+  sessions.forEach(sess=>{
+    const d=sess.dateStr;
+    const dt=parseDate(d);
+    const dow=dt.getDay();
+    const dayLabel=DAY[dow];
+    const l=mdb.lessons[lk(sid,d)] || {};
+    const att=l.attendance||'';
+    let attLabel='';
+    if(att==='attend') attLabel=' [현재: 출석]';
+    else if(att==='late') attLabel=' [현재: 지각]';
+    else if(att==='absent') attLabel=' [이미 결석]';
+    opts+=`<option value="${d}">${sess.sessionNo}회차 · ${d} (${dayLabel})${attLabel}</option>`;
+  });
   absSel.innerHTML=opts;
   absSel.disabled=false;
 }
@@ -9571,7 +9549,6 @@ async function confAddSatStudent(){
   delete entry.studentIds;
 
   // 결석일 처리: 선택된 경우 → lesson에 결석 + makeupRequest 자동 입력
-  // 결석일이 현재 달과 다른 경우(전달 결석) mdb.lessons에 이미 병합돼 있으므로 getOrCreate로 처리 가능
   let lessonToSave=null;
   if(absentDate){
     const l=getOrCreate(sid, absentDate);
