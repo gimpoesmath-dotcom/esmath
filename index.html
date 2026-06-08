@@ -479,6 +479,13 @@ function setSyncState(state, label){
 function configDocRef(){
   const {doc}=fb(); return doc(fbDb(),'config','main');
 }
+// ▼ 방안2: config 분리 — students / textbooks 전용 문서
+function configStudentsDocRef(){
+  const {doc}=fb(); return doc(fbDb(),'config','students');
+}
+function configTextbooksDocRef(){
+  const {doc}=fb(); return doc(fbDb(),'config','textbooks');
+}
 function lessonDocRef(year,month,key){
   const {doc}=fb(); return doc(fbDb(),`lessons_${year}-${String(month).padStart(2,'0')}`,key);
 }
@@ -613,12 +620,26 @@ window.fbShowApp = showApp; // legacy compat
 window.doLogin = doLogin;
 window.doLogout = doLogout;
 
-// ── 설정 로드/저장 ──
+// ── 설정 로드/저장 (방안2: config 3분리) ──
 async function loadConfig(){
   const {getDoc}=fb();
-  const snap=await getDoc(configDocRef());
-  if(snap.exists()){
-    cfg=snap.data();
+  // 3개 문서를 병렬로 읽기
+  const [snapMain, snapStudents, snapTextbooks] = await Promise.all([
+    getDoc(configDocRef()),
+    getDoc(configStudentsDocRef()),
+    getDoc(configTextbooksDocRef()),
+  ]);
+
+  if(snapMain.exists()){
+    cfg = snapMain.data();
+    // 구버전 호환: main에 students/textbooks가 남아있으면 제거 (분리 완료 후)
+    // 단, students/textbooks 전용 문서가 없으면 main의 값을 그대로 사용
+    if(snapStudents.exists()){
+      cfg.students = snapStudents.data().students || [];
+    }
+    if(snapTextbooks.exists()){
+      cfg.textbooks = snapTextbooks.data().textbooks || [];
+    }
   } else {
     cfg=JSON.parse(JSON.stringify(DEFAULT_CONFIG));
   }
@@ -650,7 +671,8 @@ async function loadConfig(){
       try{
         const {setDoc}=fb();
         const toSave=Object.fromEntries(Object.entries(cfg).filter(([k])=>!k.startsWith('_')));
-        await setDoc(configDocRef(), toSave);
+        const {students: _s, textbooks: _t, ...mainOnly} = toSave;
+        await setDoc(configDocRef(), mainOnly);
         clearSessionsCache();
         console.log('[자동보정] 회차값 표준화:', fixedList.join(', '));
       }catch(e){ console.warn('자동 보정 저장 실패:', e); }
@@ -760,9 +782,13 @@ async function backupAllData(){
     // 저장
     XLSX.writeFile(wb, 'ES수학_전체백업.xlsx');
 
-    // 마지막 백업 시각 저장
+    // 마지막 백업 시각 저장 (main 문서만 업데이트)
     cfg.lastBackupAt=new Date().toISOString();
-    await gasCall('saveConfig',{config:cfg});
+    const {setDoc: _setDoc2}=fb();
+    const {students: _bs, textbooks: _bt, ...mainBackup} = Object.fromEntries(
+      Object.entries(cfg).filter(([k])=>!k.startsWith('_'))
+    );
+    await _setDoc2(configDocRef(), mainBackup);
     toast('✅ 백업 완료! ES수학_전체백업.xlsx — 원드라이브에 덮어쓰기 하세요');
     render();
 
@@ -806,11 +832,16 @@ async function saveConfigToFb(){
   const {setDoc}=fb();
   setSyncState('syncing','저장 중...');
   try{
-    // _myRole, _myName 같은 임시 필드 제거
     const toSave=Object.fromEntries(
       Object.entries(cfg).filter(([k])=>!k.startsWith('_'))
     );
-    await setDoc(configDocRef(), toSave);
+    // students, textbooks는 전용 문서에 분리 저장
+    const {students, textbooks, ...mainCfg} = toSave;
+    await Promise.all([
+      setDoc(configDocRef(), mainCfg),
+      setDoc(configStudentsDocRef(), {students: students||[]}),
+      setDoc(configTextbooksDocRef(), {textbooks: textbooks||[]}),
+    ]);
     setSyncState('ok','저장 완료');
   }catch(e){
     setSyncState('err','저장 실패');
@@ -842,43 +873,68 @@ async function firebaseAction(action, body){
       Object.entries(localCfg).filter(([k])=>!k.startsWith('_'))
     );
 
-    // ── 학생 데이터 충돌 방지: 저장 직전 Firebase 최신 students를 읽어와 grade/level 보호 ──
-    // 다른 사용자(선생님)가 낡은 cfg로 저장할 때 원장이 수정한 학년/레벨을 덮어쓰는 문제 방지
+    // ── 방안2: students / textbooks / main 3개 문서로 분리 저장 ──
+    // 각 문서를 독립적으로 저장 → 동시 수정 시 덮어쓰기 충돌 없음
+
+    // students 분리 저장: 저장 직전 최신값 읽어 필드 보호
+    let studentsToSave = toSave.students||[];
     try{
-      const latestSnap = await getDoc(configDocRef());
+      const latestSnap = await getDoc(configStudentsDocRef());
       if(latestSnap.exists()){
         const latestStudents = latestSnap.data().students||[];
-        const localStudents = toSave.students||[];
-        // Firebase 최신 students 기준으로 grade/level/specialNote 보호
-        // (로컬에 없는 필드는 Firebase 값 우선)
         const protectedFields = ['grade','level','specialNote','joinDate'];
-        toSave.students = localStudents.map(ls=>{
+        studentsToSave = studentsToSave.map(ls=>{
           const fs = latestStudents.find(x=>x.id===ls.id);
-          if(!fs) return ls; // 새 학생이면 로컬값 그대로
+          if(!fs) return ls;
           const merged = {...ls};
           protectedFields.forEach(f=>{
-            // Firebase 값이 존재하고, 로컬값과 다를 경우:
-            // 로컬이 원장 세션이면 로컬 우선, 아니면 Firebase 우선
             if(fs[f] !== undefined && fs[f] !== ls[f]){
-              if(session?.role !== 'principal'){
-                merged[f] = fs[f]; // 선생님은 Firebase(원장 수정값) 우선
-              }
-              // 원장은 자신의 수정값(ls[f]) 우선 — 그대로 둠
+              if(session?.role !== 'principal') merged[f] = fs[f];
             }
           });
           return merged;
         });
-        // Firebase에만 있고 로컬에 없는 필드도 보호 (holidays, textbooks 등)
-        Object.keys(latestSnap.data()).forEach(k=>{
-          if(!k.startsWith('_') && !(k in toSave)){
-            toSave[k] = latestSnap.data()[k];
+      }
+    }catch(e){ console.warn('students 충돌 방지 읽기 실패(무시):', e); }
+
+    // textbooks 분리 저장: 저장 직전 최신값 읽어 원장 외 수정 방지
+    let textbooksToSave = toSave.textbooks||[];
+    try{
+      const latestTbSnap = await getDoc(configTextbooksDocRef());
+      if(latestTbSnap.exists() && session?.role !== 'principal'){
+        // 선생님은 textbooks 수정 불가 — 항상 Firebase 최신값 유지
+        textbooksToSave = latestTbSnap.data().textbooks||[];
+      }
+    }catch(e){ console.warn('textbooks 충돌 방지 읽기 실패(무시):', e); }
+
+    // main 저장: students/textbooks 제외한 나머지만
+    const {students: _s, textbooks: _t, ...mainToSave} = toSave;
+
+    // main 저장 시에도 Firebase 최신 필드 보호 (holidays 등)
+    try{
+      const latestMainSnap = await getDoc(configDocRef());
+      if(latestMainSnap.exists()){
+        Object.keys(latestMainSnap.data()).forEach(k=>{
+          if(!k.startsWith('_') && !(k in mainToSave)){
+            mainToSave[k] = latestMainSnap.data()[k];
           }
         });
       }
-    }catch(e){ console.warn('cfg 충돌 방지 읽기 실패(무시):', e); }
+    }catch(e){ console.warn('main cfg 충돌 방지 읽기 실패(무시):', e); }
 
-    await setDoc(configDocRef(), toSave);
-    cfg = Object.assign({}, toSave, {_myRole:session?.role, _myName:session?.displayName});
+    // 3개 문서 병렬 저장
+    await Promise.all([
+      setDoc(configDocRef(), mainToSave),
+      setDoc(configStudentsDocRef(), {students: studentsToSave}),
+      setDoc(configTextbooksDocRef(), {textbooks: textbooksToSave}),
+    ]);
+
+    cfg = Object.assign({}, mainToSave, {
+      students: studentsToSave,
+      textbooks: textbooksToSave,
+      _myRole: session?.role,
+      _myName: session?.displayName,
+    });
     return {ok:true};
   }
 
