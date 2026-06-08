@@ -1,4 +1,4 @@
-<!-- v20260601_071233 -->
+<!-- v20260608_makeupDays_split -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -486,6 +486,9 @@ function configStudentsDocRef(){
 function configTextbooksDocRef(){
   const {doc}=fb(); return doc(fbDb(),'config','textbooks');
 }
+function configMakeupDaysDocRef(){
+  const {doc}=fb(); return doc(fbDb(),'config','makeupDays');
+}
 function lessonDocRef(year,month,key){
   const {doc}=fb(); return doc(fbDb(),`lessons_${year}-${String(month).padStart(2,'0')}`,key);
 }
@@ -623,11 +626,12 @@ window.doLogout = doLogout;
 // ── 설정 로드/저장 (방안2: config 3분리) ──
 async function loadConfig(){
   const {getDoc}=fb();
-  // 3개 문서를 병렬로 읽기
-  const [snapMain, snapStudents, snapTextbooks] = await Promise.all([
+  // 4개 문서를 병렬로 읽기
+  const [snapMain, snapStudents, snapTextbooks, snapMakeupDays] = await Promise.all([
     getDoc(configDocRef()),
     getDoc(configStudentsDocRef()),
     getDoc(configTextbooksDocRef()),
+    getDoc(configMakeupDaysDocRef()),
   ]);
 
   if(snapMain.exists()){
@@ -639,6 +643,10 @@ async function loadConfig(){
     }
     if(snapTextbooks.exists()){
       cfg.textbooks = snapTextbooks.data().textbooks || [];
+    }
+    // makeupDays 분리 문서에서 읽기 (없으면 main의 값 유지 — 구버전 호환)
+    if(snapMakeupDays.exists()){
+      cfg.makeupDays = snapMakeupDays.data().makeupDays || {};
     }
   } else {
     cfg=JSON.parse(JSON.stringify(DEFAULT_CONFIG));
@@ -671,7 +679,7 @@ async function loadConfig(){
       try{
         const {setDoc}=fb();
         const toSave=Object.fromEntries(Object.entries(cfg).filter(([k])=>!k.startsWith('_')));
-        const {students: _s, textbooks: _t, ...mainOnly} = toSave;
+        const {students: _s, textbooks: _t, makeupDays: _mk, ...mainOnly} = toSave;
         await setDoc(configDocRef(), mainOnly);
         clearSessionsCache();
         console.log('[자동보정] 회차값 표준화:', fixedList.join(', '));
@@ -835,12 +843,13 @@ async function saveConfigToFb(){
     const toSave=Object.fromEntries(
       Object.entries(cfg).filter(([k])=>!k.startsWith('_'))
     );
-    // students, textbooks는 전용 문서에 분리 저장
-    const {students, textbooks, ...mainCfg} = toSave;
+    // students, textbooks, makeupDays는 전용 문서에 분리 저장
+    const {students, textbooks, makeupDays, ...mainCfg} = toSave;
     await Promise.all([
       setDoc(configDocRef(), mainCfg),
       setDoc(configStudentsDocRef(), {students: students||[]}),
       setDoc(configTextbooksDocRef(), {textbooks: textbooks||[]}),
+      setDoc(configMakeupDaysDocRef(), {makeupDays: makeupDays||{}}),
     ]);
     setSyncState('ok','저장 완료');
   }catch(e){
@@ -873,7 +882,7 @@ async function firebaseAction(action, body){
       Object.entries(localCfg).filter(([k])=>!k.startsWith('_'))
     );
 
-    // ── 방안2: students / textbooks / main 3개 문서로 분리 저장 ──
+    // ── 방안2: students / textbooks / makeupDays / main 4개 문서로 분리 저장 ──
     // 각 문서를 독립적으로 저장 → 동시 수정 시 덮어쓰기 충돌 없음
 
     // students 분리 저장: 저장 직전 최신값 읽어 필드 보호
@@ -907,8 +916,23 @@ async function firebaseAction(action, body){
       }
     }catch(e){ console.warn('textbooks 충돌 방지 읽기 실패(무시):', e); }
 
-    // main 저장: students/textbooks 제외한 나머지만
-    const {students: _s, textbooks: _t, ...mainToSave} = toSave;
+    // makeupDays 분리 저장: 저장 직전 최신값 읽어 다른 선생님 변경사항 보호
+    let makeupDaysToSave = toSave.makeupDays||{};
+    try{
+      const latestMkSnap = await getDoc(configMakeupDaysDocRef());
+      if(latestMkSnap.exists()){
+        const latestMakeupDays = latestMkSnap.data().makeupDays||{};
+        // 내 로컬에 없는 월 데이터는 Firebase 최신값 유지 (다른 선생님이 추가한 월 보호)
+        Object.keys(latestMakeupDays).forEach(mk=>{
+          if(!(mk in makeupDaysToSave)){
+            makeupDaysToSave[mk] = latestMakeupDays[mk];
+          }
+        });
+      }
+    }catch(e){ console.warn('makeupDays 충돌 방지 읽기 실패(무시):', e); }
+
+    // main 저장: students/textbooks/makeupDays 제외한 나머지만
+    const {students: _s, textbooks: _t, makeupDays: _mk, ...mainToSave} = toSave;
 
     // main 저장 시에도 Firebase 최신 필드 보호 (holidays 등)
     try{
@@ -922,16 +946,18 @@ async function firebaseAction(action, body){
       }
     }catch(e){ console.warn('main cfg 충돌 방지 읽기 실패(무시):', e); }
 
-    // 3개 문서 병렬 저장
+    // 4개 문서 병렬 저장
     await Promise.all([
       setDoc(configDocRef(), mainToSave),
       setDoc(configStudentsDocRef(), {students: studentsToSave}),
       setDoc(configTextbooksDocRef(), {textbooks: textbooksToSave}),
+      setDoc(configMakeupDaysDocRef(), {makeupDays: makeupDaysToSave}),
     ]);
 
     cfg = Object.assign({}, mainToSave, {
       students: studentsToSave,
       textbooks: textbooksToSave,
+      makeupDays: makeupDaysToSave,
       _myRole: session?.role,
       _myName: session?.displayName,
     });
