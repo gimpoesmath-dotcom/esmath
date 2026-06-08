@@ -3625,7 +3625,7 @@ function calcMonthPoints(sid, classType, year, month, lessonsOverride){
 }
 
 // 학교 성적 포인트 적립 (버튼 클릭 시에만)
-async function settleSchoolExamPoint(sid, settleId, points, type, label, note){
+async function settleSchoolExamPoint(sid, settleId, points, type, label, note, settleYear, settleMonth){
   if(!confirm(`${label} +${points.toLocaleString()}P를 적립하시겠어요?\n\n${note}`)) return;
   const pd = pointsData[sid]||{balance:0,history:[],settled:[]};
   // 중복 체크
@@ -3640,8 +3640,8 @@ async function settleSchoolExamPoint(sid, settleId, points, type, label, note){
     points,
     note,
     settleId,
-    year: new Date().getFullYear(),
-    month: new Date().getMonth()+1,
+    year: settleYear || new Date().getFullYear(),
+    month: settleMonth || (new Date().getMonth()+1),
     date: dk(new Date()),
     by: session?.username||'',
   }];
@@ -3774,6 +3774,7 @@ function rPoints(){
       ${isPrin?`<button class="btn btn-sm" onclick="openM('addManualPoint')">✏️ 수동 적립</button>`:''}
       ${isPrin?`<button class="btn btn-sm" onclick="openM('usePoint')">💳 포인트 차감</button>`:''}
       <button class="btn btn-sm btn-green" onclick="printPointsSummary()">🖨️ 인쇄용 보기</button>
+      <button class="btn btn-sm" style="background:#1558a8;color:#fff;border-color:#1558a8" onclick="showSettleSummary()">📋 정산 내역</button>
     </div>
   </div>
 
@@ -4282,7 +4283,7 @@ function rPoints(){
             <div style="font-size:10px;color:var(--text3)">✅ 성적표 인증 완료</div>
             ${alreadyDone?`<div style="font-size:11px;color:#1e6e3a;margin-top:2px">✅ 이미 적립됨</div>`:''}
           </div>
-          ${isPrin&&!alreadyDone?`<button class="btn btn-sm btn-primary" onclick="settleSchoolExamPoint('${s.id}','${settleId}',${c.points},'${c.type}','${c.label}','${c.note.replace(/'/g,"\'")}')">+${c.points.toLocaleString()}P 적립</button>`:''}
+          ${isPrin&&!alreadyDone?`<button class="btn btn-sm btn-primary" onclick="settleSchoolExamPoint('${s.id}','${settleId}',${c.points},'${c.type}','${c.label}','${c.note.replace(/'/g,"\'")}',${settleYear},${settleMonth})">+${c.points.toLocaleString()}P 적립</button>`:''}
         </div>`;
       });
     }
@@ -4471,6 +4472,176 @@ function ptBalSearchFilter(val){
   // X 버튼 토글 (render 없이 직접)
   const xBtn = document.getElementById('ptBalClearBtn');
   if(xBtn) xBtn.style.display = kw ? '' : 'none';
+}
+
+
+// ── 정산 내역 보기 ──
+function showSettleSummary(){
+  const studs = cfg.students||[];
+  const filterClass = st.ptFilterClass||'all';
+  const printYear   = st.ptSettleYear  || (st.month===1 ? st.year-1 : st.year);
+  const printMonth  = st.ptSettleMonth || (st.month===1 ? 12 : st.month-1);
+  const yl = `${printYear}년 ${printMonth}월`;
+  const filtered = studs.filter(s=> filterClass==='all' || s.classType===filterClass);
+
+  function getHistory(sid){
+    return (pointsData[sid]?.history||[]).filter(h=>h.year===printYear && h.month===printMonth);
+  }
+
+  // 항목별 학생 분류
+  const GROUPS = [
+    { label:'🏅 출결 포인트', items:[
+      { type:'PERFECT',     label:'PERFECT 출석상',   pts:5000  },
+      { type:'STEADY',      label:'STEADY 출석상',    pts:2000  },
+    ]},
+    { label:'📊 학원 포인트', items:[
+      { type:'DAILY',       label:'DAILY 챌린지상',   pts:2000  },
+      { type:'MASTER_HIGH', label:'MASTER 인증상 High', pts:5000 },
+      { type:'MASTER_LOW',  label:'MASTER 인증상 Low',  pts:2000 },
+    ]},
+    { label:'🏫 학교생활 포인트', items:[
+      { type:'TOP_HONOR',       label:'Top Honor',          pts:20000 },
+      { type:'HIGH_HONOR_HIGH', label:'High Honor (고등)',  pts:10000 },
+      { type:'HIGH_HONOR_MID',  label:'High Honor (중등)',  pts:5000  },
+    ]},
+    { label:'📈 성장상 포인트', items:[
+      { type:'GROWTH_30', label:'Growth +30', pts:20000 },
+      { type:'GROWTH_20', label:'Growth +20', pts:10000 },
+      { type:'GROWTH_10', label:'Growth +10', pts:5000  },
+    ]},
+  ];
+
+  // 학생별 이달 적립 총합
+  const studentTotals = {};
+  filtered.forEach(s=>{
+    const hist = getHistory(s.id);
+    const earned = hist.filter(h=>h.points>0).reduce((a,h)=>a+h.points,0);
+    if(earned>0) studentTotals[s.id] = earned;
+  });
+
+  const totalStudents = Object.keys(studentTotals).length;
+  const totalPoints   = Object.values(studentTotals).reduce((a,v)=>a+v,0);
+
+  // 그룹별 HTML 생성
+  let groupsHtml = '';
+  GROUPS.forEach(g=>{
+    let itemsHtml = '';
+    let groupHasAny = false;
+    g.items.forEach(item=>{
+      const names = filtered
+        .map(s=>({ s, hist: getHistory(s.id) }))
+        .filter(({hist})=> hist.some(h=>h.type===item.type))
+        .map(({s})=>s.name);
+      if(!names.length) return;
+      groupHasAny = true;
+      itemsHtml += `
+        <div style="display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px solid #f0f0ee;flex-wrap:wrap">
+          <div style="min-width:180px;font-weight:600;font-size:13px">${item.label}
+            <span style="font-size:11px;font-weight:400;color:#1e6e3a;margin-left:4px">+${item.pts.toLocaleString()}P</span>
+          </div>
+          <div style="font-size:12px;color:#444;font-weight:700;min-width:30px">${names.length}명</div>
+          <div style="font-size:12px;color:#666;flex:1">${names.join(', ')}</div>
+        </div>`;
+    });
+    if(!groupHasAny) return;
+    groupsHtml += `
+      <div style="margin-bottom:20px">
+        <div style="font-size:13px;font-weight:800;color:#1a1a1a;padding:8px 12px;background:#f0f4fa;border-radius:8px;margin-bottom:6px;border-left:4px solid #1558a8">${g.label}</div>
+        ${itemsHtml}
+      </div>`;
+  });
+
+  if(!groupsHtml){
+    groupsHtml = '<div style="text-align:center;padding:40px;color:#aaa;font-size:14px">이달 적립 내역이 없습니다</div>';
+  }
+
+  // 학생별 합계 테이블
+  const studentRows = filtered
+    .filter(s=>studentTotals[s.id])
+    .sort((a,b)=>(studentTotals[b.id]||0)-(studentTotals[a.id]||0))
+    .map((s,i)=>{
+      const hist = getHistory(s.id);
+      const items = hist.filter(h=>h.points>0).map(h=>`${h.label} +${h.points.toLocaleString()}P`).join(' · ');
+      const bg = i%2===0?'#fff':'#f8f8f6';
+      return `<tr>
+        <td style="padding:5px 10px;font-weight:600;background:${bg}">${s.name}</td>
+        <td style="padding:5px 10px;font-size:11px;color:#666;background:${bg}">${items}</td>
+        <td style="padding:5px 10px;text-align:right;font-weight:800;color:#1e6e3a;background:${bg}">+${studentTotals[s.id].toLocaleString()}P</td>
+      </tr>`;
+    }).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>${yl} 정산 내역 — ES수학</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#1a1a1a;padding:20px;max-width:900px;margin:0 auto}
+  h1{font-size:22px;font-weight:800;margin-bottom:4px}
+  .sub{font-size:13px;color:#666;margin-bottom:24px}
+  .summary{display:flex;gap:12px;margin-bottom:24px}
+  .scard{flex:1;padding:14px 18px;border-radius:10px;border:1px solid #e2e2de;background:#fff}
+  .scard .num{font-size:24px;font-weight:800;margin-top:4px}
+  .scard .lbl{font-size:11px;color:#888}
+  h2{font-size:15px;font-weight:800;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid #1a1a1a}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{background:#f0f4fa;padding:7px 10px;text-align:left;font-weight:700;border-bottom:2px solid #d0d8e8}
+  td{border-bottom:1px solid #eee}
+  @media print{
+    body{padding:10px}
+    @page{margin:10mm;size:A4}
+    button{display:none}
+  }
+</style>
+</head>
+<body>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:8px">
+    <div>
+      <h1>📋 ${yl} 포인트 정산 내역</h1>
+      <div class="sub">ES수학학원${filterClass!=='all'?' · '+( (()=>{ try{ return Object.values(cfg?.classTypes||{}); }catch(e){ return []; } })().find(v=>v&&v.key===filterClass)||{label:filterClass}).label:''}</div>
+    </div>
+    <button onclick="window.print()" style="padding:8px 16px;background:#1a1a1a;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit">🖨️ 인쇄</button>
+  </div>
+
+  <div class="summary">
+    <div class="scard" style="border-color:#80c090;background:#f0faf4">
+      <div class="lbl">이달 적립 학생</div>
+      <div class="num" style="color:#1e6e3a">${totalStudents}명</div>
+    </div>
+    <div class="scard" style="border-color:#90b8e8;background:#eef4fb">
+      <div class="lbl">이달 총 적립 포인트</div>
+      <div class="num" style="color:#1558a8">${totalPoints.toLocaleString()}P</div>
+    </div>
+    <div class="scard">
+      <div class="lbl">정산 기준월</div>
+      <div class="num" style="font-size:18px">${yl}</div>
+    </div>
+  </div>
+
+  <div style="margin-bottom:28px">
+    <h2>항목별 현황</h2>
+    ${groupsHtml}
+  </div>
+
+  <div>
+    <h2>학생별 적립 내역</h2>
+    <table>
+      <thead><tr>
+        <th style="width:80px">이름</th>
+        <th>적립 항목</th>
+        <th style="width:90px;text-align:right">합계</th>
+      </tr></thead>
+      <tbody>${studentRows}</tbody>
+    </table>
+    ${!studentRows?'<div style="text-align:center;padding:30px;color:#aaa">적립 내역이 없습니다</div>':''}
+  </div>
+</body>
+</html>`;
+
+  const w = window.open('','_blank','width=960,height=800');
+  w.document.write(html);
+  w.document.close();
 }
 
 // 포인트 인쇄용 페이지 (해당월 체크박스 형식)
@@ -4746,8 +4917,18 @@ async function _loadLessonsForMonth(year, month){
 async function settleOtherPoints(sid, year, month){
   const s = (cfg.students||[]).find(x=>x.id===sid);
   if(!s) return;
-  // 정산 기준월이 현재 보는 월과 다르면 해당 월 데이터 로드
-  const lessonsOverride = await _loadLessonsForMonth(year, month);
+  // 정산달 + 이전달 + 다음달 모두 로드해서 병합 (사이클이 월 경계 걸치는 경우 대응)
+  const prevY = month===1 ? year-1 : year;
+  const prevM = month===1 ? 12 : month-1;
+  const nextY = month===12 ? year+1 : year;
+  const nextM = month===12 ? 1 : month+1;
+  const [curData, prevData, nextData] = await Promise.all([
+    _loadLessonsForMonth(year, month),
+    _loadLessonsForMonth(prevY, prevM),
+    _loadLessonsForMonth(nextY, nextM),
+  ]);
+  // 이전달 → 다음달 → 정산달 순으로 병합 (정산달 최우선)
+  const lessonsOverride = Object.assign({}, prevData, nextData, curData);
   const earned = calcMonthPoints(sid, s.classType, year, month, lessonsOverride)
     .filter(e=>e.type==='DAILY'||e.type==='MASTER_HIGH'||e.type==='MASTER_LOW');
   if(!earned.length){ toast('적립할 포인트가 없습니다',true); return; }
@@ -9663,11 +9844,32 @@ function satStuPopover(sid, mkDate, anchor){
   pop.className='sch-popover';
   pop.style.cssText='position:absolute;background:#fff;border:1px solid var(--border2);border-radius:var(--r);box-shadow:0 4px 16px rgba(0,0,0,.12);padding:12px;z-index:200;min-width:240px';
 
+  // 이 학생의 결석일 목록 (makeupRequest.date === mkDate 인 것 찾기)
+  const _absentLesson = Object.values(mdb.lessons||{}).find(l=>
+    l.studentId===sid && l.makeupRequest && l.makeupRequest.date===mkDate
+  );
+  const _curAbsentDate = _absentLesson ? _absentLesson.date : (cur.absentDate||'');
+  // 결석 가능한 날짜 목록 — 이 학생의 absent lesson (makeupRequest 없거나 이미 이 보강에 연결된 것)
+  const _absentOptions = Object.values(mdb.lessons||{})
+    .filter(l=> l.studentId===sid && l.attendance==='absent' &&
+      (!l.makeupRequest || l.makeupRequest.date===mkDate))
+    .sort((a,b)=>a.date.localeCompare(b.date));
+
   pop.innerHTML=`
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">
       <b>${esc(s.name)}</b>
       ${s.grade?gradeBadge(s.grade):''}
       <span style="margin-left:auto;font-size:11px;color:var(--text2)">${mkDate}</span>
+    </div>
+    <div style="margin-bottom:8px">
+      <div class="field-lbl">어느 결석에 대한 보강?</div>
+      ${_absentOptions.length
+        ? `<select id="popAbsentDate" style="width:100%;padding:4px 7px" onchange="updateSatStuAbsent('${sid}','${mkDate}',this.value)">
+            <option value="">-- 선택 --</option>
+            ${_absentOptions.map(l=>`<option value="${l.date}" ${l.date===_curAbsentDate?'selected':''}>${l.date} 결석</option>`).join('')}
+           </select>`
+        : `<div style="font-size:11px;color:var(--text3);padding:4px 0">${_curAbsentDate ? `${_curAbsentDate} 결석` : '결석 기록 없음'}</div>`
+      }
     </div>
     <div style="margin-bottom:8px">
       <div class="field-lbl">교시</div>
@@ -9705,6 +9907,29 @@ function satStuPopover(sid, mkDate, anchor){
       }
     });
   }, 0);
+}
+
+// 토요보강 — 연결 결석일 변경
+async function updateSatStuAbsent(sid, mkDate, newAbsentDate){
+  if(!newAbsentDate) return;
+  // 기존 연결 lesson의 makeupRequest 제거
+  Object.values(mdb.lessons||{}).forEach(l=>{
+    if(l.studentId===sid && l.makeupRequest && l.makeupRequest.date===mkDate){
+      delete l.makeupRequest;
+      persistLesson(l);
+    }
+  });
+  // 새 결석 lesson에 makeupRequest 연결
+  const entry=getMkEntryByDate(mkDate);
+  const arr=entry?getMakeupStudents(entry):[];
+  const cur=arr.find(x=>x.id===sid);
+  const newLesson=mdb.lessons[lk(sid,newAbsentDate)];
+  if(newLesson){
+    newLesson.makeupRequest={date:mkDate, period:cur?.period||'', teacher:cur?.teacher||''};
+    await persistLesson(newLesson);
+  }
+  toast('결석일이 변경되었습니다');
+  render();
 }
 
 // 토요보강 학생 정보 업데이트 (교시 또는 담당)
