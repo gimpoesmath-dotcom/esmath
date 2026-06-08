@@ -1,4 +1,4 @@
-<!-- v20260608_fix_teacher_opts -->
+<!-- v20260608_fix_orphan_crossmonth -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -1379,10 +1379,12 @@ function diagnoseMakeupData(){
   });
 
   // 2) lessons에 makeupRequest 있는데 makeupDays에 학생 없는 케이스
+  // 전월 결석 → 당월 보강처럼 월이 다를 수 있으므로 cfg.makeupDays 전체에서 검색
+  const allMakeupDaysFlat = Object.values(cfg.makeupDays||{}).flat();
   lessons.forEach(l=>{
     if(!l.makeupRequest) return;
     const reqDate=l.makeupRequest.date;
-    const entry=days.find(e=>e.date===reqDate);
+    const entry=allMakeupDaysFlat.find(e=>e.date===reqDate);
     let foundInMakeup=false;
     if(entry){
       const arr=getMakeupStudents(entry);
@@ -1468,7 +1470,7 @@ function diagnoseMakeupData(){
   if(issues.noAbsent.length){
     // 수정 폼용: 이번달 토요보강일 목록, 선생님 목록, 학생별 결석일 목록
     const satDates=days.map(e=>e.date).sort();
-    const teacherOpts=(cfg.teachers||[]).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    const teacherOpts=(cfg.teachers||[]).map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fff5e0;border:1px solid #e8c870;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <b style="font-size:13px">🔗 결석 연결 안 됨 (${issues.noAbsent.length}건)</b>
@@ -1523,7 +1525,7 @@ function diagnoseMakeupData(){
   // 고아 보강 신청 (lesson에만 있음)
   if(issues.orphanRequest.length){
     const satDates2=days.map(e=>e.date).sort();
-    const teacherOpts2=(cfg.teachers||[]).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    const teacherOpts2=(cfg.teachers||[]).map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fce6e6;border:1px solid #e8a8a8;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <b style="font-size:13px">🔍 미연결 보강 신청 (${issues.orphanRequest.length}건)</b>
