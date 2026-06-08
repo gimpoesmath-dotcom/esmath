@@ -4688,6 +4688,9 @@ function printPointsSummary(){
   }
 
   function isChecked(history, colKey){
+    // settleSchoolExamPoint로 저장 시 type이 직접 지정됨 → 먼저 type으로 확인
+    if(history.some(h=>h.type===colKey)) return true;
+    // 이전 방식(MANUAL)으로 저장된 경우도 대응
     const labelMap = {
       TOP_HONOR:       'Top Honor',
       HIGH_HONOR_HIGH: 'High Honor 고등',
@@ -4699,7 +4702,7 @@ function printPointsSummary(){
     if(labelMap[colKey]){
       return history.some(h=>h.type==='MANUAL' && (h.label||'').replace(/\s/g,'').toLowerCase().includes(labelMap[colKey].replace(/\s/g,'').toLowerCase()));
     }
-    return history.some(h=>h.type===colKey);
+    return false;
   }
 
   // 이전달 누적 잔액 계산 (이달 적립 전)
