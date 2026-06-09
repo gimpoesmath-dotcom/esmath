@@ -4199,10 +4199,14 @@ function rPoints(){
     </div>
 
     <!-- 이달 수상자 현황 요약 -->
-    <div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 8px">🏆 ${settleYl} 수상 현황 요약</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">`;
+    <div style="margin:16px 0 8px;display:flex;align-items:center;gap:8px">
+      <button onclick="st.ptAwardOpen=!st.ptAwardOpen;render()" style="display:flex;align-items:center;gap:6px;padding:6px 14px;font-size:12px;font-weight:700;border:1px solid var(--border2);border-radius:var(--r);background:${st.ptAwardOpen?'var(--text)':'var(--bg)'};color:${st.ptAwardOpen?'#fff':'var(--text2)'};cursor:pointer;font-family:inherit">
+        🏆 ${settleYl} 수상 현황 요약 ${st.ptAwardOpen?'▲':'▼'}
+      </button>
+    </div>
+    `;
 
-    // 수상 현황 계산
+    // 수상 현황 계산 (토글 여부와 무관하게 항상 계산)
     const awardDefs2 = [
       {id:'perfect', label:'🏅 PERFECT 출석상', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
       {id:'steady',  label:'⭐ STEADY 출석상',  color:'#1558a8', bg:'#e5effc', border:'#90b8e8'},
@@ -4213,7 +4217,6 @@ function rPoints(){
     const awardNames = {perfect:[], steady:[], daily:[], master:[]};
 
     filtered.forEach(s=>{
-      // 출결 포인트 내역에서 수상 확인
       const hist = pointsData[s.id]?.history||[];
       const hasPerf  = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='PERFECT');
       const hasSteady= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='STEADY');
@@ -4225,16 +4228,20 @@ function rPoints(){
       if(hasMaster){ awardCount.master++;  awardNames.master.push(s.name);  }
     });
 
-    awardDefs2.forEach(def=>{
-      const cnt   = awardCount[def.id];
-      const names = awardNames[def.id];
-      h += `<div style="padding:10px 12px;border-radius:var(--rl);border:1px solid ${def.border};background:${def.bg}">
-        <div style="font-size:12px;font-weight:700;color:${def.color};margin-bottom:4px">${def.label}</div>
-        <div style="font-size:20px;font-weight:800;color:${def.color};margin-bottom:4px">${cnt}명</div>
-        ${names.length?`<div style="font-size:10px;color:${def.color};opacity:.8">${names.map(n=>esc(n)).join(', ')}</div>`:'<div style="font-size:10px;color:var(--text3)">해당 없음</div>'}
-      </div>`;
-    });
-    h += `</div>`;
+    // 버튼 클릭 시에만 수상 현황 카드 표시
+    if(st.ptAwardOpen){
+      h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">`;
+      awardDefs2.forEach(def=>{
+        const cnt   = awardCount[def.id];
+        const names = awardNames[def.id];
+        h += `<div style="padding:10px 12px;border-radius:var(--rl);border:1px solid ${def.border};background:${def.bg}">
+          <div style="font-size:12px;font-weight:700;color:${def.color};margin-bottom:4px">${def.label}</div>
+          <div style="font-size:20px;font-weight:800;color:${def.color};margin-bottom:4px">${cnt}명</div>
+          ${names.length?`<div style="font-size:10px;color:${def.color};opacity:.8">${names.map(n=>esc(n)).join(', ')}</div>`:'<div style="font-size:10px;color:var(--text3)">해당 없음</div>'}
+        </div>`;
+      });
+      h += `</div>`;
+    }
   }
 
   // ══════════════════════════════════════
@@ -4486,34 +4493,6 @@ function printPointsSummary(){
     `<th style="text-align:center;background:#f5f8fd;font-size:10px;font-weight:600;color:#333;padding:4px 3px;line-height:1.4">${col.label}</th>`
   ).join('');
 
-  // ── 이달 포인트 적립 학생 목록 (상별) ──
-  const earnedGroups = {};
-  GROUPS.forEach(g=>{ g.cols.forEach(col=>{ earnedGroups[col.key]=[]; }); });
-  filtered.forEach(s=>{
-    const history = getMonthHistory(s.id);
-    ALL_COLS.forEach(col=>{
-      if(isChecked(history, col.key)) earnedGroups[col.key].push(s.name);
-    });
-  });
-
-  let earnedListHtml = '';
-  GROUPS.forEach(g=>{
-    const anyInGroup = g.cols.some(col=>earnedGroups[col.key].length>0);
-    if(!anyInGroup) return;
-    earnedListHtml += `<div style="margin-bottom:14px">
-      <div style="font-size:13px;font-weight:800;color:#1a3a6a;padding:5px 10px;background:#dce8f8;border-left:4px solid #1558a8;margin-bottom:6px">${g.label}</div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px">`;
-    g.cols.forEach(col=>{
-      const names = earnedGroups[col.key];
-      if(!names.length) return;
-      earnedListHtml += `<div style="border:1px solid #bbb;border-radius:6px;padding:7px 12px;min-width:160px;background:#fafafa">
-        <div style="font-size:11px;font-weight:700;color:#1558a8;margin-bottom:4px">${col.label.replace('<br>',' ')} <span style="color:#888;font-weight:400">(${col.pts.toLocaleString()}P)</span></div>
-        <div style="font-size:12px;line-height:1.8">${names.map(n=>`<span style="display:inline-block;background:#e5effc;border-radius:10px;padding:1px 8px;margin:1px 2px;font-weight:600">${n}</span>`).join('')}</div>
-      </div>`;
-    });
-    earnedListHtml += `</div></div>`;
-  });
-
   const printHtml = `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -4552,10 +4531,6 @@ function printPointsSummary(){
     </thead>
     <tbody>${rows}</tbody>
   </table>
-
-  <!-- 섹션 2: 이달 수상 학생 목록 -->
-  <h2>📋 ${yl} 수상 학생 목록</h2>
-  ${earnedListHtml || `<div style="color:#aaa;font-size:12px;padding:10px">이달 수상 내역이 없습니다.</div>`}
 
   <script>window.onload=()=>window.print();<\/script>
 </body>
