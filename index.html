@@ -486,6 +486,9 @@ function configStudentsDocRef(){
 function configTextbooksDocRef(){
   const {doc}=fb(); return doc(fbDb(),'config','textbooks');
 }
+function configMakeupDaysDocRef(){
+  const {doc}=fb(); return doc(fbDb(),'config','makeupDays');
+}
 function lessonDocRef(year,month,key){
   const {doc}=fb(); return doc(fbDb(),`lessons_${year}-${String(month).padStart(2,'0')}`,key);
 }
@@ -620,14 +623,15 @@ window.fbShowApp = showApp; // legacy compat
 window.doLogin = doLogin;
 window.doLogout = doLogout;
 
-// ── 설정 로드/저장 (방안2: config 3분리) ──
+// ── 설정 로드/저장 (방안2: config 4분리 - students / textbooks / makeupDays / main) ──
 async function loadConfig(){
   const {getDoc}=fb();
-  // 3개 문서를 병렬로 읽기
-  const [snapMain, snapStudents, snapTextbooks] = await Promise.all([
+  // 4개 문서를 병렬로 읽기
+  const [snapMain, snapStudents, snapTextbooks, snapMakeupDays] = await Promise.all([
     getDoc(configDocRef()),
     getDoc(configStudentsDocRef()),
     getDoc(configTextbooksDocRef()),
+    getDoc(configMakeupDaysDocRef()),
   ]);
 
   if(snapMain.exists()){
@@ -639,6 +643,10 @@ async function loadConfig(){
     }
     if(snapTextbooks.exists()){
       cfg.textbooks = snapTextbooks.data().textbooks || [];
+    }
+    // makeupDays 분리 문서 우선, 없으면 main의 값 사용 (구버전 호환)
+    if(snapMakeupDays.exists()){
+      cfg.makeupDays = snapMakeupDays.data().makeupDays || {};
     }
   } else {
     cfg=JSON.parse(JSON.stringify(DEFAULT_CONFIG));
@@ -835,12 +843,13 @@ async function saveConfigToFb(){
     const toSave=Object.fromEntries(
       Object.entries(cfg).filter(([k])=>!k.startsWith('_'))
     );
-    // students, textbooks는 전용 문서에 분리 저장
-    const {students, textbooks, ...mainCfg} = toSave;
+    // students, textbooks, makeupDays는 전용 문서에 분리 저장
+    const {students, textbooks, makeupDays, ...mainCfg} = toSave;
     await Promise.all([
       setDoc(configDocRef(), mainCfg),
       setDoc(configStudentsDocRef(), {students: students||[]}),
       setDoc(configTextbooksDocRef(), {textbooks: textbooks||[]}),
+      setDoc(configMakeupDaysDocRef(), {makeupDays: makeupDays||{}}),
     ]);
     setSyncState('ok','저장 완료');
   }catch(e){
@@ -873,7 +882,7 @@ async function firebaseAction(action, body){
       Object.entries(localCfg).filter(([k])=>!k.startsWith('_'))
     );
 
-    // ── 방안2: students / textbooks / main 3개 문서로 분리 저장 ──
+    // ── students / textbooks / makeupDays / main 4개 문서로 분리 저장 ──
     // 각 문서를 독립적으로 저장 → 동시 수정 시 덮어쓰기 충돌 없음
 
     // students 분리 저장: 저장 직전 최신값 읽어 필드 보호
@@ -907,8 +916,23 @@ async function firebaseAction(action, body){
       }
     }catch(e){ console.warn('textbooks 충돌 방지 읽기 실패(무시):', e); }
 
-    // main 저장: students/textbooks 제외한 나머지만
-    const {students: _s, textbooks: _t, ...mainToSave} = toSave;
+    // makeupDays 분리 저장: 저장 직전 최신값 읽어 병합 (race condition 방지 핵심)
+    let makeupDaysToSave = toSave.makeupDays||{};
+    try{
+      const latestMkSnap = await getDoc(configMakeupDaysDocRef());
+      if(latestMkSnap.exists()){
+        const latestMk = latestMkSnap.data().makeupDays||{};
+        // 현재 메모리에 없는 월 데이터는 Firebase 최신값으로 보호
+        Object.keys(latestMk).forEach(monthKey=>{
+          if(!(monthKey in makeupDaysToSave)){
+            makeupDaysToSave[monthKey] = latestMk[monthKey];
+          }
+        });
+      }
+    }catch(e){ console.warn('makeupDays 충돌 방지 읽기 실패(무시):', e); }
+
+    // main 저장: students/textbooks/makeupDays 제외한 나머지만
+    const {students: _s, textbooks: _t, makeupDays: _mk, ...mainToSave} = toSave;
 
     // main 저장 시에도 Firebase 최신 필드 보호 (holidays 등)
     try{
@@ -922,16 +946,18 @@ async function firebaseAction(action, body){
       }
     }catch(e){ console.warn('main cfg 충돌 방지 읽기 실패(무시):', e); }
 
-    // 3개 문서 병렬 저장
+    // 4개 문서 병렬 저장
     await Promise.all([
       setDoc(configDocRef(), mainToSave),
       setDoc(configStudentsDocRef(), {students: studentsToSave}),
       setDoc(configTextbooksDocRef(), {textbooks: textbooksToSave}),
+      setDoc(configMakeupDaysDocRef(), {makeupDays: makeupDaysToSave}),
     ]);
 
     cfg = Object.assign({}, mainToSave, {
       students: studentsToSave,
       textbooks: textbooksToSave,
+      makeupDays: makeupDaysToSave,
       _myRole: session?.role,
       _myName: session?.displayName,
     });
@@ -1384,10 +1410,11 @@ function diagnoseMakeupData(){
   });
 
   // 2) lessons에 makeupRequest 있는데 makeupDays에 학생 없는 케이스
+  // 전월 결석 → 다음달 보강 케이스 대응: 현재 달뿐 아니라 전체 makeupDays에서 검색
   lessons.forEach(l=>{
     if(!l.makeupRequest) return;
     const reqDate=l.makeupRequest.date;
-    const entry=days.find(e=>e.date===reqDate);
+    const entry=getMkEntryByDate(reqDate); // 전체 월에서 날짜로 검색
     let foundInMakeup=false;
     if(entry){
       const arr=getMakeupStudents(entry);
@@ -9074,7 +9101,7 @@ async function mAttend(sid,d,v){
   l.attendance=(l.attendance===v?'':v);
   // 결석에서 다른 상태(출/지/없음)로 바뀌고, 보강 신청이 있으면 자동 제거
   if(oldV==='absent' && l.attendance!=='absent' && l.makeupRequest){
-    autoRemoveMakeupRequest(l);
+    await autoRemoveMakeupRequest(l);
   }
   render();
   await persistLesson(l);
@@ -9119,7 +9146,7 @@ async function tAttend(sid,d,v){
   l.attendance=(l.attendance===v?'':v);
   // 결석에서 다른 상태로 바뀌고, 보강 신청이 있으면 자동 제거
   if(oldV==='absent' && l.attendance!=='absent' && l.makeupRequest){
-    autoRemoveMakeupRequest(l);
+    await autoRemoveMakeupRequest(l);
   }
   render();
   await persistLesson(l);
@@ -9336,7 +9363,7 @@ async function confRequestMakeup(sid, absentDate){
 }
 
 // 결석 해제 시 자동 호출 — 확인 없이 보강 신청 제거 (cfg 저장은 호출자가 함)
-function autoRemoveMakeupRequest(lesson){
+async function autoRemoveMakeupRequest(lesson){
   if(!lesson || !lesson.makeupRequest) return;
   const req=lesson.makeupRequest;
   const entry=getMkEntryByDate(req.date);
@@ -9347,8 +9374,9 @@ function autoRemoveMakeupRequest(lesson){
     delete entry.studentIds;
   }
   delete lesson.makeupRequest;
-  // cfg 저장은 비동기로 백그라운드 처리 (출결 변경과 함께 일어나도록)
-  gasCall('saveConfig',{config:cfg}).catch(e=>console.warn('cfg 저장 실패:',e));
+  // await으로 cfg 저장 완료 보장 (fire-and-forget 제거 → race condition 방지)
+  try{ await gasCall('saveConfig',{config:cfg}); }
+  catch(e){ console.warn('cfg 저장 실패:',e); }
   toast('결석 해제 → 보강 신청 자동 취소됨');
 }
 
