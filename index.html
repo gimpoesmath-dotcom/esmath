@@ -387,7 +387,6 @@ window._fbReady = true;
       <button class="tab" onclick="showTab('students')">학생 관리</button>
       <button class="tab" onclick="showTab('special')">🎯 특강</button>
       <button class="tab" id="tab-myclass" onclick="showTab('myclass')" style="display:none">내 담당반</button>
-      <button class="tab" id="tab-messenger" onclick="showTab('messenger')">💬 메신저<span id="msgBadge" style="display:none;background:#e02828;color:#fff;border-radius:10px;font-size:10px;padding:1px 5px;margin-left:4px;font-weight:700"></span></button>
       <button class="tab" onclick="showTab('settings')">설정</button>
     </div>
     <div class="user-chip">
@@ -556,9 +555,6 @@ function doLogout(){
   Object.keys(_loaded).forEach(k=>{ _loaded[k]=false; });
   textbookProgress={}; textbookTests={}; specialLessons={};
   pointsData={}; schoolExamData={}; textbookUnits={};
-  // 메신저 상태 초기화
-  _msgLoaded=false;
-  _msgState={mode:'group',dmTarget:null,unread:0,unsubGroup:null,unsubDm:null};
   localStorage.removeItem('session');
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('app-screen').style.display='none';
@@ -586,13 +582,13 @@ async function showApp(){
     // 조교선생님: 수업기록표·오늘입력·내담당반만
     document.querySelectorAll('.tab').forEach(el=>{
       const onclick=el.getAttribute('onclick')||'';
-      el.style.display=(onclick.includes("'today'")||onclick.includes("'matrix'")||onclick.includes("'myclass'")||onclick.includes("'messenger'"))?'':'none';
+      el.style.display=(onclick.includes("'today'")||onclick.includes("'matrix'")||onclick.includes("'myclass'"))?'':'none';
     });
     const mct=document.getElementById('tab-myclass');
     if(mct) mct.style.display='';
     // 새로고침 후 탭 복원 (허용된 탭만)
     const savedTab=localStorage.getItem('lastTab')||'';
-    if(savedTab==='matrix'||savedTab==='today'||savedTab==='myclass'||savedTab==='messenger') st.tab=savedTab;
+    if(savedTab==='matrix'||savedTab==='today'||savedTab==='myclass') st.tab=savedTab;
     else if(st.tab!=='matrix'&&st.tab!=='today') st.tab='myclass';
   } else {
     // 전임/원장: 내담당반 탭 숨김, 나머지 모두 표시
@@ -601,7 +597,7 @@ async function showApp(){
     if(mct) mct.style.display='none';
     // 새로고침 후 탭 복원
     const savedTab=localStorage.getItem('lastTab')||'';
-    const validTabs=['matrix','today','weekly','monthly','points','schedule','students','special','settings','messenger'];
+    const validTabs=['matrix','today','weekly','monthly','points','schedule','students','special','settings'];
     if(savedTab&&validTabs.includes(savedTab)) st.tab=savedTab;
     else if(st.tab==='myclass') st.tab='today';
   }
@@ -621,9 +617,6 @@ async function showApp(){
     // 교재 탭 또는 월간 요약/포인트/오늘입력 탭이 열려있으면 새로고침
     if(st.tab==='students' || st.tab==='monthly' || st.tab==='points' || st.tab==='today' || st.tab==='matrix') render();
   });
-
-  // ④ 메신저 배지 업데이트 (백그라운드)
-  setTimeout(updateMsgBadge, 2000);
 }
 
 window.fbShowApp = showApp; // legacy compat
@@ -2211,7 +2204,7 @@ function showTab(t){
   // 새로고침 후에도 현재 탭 유지
   try{ localStorage.setItem('lastTab', t); } catch(e){}
   if(t!=='special') st.selectedSpecial=null;
-  const order=['matrix','today','weekly','monthly','points','schedule','students','special','myclass','messenger','settings'];
+  const order=['matrix','today','weekly','monthly','points','schedule','students','special','myclass','settings'];
   document.querySelectorAll('.tab').forEach((el,i)=>el.classList.toggle('active',order[i]===t));
   if(t==='students'&&Object.keys(textbookProgress).length===0){
     render();
@@ -2260,7 +2253,6 @@ function render(){
   else if(st.tab==='schedule') el.innerHTML=rSchedule();
   else if(st.tab==='students') el.innerHTML=rStudents();
   else if(st.tab==='myclass')  el.innerHTML=rMyClass();
-  else if(st.tab==='messenger') rMessenger();
   else if(st.tab==='settings') el.innerHTML=rSettings();
   rModal();
   // 스크롤 복원
@@ -10642,301 +10634,6 @@ function toast(msg,isErr=false){
     await showApp();
   }catch(e){ localStorage.removeItem('session'); }
 })();
-
-/* ══════════════════════════════════════════════════════
-   💬 메신저 시스템
-   - 전체 채팅 (group): messages/group 컬렉션
-   - 1:1 채팅 (dm): messages/dm_{userA}_{userB} 컬렉션 (알파벳순 정렬)
-   - 읽음 표시: message 문서의 readBy 배열
-══════════════════════════════════════════════════════ */
-
-// ── 메신저 상태 ──
-let _msgState = {
-  mode: 'group',      // 'group' | 'dm'
-  dmTarget: null,     // 1:1 대화 상대 username
-  unread: 0,
-  unsubGroup: null,   // Firestore realtime listener 해제 함수
-  unsubDm: null,
-};
-let _msgLoaded = false; // 탭 최초 진입 시 구독 시작
-
-// 메신저 Firestore 컬렉션 참조
-function msgGroupColRef(){
-  const {collection}=fb();
-  return collection(fbDb(),'messages_group');
-}
-function msgDmColRef(userA, userB){
-  // 항상 알파벳순 정렬로 컬렉션 ID 고정 (양방향 동일 채널)
-  const {collection}=fb();
-  const key=[userA,userB].sort().join('__');
-  return collection(fbDb(),'messages_dm__'+key);
-}
-
-// 모든 선생님 목록 (원장 포함)
-function allMsgUsers(){
-  const principalList = Object.values(USERS).map(u=>({username:u.username, displayName:u.displayName, role:u.role}));
-  const teacherList = (cfg?.teachers||[]).filter(Boolean).map(t=>{
-    const assistants=(cfg?.assistantTeachers||[]);
-    return {username:t, displayName:t+'님', role:assistants.includes(t)?'assistant':'teacher'};
-  });
-  // 중복 제거 (원장이 teachers 목록에 없도록)
-  const principalUsernames = principalList.map(u=>u.username);
-  const merged = [...principalList, ...teacherList.filter(t=>!principalUsernames.includes(t.username))];
-  return merged;
-}
-
-// 내가 아닌 다른 사용자 목록
-function otherMsgUsers(){
-  return allMsgUsers().filter(u=>u.username!==session?.username);
-}
-
-// DM 채널 Key (두 사용자 알파벳순)
-function dmKey(a,b){ return [a,b].sort().join('__'); }
-
-// 읽지 않은 메시지 수 계산 후 배지 업데이트
-async function updateMsgBadge(){
-  if(!session||!window._fb) return;
-  try{
-    const {getDocs,query,where}=fb();
-    let unread=0;
-    // 전체 채팅 읽지 않은 것
-    const gSnap=await getDocs(msgGroupColRef());
-    gSnap.forEach(d=>{
-      const data=d.data();
-      if(data.from!==session.username && !(data.readBy||[]).includes(session.username)) unread++;
-    });
-    // DM: 상대방이 보낸 내가 안 읽은 것 (모든 DM 채널)
-    const others=otherMsgUsers();
-    for(const u of others){
-      const colRef=msgDmColRef(session.username, u.username);
-      const snap=await getDocs(colRef);
-      snap.forEach(d=>{
-        const data=d.data();
-        if(data.from!==session.username && !(data.readBy||[]).includes(session.username)) unread++;
-      });
-    }
-    _msgState.unread=unread;
-    const badge=document.getElementById('msgBadge');
-    if(badge){
-      if(unread>0){ badge.textContent=unread>99?'99+':String(unread); badge.style.display='inline'; }
-      else { badge.style.display='none'; }
-    }
-  }catch(e){ console.warn('배지 업데이트 실패:',e); }
-}
-
-// 메신저 탭 진입 시 실시간 구독 시작
-function initMessenger(){
-  if(_msgLoaded) return;
-  _msgLoaded=true;
-  // 5분마다 배지 업데이트
-  updateMsgBadge();
-  setInterval(updateMsgBadge, 300000);
-}
-
-// 메시지 보내기
-async function sendMessage(text){
-  if(!text.trim()||!session) return;
-  const {addDoc,serverTimestamp}=fb();
-  const msg={
-    from: session.username,
-    fromName: session.displayName||session.username,
-    text: text.trim(),
-    ts: new Date().toISOString(),
-    readBy: [session.username],
-  };
-  try{
-    if(_msgState.mode==='group'){
-      await addDoc(msgGroupColRef(), msg);
-    } else {
-      await addDoc(msgDmColRef(session.username, _msgState.dmTarget), msg);
-    }
-    // 입력창 초기화
-    const inp=document.getElementById('msgInput');
-    if(inp){ inp.value=''; inp.style.height='40px'; }
-    // 메시지 다시 로드
-    await loadAndRenderMessages();
-  }catch(e){ toast('메시지 전송 실패: '+e.message,true); }
-}
-
-// 메시지 읽음 처리
-async function markMessagesRead(colRef, docs){
-  if(!session) return;
-  const {setDoc,doc}=fb();
-  const toMark=docs.filter(d=>!(d.readBy||[]).includes(session.username)&&d.from!==session.username);
-  for(const d of toMark){
-    try{
-      const ref=doc(colRef,d._id);
-      await setDoc(ref,{...d,readBy:[...(d.readBy||[]),session.username]},);
-    }catch(e){}
-  }
-  if(toMark.length) updateMsgBadge();
-}
-
-// 메시지 로드 및 렌더
-async function loadAndRenderMessages(){
-  const container=document.getElementById('msgList');
-  if(!container) return;
-  const {getDocs,query,orderBy,limit,doc,setDoc}=fb();
-  try{
-    let colRef;
-    if(_msgState.mode==='group'){
-      colRef=msgGroupColRef();
-    } else {
-      colRef=msgDmColRef(session.username, _msgState.dmTarget);
-    }
-    const q=query(colRef, orderBy('ts','asc'), limit(200));
-    const snaps=await getDocs(q);
-    const msgs=[];
-    snaps.forEach(d=>msgs.push({...d.data(),_id:d.id,_ref:colRef}));
-
-    // 읽음 처리
-    const toMark=msgs.filter(m=>m.from!==session.username&&!(m.readBy||[]).includes(session.username));
-    for(const m of toMark){
-      try{
-        const ref=doc(colRef,m._id);
-        await setDoc(ref,{...m,readBy:[...(m.readBy||[]),session.username]},{merge:true});
-      }catch(e){}
-    }
-    if(toMark.length) updateMsgBadge();
-
-    // 렌더
-    if(!msgs.length){
-      container.innerHTML=`<div style="text-align:center;padding:40px;color:var(--text3);font-size:13px">아직 메시지가 없습니다<br><span style="font-size:11px">첫 메시지를 보내보세요 👋</span></div>`;
-    } else {
-      let h='';
-      let lastDate='';
-      msgs.forEach(m=>{
-        const isMe=m.from===session.username;
-        const msgDate=(m.ts||'').slice(0,10);
-        const msgTime=(m.ts||'').slice(11,16);
-        // 날짜 구분선
-        if(msgDate!==lastDate){
-          const [y,mo,d]=msgDate.split('-');
-          h+=`<div style="text-align:center;margin:14px 0 10px;position:relative">
-            <span style="background:var(--bg2);color:var(--text3);font-size:11px;padding:3px 12px;border-radius:20px;border:1px solid var(--border);">${y}년 ${parseInt(mo)}월 ${parseInt(d)}일</span>
-          </div>`;
-          lastDate=msgDate;
-        }
-        const readCount=(m.readBy||[]).length-1; // 나 제외
-        const readTxt=isMe&&readCount>0?`<span style="font-size:9px;color:#80b060;margin-right:4px">읽음</span>`:'';
-        h+=`<div style="display:flex;flex-direction:column;align-items:${isMe?'flex-end':'flex-start'};margin-bottom:10px;padding:0 4px">
-          ${!isMe?`<span style="font-size:10px;color:var(--text3);margin-bottom:3px;font-weight:600">${esc(m.fromName||m.from)}</span>`:''}
-          <div style="display:flex;align-items:flex-end;gap:5px;flex-direction:${isMe?'row-reverse':'row'}">
-            <div style="max-width:72%;padding:9px 13px;border-radius:${isMe?'16px 4px 16px 16px':'4px 16px 16px 16px'};background:${isMe?'var(--text)':'var(--bg)'};color:${isMe?'#fff':'var(--text)'};border:1px solid ${isMe?'transparent':'var(--border)'};font-size:13px;line-height:1.55;word-break:break-word;white-space:pre-wrap">${esc(m.text)}</div>
-            <div style="display:flex;flex-direction:column;align-items:${isMe?'flex-end':'flex-start'};gap:2px;flex-shrink:0">
-              ${readTxt}
-              <span style="font-size:10px;color:var(--text3);white-space:nowrap">${msgTime}</span>
-            </div>
-          </div>
-        </div>`;
-      });
-      container.innerHTML=h;
-    }
-    // 스크롤 맨 아래로
-    container.scrollTop=container.scrollHeight;
-  }catch(e){
-    container.innerHTML=`<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">메시지 로드 실패: ${esc(e.message)}</div>`;
-  }
-}
-
-// 메신저 탭 렌더 (innerHTML을 직접 쓰지 않고 DOM 조작)
-function rMessenger(){
-  initMessenger();
-  const el=document.getElementById('main');
-
-  const others=otherMsgUsers();
-  const roleLabel=(role)=>role==='principal'?'원장':role==='assistant'?'조교':role==='teacher'?'선생님':'';
-
-  // 사이드바 (대화 목록)
-  let sidebarHtml=`
-    <div id="msgSidebar" style="width:200px;min-width:160px;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg);flex-shrink:0">
-      <div style="padding:12px;border-bottom:1px solid var(--border)">
-        <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">채팅</div>
-        <button onclick="switchMsgMode('group')" id="msgBtnGroup"
-          style="width:100%;text-align:left;padding:8px 10px;border-radius:var(--r);border:none;cursor:pointer;font-family:inherit;font-size:12px;font-weight:${_msgState.mode==='group'?'700':'400'};background:${_msgState.mode==='group'?'var(--text)':'transparent'};color:${_msgState.mode==='group'?'#fff':'var(--text)'};margin-bottom:2px">
-          🏫 전체 선생님 채팅
-        </button>
-      </div>
-      <div style="padding:12px;flex:1;overflow-y:auto">
-        <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">1:1 대화</div>`;
-  others.forEach(u=>{
-    const isActive=_msgState.mode==='dm'&&_msgState.dmTarget===u.username;
-    sidebarHtml+=`<button onclick="switchMsgDm('${esc(u.username)}')"
-      style="width:100%;text-align:left;padding:7px 10px;border-radius:var(--r);border:none;cursor:pointer;font-family:inherit;font-size:12px;background:${isActive?'var(--blue-bg)':'transparent'};color:${isActive?'var(--blue)':'var(--text)'};font-weight:${isActive?'700':'400'};display:flex;align-items:center;gap:7px;margin-bottom:2px">
-      <div style="width:28px;height:28px;border-radius:50%;background:${isActive?'var(--blue)':'var(--bg3)'};color:${isActive?'#fff':'var(--text2)'};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">${esc((u.displayName||u.username).slice(0,1))}</div>
-      <div style="min-width:0">
-        <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.displayName||u.username)}</div>
-        <div style="font-size:9px;color:var(--text3)">${roleLabel(u.role)}</div>
-      </div>
-    </button>`;
-  });
-  sidebarHtml+=`</div></div>`;
-
-  // 채팅 헤더
-  let chatTitle='🏫 전체 선생님 채팅';
-  if(_msgState.mode==='dm'&&_msgState.dmTarget){
-    const target=allMsgUsers().find(u=>u.username===_msgState.dmTarget);
-    chatTitle=`💬 ${esc(target?.displayName||_msgState.dmTarget)} 님과 대화`;
-  }
-
-  el.innerHTML=`
-  <style>
-  #msgWrap{display:flex;height:calc(100vh - 95px);overflow:hidden;border:1px solid var(--border);border-radius:var(--rl);background:var(--bg2);margin:-4px}
-  #msgMain{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--bg2)}
-  #msgHeader{padding:12px 16px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
-  #msgList{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column}
-  #msgFooter{padding:10px 14px;background:var(--bg);border-top:1px solid var(--border);display:flex;gap:8px;align-items:flex-end}
-  #msgInput{flex:1;border:1px solid var(--border2);border-radius:var(--r);padding:9px 12px;font-size:13px;font-family:inherit;resize:none;height:40px;max-height:120px;overflow-y:auto;line-height:1.45}
-  #msgInput:focus{outline:none;border-color:var(--blue)}
-  #msgSendBtn{padding:8px 16px;background:var(--text);color:#fff;border:none;border-radius:var(--r);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0;height:40px}
-  #msgSendBtn:hover{opacity:.85}
-  </style>
-  <div id="msgWrap">
-    ${sidebarHtml}
-    <div id="msgMain">
-      <div id="msgHeader">
-        <div style="font-size:14px;font-weight:700">${chatTitle}</div>
-        <button class="btn btn-sm" onclick="loadAndRenderMessages()">🔄 새로고침</button>
-      </div>
-      <div id="msgList"><div style="text-align:center;padding:20px;color:var(--text3);font-size:12px">불러오는 중...</div></div>
-      <div id="msgFooter">
-        <textarea id="msgInput" placeholder="메시지를 입력하세요... (Shift+Enter: 줄바꿈, Enter: 전송)"
-          onkeydown="msgKeyDown(event)"
-          oninput="this.style.height='40px';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
-        <button id="msgSendBtn" onclick="msgSend()">전송</button>
-      </div>
-    </div>
-  </div>`;
-
-  // 메시지 로드
-  loadAndRenderMessages();
-}
-
-function switchMsgMode(mode){
-  _msgState.mode=mode;
-  _msgState.dmTarget=null;
-  rMessenger();
-}
-
-function switchMsgDm(username){
-  _msgState.mode='dm';
-  _msgState.dmTarget=username;
-  rMessenger();
-}
-
-function msgKeyDown(e){
-  if(e.key==='Enter'&&!e.shiftKey){
-    e.preventDefault();
-    msgSend();
-  }
-}
-
-function msgSend(){
-  const inp=document.getElementById('msgInput');
-  if(!inp) return;
-  const text=inp.value;
-  sendMessage(text);
-}
 </script>
 </body>
 </html>
