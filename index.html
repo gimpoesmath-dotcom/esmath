@@ -3967,6 +3967,23 @@ function rPoints(){
                 border:1px solid ${canEarnAttendSettle?(sel==='steady'?'#1558a8':'#90b8e8'):'#ddd'}">⭐ STEADY</button>
             </div>
           </div>
+          ${(()=>{
+            // 사이클 경계 날짜 안내 (이전달/다음달에 걸친 회차)
+            const _settleMonthPfx = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
+            const _crossDates = sessions.map((sess,i)=>({no:i+1, dateStr:sess.dateStr}))
+              .filter(x=>x.dateStr.substring(0,7)!==_settleMonthPfx);
+            if(!_crossDates.length) return '';
+            return `<div style="font-size:10px;color:#7a4e00;background:#fff8e8;border-top:1px solid #f0dda0;padding:3px 8px;display:flex;gap:6px;flex-wrap:wrap">
+              ${_crossDates.map(x=>{
+                const isPrev = x.dateStr.substring(0,7) < _settleMonthPfx;
+                const label  = isPrev ? '이전달' : '다음달';
+                const color  = isPrev ? '#7a4e00' : '#1558a8';
+                const bg     = isPrev ? '#fff3d0' : '#e5effc';
+                const border = isPrev ? '#e0c060' : '#90b8e8';
+                return `<span style="font-size:10px;padding:1px 6px;border-radius:10px;background:${bg};color:${color};border:1px solid ${border};font-weight:600">${label} ${x.dateStr.substring(5)} · ${x.no}회차</span>`;
+              }).join('')}
+            </div>`;
+          })()}
         </div>`;
       });
       h += `</div>`;
