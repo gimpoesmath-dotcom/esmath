@@ -4418,6 +4418,9 @@ function printPointsSummary(){
   }
 
   function isChecked(history, colKey){
+    // 1) type 필드가 colKey와 정확히 일치 (학교성적상 포함)
+    if(history.some(h=>h.type===colKey)) return true;
+    // 2) MANUAL 타입으로 저장된 경우 label fallback 매칭
     const labelMap = {
       TOP_HONOR:       'Top Honor',
       HIGH_HONOR_HIGH: 'High Honor 고등',
@@ -4429,7 +4432,7 @@ function printPointsSummary(){
     if(labelMap[colKey]){
       return history.some(h=>h.type==='MANUAL' && (h.label||'').replace(/\s/g,'').toLowerCase().includes(labelMap[colKey].replace(/\s/g,'').toLowerCase()));
     }
-    return history.some(h=>h.type===colKey);
+    return false;
   }
 
   // 이전달 누적 잔액 계산 (이달 적립 전)
@@ -4483,6 +4486,34 @@ function printPointsSummary(){
     `<th style="text-align:center;background:#f5f8fd;font-size:10px;font-weight:600;color:#333;padding:4px 3px;line-height:1.4">${col.label}</th>`
   ).join('');
 
+  // ── 이달 포인트 적립 학생 목록 (상별) ──
+  const earnedGroups = {};
+  GROUPS.forEach(g=>{ g.cols.forEach(col=>{ earnedGroups[col.key]=[]; }); });
+  filtered.forEach(s=>{
+    const history = getMonthHistory(s.id);
+    ALL_COLS.forEach(col=>{
+      if(isChecked(history, col.key)) earnedGroups[col.key].push(s.name);
+    });
+  });
+
+  let earnedListHtml = '';
+  GROUPS.forEach(g=>{
+    const anyInGroup = g.cols.some(col=>earnedGroups[col.key].length>0);
+    if(!anyInGroup) return;
+    earnedListHtml += `<div style="margin-bottom:14px">
+      <div style="font-size:13px;font-weight:800;color:#1a3a6a;padding:5px 10px;background:#dce8f8;border-left:4px solid #1558a8;margin-bottom:6px">${g.label}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">`;
+    g.cols.forEach(col=>{
+      const names = earnedGroups[col.key];
+      if(!names.length) return;
+      earnedListHtml += `<div style="border:1px solid #bbb;border-radius:6px;padding:7px 12px;min-width:160px;background:#fafafa">
+        <div style="font-size:11px;font-weight:700;color:#1558a8;margin-bottom:4px">${col.label.replace('<br>',' ')} <span style="color:#888;font-weight:400">(${col.pts.toLocaleString()}P)</span></div>
+        <div style="font-size:12px;line-height:1.8">${names.map(n=>`<span style="display:inline-block;background:#e5effc;border-radius:10px;padding:1px 8px;margin:1px 2px;font-weight:600">${n}</span>`).join('')}</div>
+      </div>`;
+    });
+    earnedListHtml += `</div></div>`;
+  });
+
   const printHtml = `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -4492,17 +4523,21 @@ function printPointsSummary(){
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:11px;color:#1a1a1a;padding:14px}
   h1{font-size:20px;font-weight:800;text-align:center;margin-bottom:16px;letter-spacing:-.3px}
+  h2{font-size:14px;font-weight:800;margin:20px 0 10px;padding-bottom:4px;border-bottom:2px solid #1558a8;color:#1a3a6a}
   table{width:100%;border-collapse:collapse;font-size:11px}
   th,td{border:1px solid #bbb;padding:4px 5px;vertical-align:middle}
   th{font-weight:600}
   @media print{
     body{padding:6px}
     @page{margin:8mm;size:A3 landscape}
+    .no-print{display:none}
   }
 </style>
 </head>
 <body>
   <h1>ES수학학원 종합 포인트 관리 시스템 (${yl})</h1>
+
+  <!-- 섹션 1: 체크표 -->
   <table>
     <thead>
       <tr>
@@ -4517,6 +4552,11 @@ function printPointsSummary(){
     </thead>
     <tbody>${rows}</tbody>
   </table>
+
+  <!-- 섹션 2: 이달 수상 학생 목록 -->
+  <h2>📋 ${yl} 수상 학생 목록</h2>
+  ${earnedListHtml || `<div style="color:#aaa;font-size:12px;padding:10px">이달 수상 내역이 없습니다.</div>`}
+
   <script>window.onload=()=>window.print();<\/script>
 </body>
 </html>`;
