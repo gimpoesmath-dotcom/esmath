@@ -486,8 +486,8 @@ function configStudentsDocRef(){
 function configTextbooksDocRef(){
   const {doc}=fb(); return doc(fbDb(),'config','textbooks');
 }
-function configMakeupDaysDocRef(){
-  const {doc}=fb(); return doc(fbDb(),'config','makeupDays');
+function makeupDayDocRef(dateStr){
+  const {doc}=fb(); return doc(fbDb(),'makeup_days', dateStr);
 }
 function lessonDocRef(year,month,key){
   const {doc}=fb(); return doc(fbDb(),`lessons_${year}-${String(month).padStart(2,'0')}`,key);
@@ -623,34 +623,25 @@ window.fbShowApp = showApp; // legacy compat
 window.doLogin = doLogin;
 window.doLogout = doLogout;
 
-// ── 설정 로드/저장 (방안2: config 4분리 - students / textbooks / makeupDays / main) ──
+// ── 설정 로드/저장 (config 3분리 + makeup_days 컬렉션 별도) ──
 async function loadConfig(){
   const {getDoc}=fb();
-  // 4개 문서를 병렬로 읽기
-  const [snapMain, snapStudents, snapTextbooks, snapMakeupDays] = await Promise.all([
+  const [snapMain, snapStudents, snapTextbooks] = await Promise.all([
     getDoc(configDocRef()),
     getDoc(configStudentsDocRef()),
     getDoc(configTextbooksDocRef()),
-    getDoc(configMakeupDaysDocRef()),
   ]);
 
   if(snapMain.exists()){
     cfg = snapMain.data();
-    // 구버전 호환: main에 students/textbooks가 남아있으면 제거 (분리 완료 후)
-    // 단, students/textbooks 전용 문서가 없으면 main의 값을 그대로 사용
-    if(snapStudents.exists()){
-      cfg.students = snapStudents.data().students || [];
-    }
-    if(snapTextbooks.exists()){
-      cfg.textbooks = snapTextbooks.data().textbooks || [];
-    }
-    // makeupDays 분리 문서 우선, 없으면 main의 값 사용 (구버전 호환)
-    if(snapMakeupDays.exists()){
-      cfg.makeupDays = snapMakeupDays.data().makeupDays || {};
-    }
+    if(snapStudents.exists()) cfg.students = snapStudents.data().students || [];
+    if(snapTextbooks.exists()) cfg.textbooks = snapTextbooks.data().textbooks || [];
   } else {
     cfg=JSON.parse(JSON.stringify(DEFAULT_CONFIG));
   }
+
+  // makeup_days 컬렉션 로드 (학생별 분리 저장)
+  await loadMakeupDaysFromCollection();
   // 모든 반의 sessions를 표준값으로 자동 보정 (원장만)
   // 기준: days 배열의 패턴으로 판단 (사용자 정의 반도 포함)
   //  - [1,3,5]=월수금 12회 / [2,4,5]=화목금 12회
@@ -843,13 +834,13 @@ async function saveConfigToFb(){
     const toSave=Object.fromEntries(
       Object.entries(cfg).filter(([k])=>!k.startsWith('_'))
     );
-    // students, textbooks, makeupDays는 전용 문서에 분리 저장
+    // students, textbooks는 전용 문서에 분리 저장
+    // makeupDays는 makeup_days 컬렉션에 별도 관리 → config에서 제외
     const {students, textbooks, makeupDays, ...mainCfg} = toSave;
     await Promise.all([
       setDoc(configDocRef(), mainCfg),
       setDoc(configStudentsDocRef(), {students: students||[]}),
       setDoc(configTextbooksDocRef(), {textbooks: textbooks||[]}),
-      setDoc(configMakeupDaysDocRef(), {makeupDays: makeupDays||{}}),
     ]);
     setSyncState('ok','저장 완료');
   }catch(e){
@@ -882,8 +873,8 @@ async function firebaseAction(action, body){
       Object.entries(localCfg).filter(([k])=>!k.startsWith('_'))
     );
 
-    // ── students / textbooks / makeupDays / main 4개 문서로 분리 저장 ──
-    // 각 문서를 독립적으로 저장 → 동시 수정 시 덮어쓰기 충돌 없음
+    // ── students / textbooks / main 3개 문서로 분리 저장 ──
+    // makeupDays는 makeup_days 컬렉션에서 별도 관리 → config 저장에서 제외
 
     // students 분리 저장: 저장 직전 최신값 읽어 필드 보호
     let studentsToSave = toSave.students||[];
@@ -906,35 +897,18 @@ async function firebaseAction(action, body){
       }
     }catch(e){ console.warn('students 충돌 방지 읽기 실패(무시):', e); }
 
-    // textbooks 분리 저장: 저장 직전 최신값 읽어 원장 외 수정 방지
+    // textbooks 분리 저장
     let textbooksToSave = toSave.textbooks||[];
     try{
       const latestTbSnap = await getDoc(configTextbooksDocRef());
       if(latestTbSnap.exists() && session?.role !== 'principal'){
-        // 선생님은 textbooks 수정 불가 — 항상 Firebase 최신값 유지
         textbooksToSave = latestTbSnap.data().textbooks||[];
       }
     }catch(e){ console.warn('textbooks 충돌 방지 읽기 실패(무시):', e); }
 
-    // makeupDays 분리 저장: 저장 직전 최신값 읽어 병합 (race condition 방지 핵심)
-    let makeupDaysToSave = toSave.makeupDays||{};
-    try{
-      const latestMkSnap = await getDoc(configMakeupDaysDocRef());
-      if(latestMkSnap.exists()){
-        const latestMk = latestMkSnap.data().makeupDays||{};
-        // 현재 메모리에 없는 월 데이터는 Firebase 최신값으로 보호
-        Object.keys(latestMk).forEach(monthKey=>{
-          if(!(monthKey in makeupDaysToSave)){
-            makeupDaysToSave[monthKey] = latestMk[monthKey];
-          }
-        });
-      }
-    }catch(e){ console.warn('makeupDays 충돌 방지 읽기 실패(무시):', e); }
-
-    // main 저장: students/textbooks/makeupDays 제외한 나머지만
+    // main 저장: students/textbooks/makeupDays 제외
     const {students: _s, textbooks: _t, makeupDays: _mk, ...mainToSave} = toSave;
 
-    // main 저장 시에도 Firebase 최신 필드 보호 (holidays 등)
     try{
       const latestMainSnap = await getDoc(configDocRef());
       if(latestMainSnap.exists()){
@@ -946,18 +920,16 @@ async function firebaseAction(action, body){
       }
     }catch(e){ console.warn('main cfg 충돌 방지 읽기 실패(무시):', e); }
 
-    // 4개 문서 병렬 저장
     await Promise.all([
       setDoc(configDocRef(), mainToSave),
       setDoc(configStudentsDocRef(), {students: studentsToSave}),
       setDoc(configTextbooksDocRef(), {textbooks: textbooksToSave}),
-      setDoc(configMakeupDaysDocRef(), {makeupDays: makeupDaysToSave}),
     ]);
 
     cfg = Object.assign({}, mainToSave, {
       students: studentsToSave,
       textbooks: textbooksToSave,
-      makeupDays: makeupDaysToSave,
+      makeupDays: cfg.makeupDays || {}, // makeup_days 컬렉션 캐시 유지
       _myRole: session?.role,
       _myName: session?.displayName,
     });
@@ -6109,8 +6081,89 @@ async function schQuickSave(sid, field, val){
   const pop=document.getElementById('schPop'); if(pop) pop.remove();
 }
 
-/* ── MAKEUP ── */
-/* ── 토요 보강 ── */
+/* makeup_days 컬렉션 전체 로드 → cfg.makeupDays 캐시 재구성 */
+async function loadMakeupDaysFromCollection(){
+  const {getDocs, collection} = fb();
+  try{
+    const snap = await getDocs(collection(fbDb(), 'makeup_days'));
+    const newMd = {};
+    snap.forEach(doc => {
+      const data = doc.data();
+      const dateStr = doc.id; // 문서 ID = YYYY-MM-DD
+      const monthKey = dateStr.slice(0,7);
+      if(!newMd[monthKey]) newMd[monthKey] = [];
+      newMd[monthKey].push({ date: dateStr, students: data.students || [] });
+    });
+    // 월별 정렬
+    Object.keys(newMd).forEach(k => newMd[k].sort((a,b) => a.date.localeCompare(b.date)));
+    cfg.makeupDays = newMd;
+
+    // 구버전 마이그레이션: config/main 또는 config/makeupDays에 데이터가 남아있으면 이전
+    await migrateLegacyMakeupDays();
+  } catch(e){
+    console.warn('makeup_days 로드 실패:', e);
+    if(!cfg.makeupDays) cfg.makeupDays = {};
+  }
+}
+
+/* 구버전 cfg.makeupDays → makeup_days 컬렉션 자동 마이그레이션 */
+async function migrateLegacyMakeupDays(){
+  const {getDoc, setDoc} = fb();
+  // config/makeupDays 문서 확인 (이전 분리 방식)
+  let legacyMd = null;
+  try{
+    const oldSnap = await getDoc(makeupDayDocRef('__legacy__').parent.parent || configDocRef());
+    // config/main에 makeupDays가 있는지 확인
+    const mainSnap = await getDoc(configDocRef());
+    if(mainSnap.exists() && mainSnap.data().makeupDays){
+      legacyMd = mainSnap.data().makeupDays;
+    }
+  } catch(e){}
+
+  if(!legacyMd || typeof legacyMd !== 'object') return;
+  if(Array.isArray(legacyMd)) return; // 너무 구버전은 스킵
+
+  // makeup_days 컬렉션이 이미 비어있지 않으면 마이그레이션 스킵
+  const existingDates = Object.values(cfg.makeupDays).flat().map(e=>e.date);
+  if(existingDates.length > 0) return;
+
+  console.log('구버전 makeupDays 마이그레이션 시작...');
+  const writes = [];
+  Object.values(legacyMd).forEach(monthList => {
+    if(!Array.isArray(monthList)) return;
+    monthList.forEach(entry => {
+      if(!entry || !entry.date) return;
+      writes.push(setDoc(makeupDayDocRef(entry.date), {
+        date: entry.date,
+        students: entry.students || []
+      }));
+    });
+  });
+  if(writes.length > 0){
+    await Promise.all(writes);
+    await loadMakeupDaysFromCollection(); // 다시 로드
+    console.log(`마이그레이션 완료: ${writes.length}개 보강일`);
+  }
+}
+
+/* 단일 보강일 문서 저장 (학생 배열 변경 시 해당 날짜만 저장) */
+async function saveMakeupDayDoc(dateStr){
+  const {setDoc} = fb();
+  const entry = getMkEntryByDate(dateStr);
+  if(!entry) return;
+  await setDoc(makeupDayDocRef(dateStr), {
+    date: dateStr,
+    students: entry.students || []
+  });
+}
+
+/* 보강일 문서 삭제 */
+async function deleteMakeupDayDoc(dateStr){
+  const {deleteDoc} = fb();
+  await deleteDoc(makeupDayDocRef(dateStr));
+}
+
+
 function getMakeupDays(){
   // cfg.makeupDays = { 'YYYY-MM': [{ date, studentIds:[] }] }
   const key=`${st.year}-${String(st.month).padStart(2,'0')}`;
@@ -9300,7 +9353,7 @@ async function confAddStuToSat(sid, targetDate){
   }
   entry.students=arr;
   delete entry.studentIds;
-  await gasCall('saveConfig',{config:cfg});
+  await saveMakeupDayDoc(targetDate);
   toast(`${targetDate} ${period}교시 보강 등록되었습니다`);
   closeM();
   render();
@@ -9356,7 +9409,7 @@ async function confRequestMakeup(sid, absentDate){
   const l=getOrCreate(sid, absentDate);
   l.makeupRequest={date:targetDate, period, teacher};
   await persistLesson(l);
-  await gasCall('saveConfig',{config:cfg});
+  await saveMakeupDayDoc(targetDate);
   toast(`${targetDate} ${period}교시 보강 등록되었습니다`);
   closeM();
   render();
@@ -9374,9 +9427,8 @@ async function autoRemoveMakeupRequest(lesson){
     delete entry.studentIds;
   }
   delete lesson.makeupRequest;
-  // await으로 cfg 저장 완료 보장 (fire-and-forget 제거 → race condition 방지)
-  try{ await gasCall('saveConfig',{config:cfg}); }
-  catch(e){ console.warn('cfg 저장 실패:',e); }
+  try{ await saveMakeupDayDoc(req.date); }
+  catch(e){ console.warn('makeup_days 저장 실패:',e); }
   toast('결석 해제 → 보강 신청 자동 취소됨');
 }
 
@@ -9407,7 +9459,7 @@ async function editMakeupNoAbsent(sid, makeupDate, editId){
     updatedLessons.push(l);
   }
   try{
-    await gasCall('saveConfig',{config:cfg});
+    await saveMakeupDayDoc(makeupDate);
     for(const l of updatedLessons){ await persistLesson(l); }
     toast('보강 데이터 수정 완료');
     diagnoseMakeupData();
@@ -9455,7 +9507,7 @@ async function reattachOrphan(sid, absentDate, editId){
   const l=getOrCreate(sid, absentDate);
   l.makeupRequest={date:targetDate, period, teacher};
   try{
-    await gasCall('saveConfig',{config:cfg});
+    await saveMakeupDayDoc(targetDate);
     await persistLesson(l);
     toast(`${targetDate} ${period}교시 보강으로 재연결 완료`);
     diagnoseMakeupData();
@@ -9486,7 +9538,7 @@ async function removeStudentFromMakeup(sid, makeupDate){
   });
   // 3) 저장
   try{
-    await gasCall('saveConfig',{config:cfg});
+    await saveMakeupDayDoc(makeupDate);
     for(const l of updatedLessons){ await persistLesson(l); }
     toast(`${studName} 학생을 보강일에서 제거했습니다`);
     render();
@@ -9586,7 +9638,7 @@ async function confAddSatStudent(){
   }
 
   try{
-    await gasCall('saveConfig',{config:cfg});
+    await saveMakeupDayDoc(date);
     if(lessonToSave) await persistLesson(lessonToSave);
     if(absentDate){
       toast(`${absentDate} 결석 처리 → ${date} ${period}교시 보강 등록 완료`);
@@ -9677,7 +9729,7 @@ async function updateSatStu(sid, mkDate, field, val){
     }
   });
   try{
-    await gasCall('saveConfig',{config:cfg});
+    await saveMakeupDayDoc(mkDate);
     toast(`${field==='period'?'교시':'담당'} 변경되었습니다`);
   }catch(e){ toast('저장 실패: '+e.message,true); }
 }
@@ -9699,7 +9751,7 @@ async function cancelMakeupRequest(sid, absentDate){
   // lesson에서 makeupRequest 제거
   delete l.makeupRequest;
   await persistLesson(l);
-  await gasCall('saveConfig',{config:cfg});
+  await saveMakeupDayDoc(req.date);
   toast('보강 신청이 취소되었습니다');
   render();
 }
@@ -9791,18 +9843,6 @@ async function confAddMkDay(){
     return;
   }
   const monthKey=v.slice(0,7);
-  // 마이그레이션: 배열이면 객체로 변환
-  if(Array.isArray(cfg.makeupDays)){
-    const old=cfg.makeupDays;
-    cfg.makeupDays={};
-    old.forEach(e=>{
-      if(e && e.date){
-        const mk=e.date.slice(0,7);
-        if(!cfg.makeupDays[mk]) cfg.makeupDays[mk]=[];
-        cfg.makeupDays[mk].push(e);
-      }
-    });
-  }
   if(!cfg.makeupDays) cfg.makeupDays={};
   if(!cfg.makeupDays[monthKey]) cfg.makeupDays[monthKey]=[];
   if(cfg.makeupDays[monthKey].find(e=>e.date===v)){
@@ -9811,7 +9851,7 @@ async function confAddMkDay(){
   }
   cfg.makeupDays[monthKey].push({date:v, students:[]});
   cfg.makeupDays[monthKey].sort((a,b)=>a.date.localeCompare(b.date));
-  await gasCall('saveConfig',{config:cfg});
+  await saveMakeupDayDoc(v);
   closeM(); render();
 }
 
@@ -9838,7 +9878,7 @@ async function delMkDay(d){
     cfg.makeupDays[monthKey]=cfg.makeupDays[monthKey].filter(e=>e.date!==d);
     if(!cfg.makeupDays[monthKey].length) delete cfg.makeupDays[monthKey];
   }
-  await gasCall('saveConfig',{config:cfg});
+  await deleteMakeupDayDoc(d);
   render();
 }
 
