@@ -3325,7 +3325,7 @@ function rMonthly(){
       if(l.attendance==='attend') attend++;
       else if(l.attendance==='absent') absent++;
       else if(l.attendance==='late') late++;
-      if(!l.testIsFullRange){ const ts=parseFloat(l.testScore); if(!isNaN(ts)) testScores.push(ts); }
+      if(l.attendance!=='absent' && !l.testIsFullRange){ const ts=parseFloat(l.testScore); if(!isNaN(ts)) testScores.push(ts); }
     });
     const testAvg = testScores.length ? Math.round(testScores.reduce((a,b)=>a+b,0)/testScores.length) : null;
     return { attend, absent, late, testAvg, totalSessions: sessions.length };
@@ -4033,17 +4033,14 @@ function rPoints(){
     <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">DAILY 챌린지상 / MASTER 인증상 — 시스템 자동 계산 결과</div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:16px">`;
 
-    // 정산 기준월 데이터 사용
+    // 정산 기준월 데이터 사용 — 반드시 3-way 머지본(_mergedLessonsCache) 사용
     const _settleKey = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
     const _curKey2 = `${st.year}-${String(st.month).padStart(2,'0')}`;
     const _isCurrentMonth = (_settleKey === _curKey2);
-    const _cachedLessons = prevMonthLessonsCache[_settleKey];
-    const _settleLessons = _isCurrentMonth ? mdb.lessons : (_cachedLessons || null);
-    if(!_isCurrentMonth && !_cachedLessons){
-      _loadLessonsForMonth(settleYear, settleMonth).then(data=>{
-        prevMonthLessonsCache[_settleKey]=data;
-        render();
-      });
+    const _mergedCached = _mergedLessonsCache[_settleKey];
+    const _settleLessons = _isCurrentMonth ? mdb.lessons : (_mergedCached || null);
+    if(!_isCurrentMonth && !_mergedCached){
+      _loadLessonsForMonth(settleYear, settleMonth).then(()=>{ render(); });
     }
 
     filtered.forEach((s,i)=>{
@@ -4643,23 +4640,29 @@ function isAttendSettled(sid, year, month){
 // 기타 포인트 (DAILY/MASTER) 개별 적립
 // 특정 연/월의 lesson 데이터를 로드 (캐시 활용)
 // 현재 보는 달(mdb)과 같으면 mdb.lessons 반환, 다르면 Firestore에서 로드
+// 단순 Firestore 로드 (머지 없음) — 내부 전용
+const _rawLessonsCache = {}; // 머지 전 단순 캐시 (prevMonthLessonsCache와 분리)
+async function _fetchMonthRaw(y, m){
+  const k=`${y}-${String(m).padStart(2,'0')}`;
+  if(_rawLessonsCache[k]) return _rawLessonsCache[k];
+  try{
+    const {getDocs,collection}=fb();
+    const snaps=await getDocs(collection(fbDb(),`lessons_${k}`));
+    const d={};
+    snaps.forEach(s=>{ const v=s.data(); d[v.key||s.id]=v; });
+    _rawLessonsCache[k]=d;
+    return d;
+  }catch(e){ return {}; }
+}
+
+// 머지 완료 캐시 (3-way merge)
+const _mergedLessonsCache = {};
+
 async function _loadLessonsForMonth(year, month){
   if(year===st.year && month===st.month) return mdb.lessons;
   const cacheKey=`${year}-${String(month).padStart(2,'0')}`;
-  if(prevMonthLessonsCache[cacheKey]) return prevMonthLessonsCache[cacheKey];
+  if(_mergedLessonsCache[cacheKey]) return _mergedLessonsCache[cacheKey];
   try{
-    const {getDocs,collection}=fb();
-
-    async function _fetchMonthRaw(y, m){
-      const k=`${y}-${String(m).padStart(2,'0')}`;
-      if(prevMonthLessonsCache[k]) return prevMonthLessonsCache[k];
-      const snaps=await getDocs(collection(fbDb(),`lessons_${k}`));
-      const d={};
-      snaps.forEach(s=>{ const v=s.data(); d[v.key||s.id]=v; });
-      prevMonthLessonsCache[k]=d;
-      return d;
-    }
-
     // mdb.lessons 와 동일하게 이전달 + 해당달 + 다음달 3-way 머지
     // 우선순위: 이전달 < 다음달 < 해당달
     const pm = month===1?12:month-1, py = month===1?year-1:year;
@@ -4670,6 +4673,8 @@ async function _loadLessonsForMonth(year, month){
       _fetchMonthRaw(ny, nm),
     ]);
     const merged = Object.assign({}, prevL, nextL, curL);
+    _mergedLessonsCache[cacheKey]=merged;
+    // prevMonthLessonsCache도 동기화 (다른 코드에서 참조할 수 있으므로)
     prevMonthLessonsCache[cacheKey]=merged;
     return merged;
   }catch(e){
