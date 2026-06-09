@@ -1,4 +1,4 @@
-<!-- v20260608_fix_sessioncache -->
+<!-- v20260603_fix_matrix_schedule_roadmap_pt_monthly_sync -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -479,16 +479,6 @@ function setSyncState(state, label){
 function configDocRef(){
   const {doc}=fb(); return doc(fbDb(),'config','main');
 }
-// ▼ 방안2: config 분리 — students / textbooks 전용 문서
-function configStudentsDocRef(){
-  const {doc}=fb(); return doc(fbDb(),'config','students');
-}
-function configTextbooksDocRef(){
-  const {doc}=fb(); return doc(fbDb(),'config','textbooks');
-}
-function makeupDayDocRef(dateStr){
-  const {doc}=fb(); return doc(fbDb(),'makeup_days', dateStr);
-}
 function lessonDocRef(year,month,key){
   const {doc}=fb(); return doc(fbDb(),`lessons_${year}-${String(month).padStart(2,'0')}`,key);
 }
@@ -623,25 +613,15 @@ window.fbShowApp = showApp; // legacy compat
 window.doLogin = doLogin;
 window.doLogout = doLogout;
 
-// ── 설정 로드/저장 (config 3분리 + makeup_days 컬렉션 별도) ──
+// ── 설정 로드/저장 ──
 async function loadConfig(){
   const {getDoc}=fb();
-  const [snapMain, snapStudents, snapTextbooks] = await Promise.all([
-    getDoc(configDocRef()),
-    getDoc(configStudentsDocRef()),
-    getDoc(configTextbooksDocRef()),
-  ]);
-
-  if(snapMain.exists()){
-    cfg = snapMain.data();
-    if(snapStudents.exists()) cfg.students = snapStudents.data().students || [];
-    if(snapTextbooks.exists()) cfg.textbooks = snapTextbooks.data().textbooks || [];
+  const snap=await getDoc(configDocRef());
+  if(snap.exists()){
+    cfg=snap.data();
   } else {
     cfg=JSON.parse(JSON.stringify(DEFAULT_CONFIG));
   }
-
-  // makeup_days 컬렉션 로드 (학생별 분리 저장)
-  await loadMakeupDaysFromCollection();
   // 모든 반의 sessions를 표준값으로 자동 보정 (원장만)
   // 기준: days 배열의 패턴으로 판단 (사용자 정의 반도 포함)
   //  - [1,3,5]=월수금 12회 / [2,4,5]=화목금 12회
@@ -670,8 +650,7 @@ async function loadConfig(){
       try{
         const {setDoc}=fb();
         const toSave=Object.fromEntries(Object.entries(cfg).filter(([k])=>!k.startsWith('_')));
-        const {students: _s, textbooks: _t, ...mainOnly} = toSave;
-        await setDoc(configDocRef(), mainOnly);
+        await setDoc(configDocRef(), toSave);
         clearSessionsCache();
         console.log('[자동보정] 회차값 표준화:', fixedList.join(', '));
       }catch(e){ console.warn('자동 보정 저장 실패:', e); }
@@ -781,13 +760,9 @@ async function backupAllData(){
     // 저장
     XLSX.writeFile(wb, 'ES수학_전체백업.xlsx');
 
-    // 마지막 백업 시각 저장 (main 문서만 업데이트)
+    // 마지막 백업 시각 저장
     cfg.lastBackupAt=new Date().toISOString();
-    const {setDoc: _setDoc2}=fb();
-    const {students: _bs, textbooks: _bt, ...mainBackup} = Object.fromEntries(
-      Object.entries(cfg).filter(([k])=>!k.startsWith('_'))
-    );
-    await _setDoc2(configDocRef(), mainBackup);
+    await gasCall('saveConfig',{config:cfg});
     toast('✅ 백업 완료! ES수학_전체백업.xlsx — 원드라이브에 덮어쓰기 하세요');
     render();
 
@@ -831,17 +806,11 @@ async function saveConfigToFb(){
   const {setDoc}=fb();
   setSyncState('syncing','저장 중...');
   try{
+    // _myRole, _myName 같은 임시 필드 제거
     const toSave=Object.fromEntries(
       Object.entries(cfg).filter(([k])=>!k.startsWith('_'))
     );
-    // students, textbooks는 전용 문서에 분리 저장
-    // makeupDays는 makeup_days 컬렉션에 별도 관리 → config에서 제외
-    const {students, textbooks, makeupDays, ...mainCfg} = toSave;
-    await Promise.all([
-      setDoc(configDocRef(), mainCfg),
-      setDoc(configStudentsDocRef(), {students: students||[]}),
-      setDoc(configTextbooksDocRef(), {textbooks: textbooks||[]}),
-    ]);
+    await setDoc(configDocRef(), toSave);
     setSyncState('ok','저장 완료');
   }catch(e){
     setSyncState('err','저장 실패');
@@ -873,66 +842,43 @@ async function firebaseAction(action, body){
       Object.entries(localCfg).filter(([k])=>!k.startsWith('_'))
     );
 
-    // ── students / textbooks / main 3개 문서로 분리 저장 ──
-    // makeupDays는 makeup_days 컬렉션에서 별도 관리 → config 저장에서 제외
-
-    // students 분리 저장: 저장 직전 최신값 읽어 필드 보호
-    let studentsToSave = toSave.students||[];
+    // ── 학생 데이터 충돌 방지: 저장 직전 Firebase 최신 students를 읽어와 grade/level 보호 ──
+    // 다른 사용자(선생님)가 낡은 cfg로 저장할 때 원장이 수정한 학년/레벨을 덮어쓰는 문제 방지
     try{
-      const latestSnap = await getDoc(configStudentsDocRef());
+      const latestSnap = await getDoc(configDocRef());
       if(latestSnap.exists()){
         const latestStudents = latestSnap.data().students||[];
+        const localStudents = toSave.students||[];
+        // Firebase 최신 students 기준으로 grade/level/specialNote 보호
+        // (로컬에 없는 필드는 Firebase 값 우선)
         const protectedFields = ['grade','level','specialNote','joinDate'];
-        studentsToSave = studentsToSave.map(ls=>{
+        toSave.students = localStudents.map(ls=>{
           const fs = latestStudents.find(x=>x.id===ls.id);
-          if(!fs) return ls;
+          if(!fs) return ls; // 새 학생이면 로컬값 그대로
           const merged = {...ls};
           protectedFields.forEach(f=>{
+            // Firebase 값이 존재하고, 로컬값과 다를 경우:
+            // 로컬이 원장 세션이면 로컬 우선, 아니면 Firebase 우선
             if(fs[f] !== undefined && fs[f] !== ls[f]){
-              if(session?.role !== 'principal') merged[f] = fs[f];
+              if(session?.role !== 'principal'){
+                merged[f] = fs[f]; // 선생님은 Firebase(원장 수정값) 우선
+              }
+              // 원장은 자신의 수정값(ls[f]) 우선 — 그대로 둠
             }
           });
           return merged;
         });
-      }
-    }catch(e){ console.warn('students 충돌 방지 읽기 실패(무시):', e); }
-
-    // textbooks 분리 저장
-    let textbooksToSave = toSave.textbooks||[];
-    try{
-      const latestTbSnap = await getDoc(configTextbooksDocRef());
-      if(latestTbSnap.exists() && session?.role !== 'principal'){
-        textbooksToSave = latestTbSnap.data().textbooks||[];
-      }
-    }catch(e){ console.warn('textbooks 충돌 방지 읽기 실패(무시):', e); }
-
-    // main 저장: students/textbooks/makeupDays 제외
-    const {students: _s, textbooks: _t, makeupDays: _mk, ...mainToSave} = toSave;
-
-    try{
-      const latestMainSnap = await getDoc(configDocRef());
-      if(latestMainSnap.exists()){
-        Object.keys(latestMainSnap.data()).forEach(k=>{
-          if(!k.startsWith('_') && !(k in mainToSave)){
-            mainToSave[k] = latestMainSnap.data()[k];
+        // Firebase에만 있고 로컬에 없는 필드도 보호 (holidays, textbooks 등)
+        Object.keys(latestSnap.data()).forEach(k=>{
+          if(!k.startsWith('_') && !(k in toSave)){
+            toSave[k] = latestSnap.data()[k];
           }
         });
       }
-    }catch(e){ console.warn('main cfg 충돌 방지 읽기 실패(무시):', e); }
+    }catch(e){ console.warn('cfg 충돌 방지 읽기 실패(무시):', e); }
 
-    await Promise.all([
-      setDoc(configDocRef(), mainToSave),
-      setDoc(configStudentsDocRef(), {students: studentsToSave}),
-      setDoc(configTextbooksDocRef(), {textbooks: textbooksToSave}),
-    ]);
-
-    cfg = Object.assign({}, mainToSave, {
-      students: studentsToSave,
-      textbooks: textbooksToSave,
-      makeupDays: cfg.makeupDays || {}, // makeup_days 컬렉션 캐시 유지
-      _myRole: session?.role,
-      _myName: session?.displayName,
-    });
+    await setDoc(configDocRef(), toSave);
+    cfg = Object.assign({}, toSave, {_myRole:session?.role, _myName:session?.displayName});
     return {ok:true};
   }
 
@@ -1251,15 +1197,27 @@ async function persistLessonFb(lesson, knownUpdatedAt, forceOverwrite=false){
   await setDoc(ref, data);
   lessonVersions[key]=now;
   mdb.lessons[key]=data;
-  // 이전달(또는 다음달) 날짜인 경우 prevMonthLessonsCache + sessionStorage 모두 동기화
-  // sessionStorage 미갱신 시 새로고침 후 구버전 캐시로 복원되어 makeupRequest 등이 사라지는 버그 방지
+  // 이전달/다음달 날짜인 경우 prevMonthLessonsCache 및 sessionStorage도 동기화
   const cacheKey=`${lessonYear}-${String(lessonMonth).padStart(2,'0')}`;
   if(lessonYear!==st.year || lessonMonth!==st.month){
     if(!prevMonthLessonsCache[cacheKey]) prevMonthLessonsCache[cacheKey]={};
     prevMonthLessonsCache[cacheKey][key]=data;
+    // sessionStorage 캐시도 업데이트 (오래된 캐시로 인한 데이터 누락 방지)
     try{
-      const updated={...prevMonthLessonsCache[cacheKey]};
-      sessionStorage.setItem(`lessons_cache_${cacheKey}`, JSON.stringify(updated));
+      const ssCached=sessionStorage.getItem(`lessons_cache_${cacheKey}`);
+      const ssObj=ssCached?JSON.parse(ssCached):{};
+      ssObj[key]=data;
+      sessionStorage.setItem(`lessons_cache_${cacheKey}`, JSON.stringify(ssObj));
+    }catch(e){}
+  } else {
+    // 현재 달 데이터도 sessionStorage 캐시가 있으면 업데이트 (다른 탭에서 참조 시 일관성)
+    try{
+      const ssCached=sessionStorage.getItem(`lessons_cache_${cacheKey}`);
+      if(ssCached){
+        const ssObj=JSON.parse(ssCached);
+        ssObj[key]=data;
+        sessionStorage.setItem(`lessons_cache_${cacheKey}`, JSON.stringify(ssObj));
+      }
     }catch(e){}
   }
   // 저장 완료 syncBar 표시
@@ -1333,8 +1291,26 @@ function diagnoseMakeupData(){
   if(!container) return;
   const studs=cfg.students||[];
   const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
-  const days=(cfg.makeupDays||{})[monthKey]||[];
-  const lessons=Object.values(mdb.lessons||{});
+  // 현재 달 보강일 + 다음 달 보강일을 모두 포함 (5월 결석 → 6월 보강 케이스 대응)
+  const nextY=st.month===12?st.year+1:st.year;
+  const nextM=st.month===12?1:st.month+1;
+  const nextKey=`${nextY}-${String(nextM).padStart(2,'0')}`;
+  const days=[
+    ...(cfg.makeupDays||{})[monthKey]||[],
+    ...(cfg.makeupDays||{})[nextKey]||[]
+  ];
+  // lessons: mdb.lessons에 이전달+현재달+다음달 병합이 이미 되어 있음
+  // 단, 진단은 현재 달 결석 lesson만 대상으로 함 (이전달 결석 포함 시 범위 과다)
+  // → 결석일 기준: 현재 달 + 이전 달까지 포함 (5월 결석 → 6월 보강 대응)
+  const prevY2=st.month===1?st.year-1:st.year;
+  const prevM2=st.month===1?12:st.month-1;
+  const prevKey2=`${prevY2}-${String(prevM2).padStart(2,'0')}`;
+  const allowedAbsentMonths=new Set([prevKey2, monthKey]);
+  const lessons=Object.values(mdb.lessons||{}).filter(l=>{
+    // 결석 lesson만 (makeupRequest 있거나 absent인 것) + 날짜가 이전달~현재달인 것만
+    const lMonth=l.date?l.date.slice(0,7):'';
+    return allowedAbsentMonths.has(lMonth);
+  });
 
   // 진단 항목들
   const issues={
@@ -1382,11 +1358,10 @@ function diagnoseMakeupData(){
   });
 
   // 2) lessons에 makeupRequest 있는데 makeupDays에 학생 없는 케이스
-  // 전월 결석 → 다음달 보강 케이스 대응: 현재 달뿐 아니라 전체 makeupDays에서 검색
   lessons.forEach(l=>{
     if(!l.makeupRequest) return;
     const reqDate=l.makeupRequest.date;
-    const entry=getMkEntryByDate(reqDate); // 전체 월에서 날짜로 검색
+    const entry=days.find(e=>e.date===reqDate);
     let foundInMakeup=false;
     if(entry){
       const arr=getMakeupStudents(entry);
@@ -1422,7 +1397,8 @@ function diagnoseMakeupData(){
   }
 
   h=`<div style="padding:8px 0">
-    <div style="font-weight:700;margin-bottom:8px">${st.year}년 ${st.month}월 보강 데이터 진단 결과: 총 ${totalIssues}건</div>`;
+    <div style="font-weight:700;margin-bottom:4px">${st.year}년 ${st.month}월 보강 데이터 진단 결과: 총 ${totalIssues}건</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">📌 진단 범위: 이전달~현재달 결석 lesson · 현재달+다음달 보강일 (이달 결석 → 다음달 보강 케이스 정상 처리)</div>`;
 
   // 옛 형식
   if(issues.oldFormat.length){
@@ -1470,107 +1446,31 @@ function diagnoseMakeupData(){
 
   // 결석 연결 안 됨
   if(issues.noAbsent.length){
-    // 수정 폼용: 이번달 토요보강일 목록, 선생님 목록, 학생별 결석일 목록
-    const satDates=days.map(e=>e.date).sort();
-    const teacherOpts=(cfg.teachers||[]).map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fff5e0;border:1px solid #e8c870;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <b style="font-size:13px">🔗 결석 연결 안 됨 (${issues.noAbsent.length}건)</b>
       </div>
-      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">보강 등록은 되어있지만 어느 결석에 대한 보강인지 lesson에 기록이 없습니다. (이전에 결석 → 출석 변경했을 가능성)<br>결석일을 지정해 연결하거나, 교시·담당을 수정할 수 있습니다.</div>`;
-    issues.noAbsent.forEach((o,oi)=>{
-      // 해당 학생의 결석 lesson 목록
-      const absentLessons=Object.values(mdb.lessons||{}).filter(l=>
-        l.studentId===o.sid && l.attendance==='absent' && !l.makeupRequest
-      ).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-      const absentOpts=absentLessons.length
-        ? absentLessons.map(l=>`<option value="${esc(l.date)}">${esc(l.date)}</option>`).join('')
-        : '<option value="">결석일 없음</option>';
-      const editId=`noabs_edit_${oi}`;
-      h+=`<div style="border:1px solid #e8c870;border-radius:6px;padding:8px;margin-bottom:8px;background:#fffdf5">
-        <div style="display:flex;align-items:center;gap:6px;font-size:12px;flex-wrap:wrap">
-          <span>📅 <b>${esc(o.date)}</b></span>
-          <span style="font-weight:600">${esc(o.name)}</span>
-          <span style="color:var(--text3)">${o.period?o.period+'교시':'교시미정'} · ${esc(o.teacher||'미지정')}</span>
-          <button class="btn btn-sm btn-primary" style="margin-left:auto;font-size:10px;padding:2px 8px"
-            onclick="document.getElementById('${editId}').style.display=document.getElementById('${editId}').style.display==='none'?'block':'none'">✏️ 수정</button>
-          <button class="btn btn-sm" style="color:var(--red);font-size:10px;padding:2px 8px" onclick="removeStudentFromMakeup('${o.sid}','${o.date}')">🗑 제거</button>
-        </div>
-        <div id="${editId}" style="display:none;margin-top:8px;padding:8px;background:#fff;border:1px solid #e0d080;border-radius:4px">
-          <div style="font-size:11px;color:var(--text2);margin-bottom:6px">연결할 결석일, 교시, 담당을 선택 후 [저장]</div>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <label style="font-size:11px">결석일
-              <select id="${editId}_abs" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                ${absentOpts}
-              </select>
-            </label>
-            <label style="font-size:11px">교시
-              <select id="${editId}_period" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                <option value="1" ${o.period==='1'?'selected':''}>1교시</option>
-                <option value="2" ${o.period==='2'?'selected':''}>2교시</option>
-              </select>
-            </label>
-            <label style="font-size:11px">담당
-              <select id="${editId}_teacher" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                <option value="">미지정</option>
-                ${teacherOpts}
-              </select>
-            </label>
-            <button class="btn btn-sm btn-primary" style="font-size:11px" onclick="editMakeupNoAbsent('${o.sid}','${o.date}','${editId}')">💾 저장</button>
-          </div>
-        </div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">보강 등록은 되어있지만 어느 결석에 대한 보강인지 lesson에 기록이 없습니다. (이전에 결석 → 출석 변경했을 가능성)</div>`;
+    issues.noAbsent.forEach(o=>{
+      h+=`<div style="display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 0">
+        <span>📅 ${o.date}: <b>${esc(o.name)}</b></span>
+        <span style="color:var(--text3)">${o.period?o.period+'교시':'교시미정'} · ${esc(o.teacher||'미지정')}</span>
+        <button class="btn btn-sm" style="margin-left:auto;color:var(--red);font-size:10px;padding:3px 8px" onclick="removeStudentFromMakeup('${o.sid}','${o.date}')">제거</button>
       </div>`;
     });
     h+=`</div>`;
   }
 
-  // 고아 보강 신청 (lesson에만 있음)
+  // 보강 데이터 확인 (lesson에만 있음)
   if(issues.orphanRequest.length){
-    const satDates2=days.map(e=>e.date).sort();
-    const teacherOpts2=(cfg.teachers||[]).map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fce6e6;border:1px solid #e8a8a8;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <b style="font-size:13px">🔍 미연결 보강 신청 (${issues.orphanRequest.length}건)</b>
+        <b style="font-size:13px">🔍 보강 데이터 확인 (${issues.orphanRequest.length}건)</b>
         <button class="btn btn-sm btn-primary" onclick="fixOrphanRequests()">일괄 정리</button>
       </div>
-      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">결석 lesson에 makeupRequest 정보는 있지만, 토요보강 데이터에서는 학생이 빠진 경우입니다.<br>보강일을 등록해 연결하거나, 신청 정보를 제거할 수 있습니다.</div>`;
-    issues.orphanRequest.forEach((o,oi)=>{
-      const satOpts2=satDates2.length
-        ? satDates2.map(d=>`<option value="${d}" ${d===o.reqDate?'selected':''}>${d}</option>`).join('')
-        : '<option value="">보강일 없음</option>';
-      const editId2=`orphan_edit_${oi}`;
-      h+=`<div style="border:1px solid #e8a8a8;border-radius:6px;padding:8px;margin-bottom:8px;background:#fff8f8">
-        <div style="display:flex;align-items:center;gap:6px;font-size:12px;flex-wrap:wrap">
-          <span>📅 <b>${o.absentDate}</b> 결석 → <b>${o.reqDate}</b> 보강(없음)</span>
-          <span style="font-weight:600">${esc(o.name)}</span>
-          <button class="btn btn-sm btn-primary" style="margin-left:auto;font-size:10px;padding:2px 8px"
-            onclick="document.getElementById('${editId2}').style.display=document.getElementById('${editId2}').style.display==='none'?'block':'none'">✏️ 수정/재연결</button>
-          <button class="btn btn-sm" style="color:var(--red);font-size:10px;padding:2px 8px" onclick="clearOrphanSingle('${o.sid}','${o.absentDate}')">🗑 신청 제거</button>
-        </div>
-        <div id="${editId2}" style="display:none;margin-top:8px;padding:8px;background:#fff;border:1px solid #e0a0a0;border-radius:4px">
-          <div style="font-size:11px;color:var(--text2);margin-bottom:6px">보강일, 교시, 담당을 지정해 토요보강 시간표에 다시 등록합니다</div>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <label style="font-size:11px">보강일
-              <select id="${editId2}_date" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                ${satOpts2}
-              </select>
-            </label>
-            <label style="font-size:11px">교시
-              <select id="${editId2}_period" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                <option value="1" ${o.period==='1'?'selected':''}>1교시</option>
-                <option value="2" ${o.period==='2'?'selected':''}>2교시</option>
-              </select>
-            </label>
-            <label style="font-size:11px">담당
-              <select id="${editId2}_teacher" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                <option value="">미지정</option>
-                ${teacherOpts2}
-              </select>
-            </label>
-            <button class="btn btn-sm btn-primary" style="font-size:11px" onclick="reattachOrphan('${o.sid}','${o.absentDate}','${editId2}')">💾 저장/등록</button>
-          </div>
-        </div>
-      </div>`;
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">결석 lesson에 makeupRequest 정보는 있지만, 토요보강 데이터에서는 학생이 빠진 경우입니다.</div>`;
+    issues.orphanRequest.forEach(o=>{
+      h+=`<div style="font-size:12px;padding:4px 0">${o.absentDate} 결석 → ${o.reqDate} 보강(없음): <b>${esc(o.name)}</b></div>`;
     });
     h+=`</div>`;
   }
@@ -1622,11 +1522,18 @@ async function fixOldFormat(){
   }catch(e){ toast('변환 실패: '+e.message,true); }
 }
 
-// 고아 보강 신청 정리 - lesson에서 makeupRequest 제거
+// 보강 데이터 확인 - lesson에서 makeupRequest 제거
 async function fixOrphanRequests(){
-  if(!confirm('lesson에 남아있는 미연결 보강 신청 정보를 모두 제거하시겠어요?\n(결석 기록은 그대로 유지되고, 보강 신청 정보만 삭제됩니다)')) return;
+  if(!confirm('보강 데이터 연결이 끊긴 항목을 모두 제거하시겠어요?\n(결석 기록은 그대로 유지되고, 보강 신청 정보만 삭제됩니다)')) return;
   const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
-  const days=(cfg.makeupDays||{})[monthKey]||[];
+  // 현재 달 + 다음 달 보강일 모두 포함 (5월 결석 → 6월 보강 케이스 대응)
+  const nextY2=st.month===12?st.year+1:st.year;
+  const nextM2=st.month===12?1:st.month+1;
+  const nextKey2=`${nextY2}-${String(nextM2).padStart(2,'0')}`;
+  const days=[
+    ...(cfg.makeupDays||{})[monthKey]||[],
+    ...(cfg.makeupDays||{})[nextKey2]||[]
+  ];
   const updated=[];
   Object.values(mdb.lessons||{}).forEach(l=>{
     if(!l.makeupRequest) return;
@@ -1645,7 +1552,7 @@ async function fixOrphanRequests(){
   if(updated.length===0){ toast('정리할 데이터가 없습니다'); return; }
   try{
     for(const l of updated){ await persistLesson(l); }
-    toast(`${updated.length}건의 미연결 보강 정보를 정리했습니다`);
+    toast(`${updated.length}건의 보강 데이터를 정리했습니다`);
     diagnoseMakeupData();
     render();
   }catch(e){ toast('정리 실패: '+e.message,true); }
@@ -1866,10 +1773,13 @@ async function switchMonth(y,m){
   const py=m===1?y-1:y;
   const prevKey=`${py}-${String(pm).padStart(2,'0')}`;
   delete prevMonthLessonsCache[prevKey];
+  // sessionStorage 캐시도 무효화 (다른 탭에서 수정된 데이터 반영)
+  try{ sessionStorage.removeItem(`lessons_cache_${prevKey}`); }catch(e){}
   const nm=m===12?1:m+1;
   const ny=m===12?y+1:y;
   const nextKey2=`${ny}-${String(nm).padStart(2,'0')}`;
   delete prevMonthLessonsCache[nextKey2];
+  try{ sessionStorage.removeItem(`lessons_cache_${nextKey2}`); }catch(e){}
   setSyncState('syncing',`${y}년 ${m}월 불러오는 중...`);
   await loadMonthData();
   setSyncState('ok','준비 완료');
@@ -3287,18 +3197,6 @@ function setWkClass(v){ st.weeklyClass=v; render(); }
 function setMTeacher(v){ st.matrixTeacher=v; render(); }
 function setWkTeacher(v){ st.weeklyTeacher=v; render(); }
 
-// 수업기록표 이름 검색 — render 없이 DOM 직접 필터 (포커스 유지)
-function matrixNameSearchFilter(val){
-  st.matrixNameSearch=val;
-  const kw=(val||'').trim();
-  document.querySelectorAll('.mtbl tbody tr').forEach(tr=>{
-    if(!tr.classList.contains('row-e')&&!tr.classList.contains('row-o')) return;
-    const nameCell=tr.querySelector('.col-student');
-    const name=nameCell?nameCell.textContent.trim():'';
-    tr.style.display=(!kw||name.includes(kw))?'':'none';
-  });
-}
-
 /* ── MONTHLY SUMMARY TAB ── */
 function rMonthly(){
   const studs = cfg.students||[];
@@ -3318,17 +3216,21 @@ function rMonthly(){
     // 통계는 이번달 귀속 사이클만 사용 (이전달 overflow 제외)
     const _ownCycleSt=_getAllCycles(classType).find(c=>c.ownerMonth===`${st.year}-${String(st.month).padStart(2,'0')}`);
     const sessions = _ownCycleSt ? _ownCycleSt.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
+    // 등록일 기준 유효 회차만 카운트 (중간 등록 학생 정확성)
+    const stu2=(cfg.students||[]).find(x=>x.id===sid);
+    const jd2=stu2?.joinDate||'';
+    const validSess2 = jd2 ? sessions.filter(s=>s.dateStr>=jd2) : sessions;
     let attend=0, absent=0, late=0, testScores=[];
-    sessions.forEach(sess=>{
+    validSess2.forEach(sess=>{
       const l = mdb.lessons[lk(sid, sess.dateStr)];
       if(!l) return;
       if(l.attendance==='attend') attend++;
       else if(l.attendance==='absent') absent++;
       else if(l.attendance==='late') late++;
-      if(l.attendance!=='absent' && !l.testIsFullRange){ const ts=parseFloat(l.testScore); if(!isNaN(ts)) testScores.push(ts); }
+      if(!l.testIsFullRange){ const ts=parseFloat(l.testScore); if(!isNaN(ts)) testScores.push(ts); }
     });
     const testAvg = testScores.length ? Math.round(testScores.reduce((a,b)=>a+b,0)/testScores.length) : null;
-    return { attend, absent, late, testAvg, totalSessions: sessions.length };
+    return { attend, absent, late, testAvg, totalSessions: sessions.length, validCount: validSess2.length };
   }
 
   // 전범위 1차 90점 이상 여부 — 해당 사이클(ownerMonth) 기준
@@ -3365,35 +3267,10 @@ function rMonthly(){
     });
   }
 
-  // 상 계산
+  // 상 계산 — 전역 함수 calcMonthAwardsFromSummary 재활용 (현재 st.year/st.month 기준)
+  // todayStrAw 체크는 전역 함수에서 sessions.length>=requiredSessions로 처리
   function calcAwards(sid, classType){
-    const stats = calcMonthStats(sid, classType);
-    const awards = [];
-    const ct2 = CT()[classType];
-    const requiredSessions = ct2 ? (ct2.sessions || 0) : 0;
-    // 수상 판단은 이번달 귀속 사이클만 사용 (이전달 overflow 제외)
-    const _ownCycleAw=_getAllCycles(classType).find(c=>c.ownerMonth===`${st.year}-${String(st.month).padStart(2,'0')}`);
-    const allSessions = _ownCycleAw ? _ownCycleAw.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
-    // 포인트 정산과 동일 기준: 사이클 날짜 수(sessions.length)가 필요 회차 이상이면 완료로 판단
-    const cycleComplete = requiredSessions > 0 && allSessions.length >= requiredSessions;
-
-    // 등록일 기준: 사이클 전체 참여 여부 확인
-    const stu = (cfg.students||[]).find(x=>x.id===sid);
-    const joinDate = stu?.joinDate||'';
-    const validSessions = joinDate ? allSessions.filter(s=>s.dateStr>=joinDate) : allSessions;
-    const canEarnAward = cycleComplete && validSessions.length >= requiredSessions;
-
-    if(canEarnAward){
-      if(stats.absent===0 && stats.late===0 && stats.attend>=requiredSessions)
-        awards.push({id:'perfect', label:'PERFECT', sub:'출석상', icon:'🏅', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'});
-      else if(stats.absent===0 && stats.late>=1 && stats.late<=2 && (stats.attend+stats.late)>=requiredSessions)
-        awards.push({id:'steady',  label:'STEADY',  sub:'출석상', icon:'⭐', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'});
-    }
-    if(canEarnAward && stats.testAvg!==null && stats.testAvg>=80)
-      awards.push({id:'daily', label:'DAILY', sub:'챌린지상', icon:'📊', color:'#7a4e00', bg:'#fdf0d8', border:'#e0c060'});
-    if(canEarnAward && hasMasterScore(sid))
-      awards.push({id:'master', label:'MASTER', sub:'인증상', icon:'👑', color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'});
-    return { awards, stats };
+    return calcMonthAwardsFromSummary(sid, classType, st.year, st.month, null);
   }
 
   // 상별 집계
@@ -3554,6 +3431,77 @@ function rMonthly(){
 
 
 
+// ── 월간 요약과 동일한 로직으로 특정 월의 수상 계산 (전역 버전) ──
+// 월간 요약 탭의 calcAwards()와 동일 로직 — year/month 파라미터 지원
+function calcMonthAwardsFromSummary(sid, classType, year, month, lessonsOverride){
+  const _lessons = lessonsOverride || mdb.lessons;
+  const targetMonthStr = `${year}-${String(month).padStart(2,'0')}`;
+  const allCycles = _getAllCycles(classType);
+  const ownCycle = allCycles.find(c => c.ownerMonth === targetMonthStr);
+  const allSessions = ownCycle ? ownCycle.dates.map((d,i) => ({sessionNo:i+1, dateStr:d})) : [];
+
+  const ct2 = CT()[classType];
+  const requiredSessions = ct2 ? (ct2.sessions || 0) : 0;
+
+  // 등록일 기준 유효 회차
+  const stu = (cfg.students||[]).find(x => x.id === sid);
+  const joinDate = stu?.joinDate || '';
+  const validSessions = joinDate ? allSessions.filter(s => s.dateStr >= joinDate) : allSessions;
+
+  // 사이클 완료 여부 — 정산 기준월(이전달)이면 이미 완료된 것으로 간주
+  // (오늘 기준 체크가 아니라 회차 수 기준으로 판단)
+  const cycleComplete = requiredSessions > 0 && allSessions.length >= requiredSessions;
+  const canEarnAward = cycleComplete && validSessions.length >= requiredSessions;
+
+  // 출결 통계
+  let attend=0, absent=0, late=0, testScores=[];
+  validSessions.forEach(sess => {
+    const l = _lessons[lk(sid, sess.dateStr)];
+    if(!l) return;
+    if(l.attendance==='attend') attend++;
+    else if(l.attendance==='absent') absent++;
+    else if(l.attendance==='late') late++;
+    if(!l.testIsFullRange){ const ts=parseFloat(l.testScore); if(!isNaN(ts)) testScores.push(ts); }
+  });
+  const testAvg = testScores.length ? Math.round(testScores.reduce((a,b)=>a+b,0)/testScores.length) : null;
+
+  // MASTER 여부
+  const myTests = textbookTests[sid]||{};
+  const _cycles = allCycles;
+  function _getOwnerM(dateStr){
+    for(const c of _cycles){ if(c.dates.includes(dateStr)) return c.ownerMonth; }
+    return dateStr ? dateStr.substring(0,7) : '';
+  }
+  let hasMaster = false;
+  if(canEarnAward){
+    hasMaster = Object.values(myTests).some(arr => {
+      const first = arr.find(a => Number(a.attempt)===1);
+      if(!first || first.manualComplete) return false;
+      const sc = parseFloat(first.score);
+      if(isNaN(sc) || sc < 90) return false;
+      const bk = (cfg.textbooks||[]).find(b => b.id === first.textbookId);
+      if((bk?.masterTier||'high')==='none') return false;
+      const testDate = first.date||'';
+      if(testDate && _getOwnerM(testDate) !== targetMonthStr) return false;
+      return true;
+    });
+  }
+
+  const awards = [];
+  if(canEarnAward){
+    const _vLen = validSessions.length; // 등록일 기준 유효 회차 수 기준으로 판단
+    if(absent===0 && late===0 && attend>=_vLen)
+      awards.push({id:'perfect', label:'PERFECT', sub:'출석상', icon:'🏅', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'});
+    else if(absent===0 && late>=1 && late<=2 && (attend+late)>=_vLen)
+      awards.push({id:'steady',  label:'STEADY',  sub:'출석상', icon:'⭐', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'});
+    if(testAvg!==null && testAvg>=80)
+      awards.push({id:'daily', label:'DAILY', sub:'챌린지상', icon:'📊', color:'#7a4e00', bg:'#fdf0d8', border:'#e0c060'});
+    if(hasMaster)
+      awards.push({id:'master', label:'MASTER', sub:'인증상', icon:'👑', color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'});
+  }
+  return { awards, stats:{attend, absent, late, testAvg, totalSessions:allSessions.length} };
+}
+
 // 포인트 계산 상수
 const PT = {
   PERFECT: 5000,
@@ -3602,10 +3550,11 @@ function calcMonthPoints(sid, classType, year, month, lessonsOverride){
   const cycleComplete = stdSessions > 0 && sessions.length >= stdSessions;
   const canEarnAttend = cycleComplete && validSessions.length >= stdSessions;
   if(canEarnAttend){
-    if(absent===0 && late===0 && attend>=stdSessions){
+    const _vLen = validSessions.length; // 등록일 기준 유효 회차 수 기준으로 판단
+    if(absent===0 && late===0 && attend>=_vLen){
       earned.push({type:'PERFECT', label:'PERFECT 출석상', points:PT.PERFECT,
         note:`결석 0 · 지각 0 (${stdSessions}회 완료)`});
-    } else if(absent===0 && late>=1 && late<=2 && (attend+late)>=stdSessions){
+    } else if(absent===0 && late>=1 && late<=2 && (attend+late)>=_vLen){
       earned.push({type:'STEADY', label:'STEADY 출석상', points:PT.STEADY,
         note:`결석 0 · 지각 ${late}회 (${stdSessions}회 완료)`});
     }
@@ -3676,7 +3625,7 @@ function calcMonthPoints(sid, classType, year, month, lessonsOverride){
 }
 
 // 학교 성적 포인트 적립 (버튼 클릭 시에만)
-async function settleSchoolExamPoint(sid, settleId, points, type, label, note){
+async function settleSchoolExamPoint(sid, settleId, points, type, label, note, settleYear, settleMonth){
   if(!confirm(`${label} +${points.toLocaleString()}P를 적립하시겠어요?\n\n${note}`)) return;
   const pd = pointsData[sid]||{balance:0,history:[],settled:[]};
   // 중복 체크
@@ -3691,8 +3640,8 @@ async function settleSchoolExamPoint(sid, settleId, points, type, label, note){
     points,
     note,
     settleId,
-    year: new Date().getFullYear(),
-    month: new Date().getMonth()+1,
+    year: settleYear || new Date().getFullYear(),
+    month: settleMonth || (new Date().getMonth()+1),
     date: dk(new Date()),
     by: session?.username||'',
   }];
@@ -3825,6 +3774,7 @@ function rPoints(){
       ${isPrin?`<button class="btn btn-sm" onclick="openM('addManualPoint')">✏️ 수동 적립</button>`:''}
       ${isPrin?`<button class="btn btn-sm" onclick="openM('usePoint')">💳 포인트 차감</button>`:''}
       <button class="btn btn-sm btn-green" onclick="printPointsSummary()">🖨️ 인쇄용 보기</button>
+      <button class="btn btn-sm" style="background:#1558a8;color:#fff;border-color:#1558a8" onclick="showSettleSummary()">📋 정산 내역</button>
     </div>
   </div>
 
@@ -3883,46 +3833,126 @@ function rPoints(){
       <span style="font-size:12px;color:var(--text3)">어나더클래스에서 출결 확인 후 아래에서 각 학생 선택</span>
     </div>`;
 
-    // 미정산 / 정산완료 구분
-    const unsetList  = filtered.filter(s=>!isAttendSettled(s.id,settleYear,settleMonth)).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
-    const doneList   = filtered.filter(s=>isAttendSettled(s.id,settleYear,settleMonth)).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+    // 출결카드용 lessons — 이전달/다음달 모두 병합 (사이클이 월 경계 걸치는 경우 대응)
+    // 예1: 5월 사이클 1회차가 4.30 → 이전달(4월) 로드 필요
+    // 예2: 5월 사이클 마지막회차가 6.2 → 다음달(6월) 로드 필요
+    const _atndKey     = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
+    const _atndPrevY   = settleMonth===1 ? settleYear-1 : settleYear;
+    const _atndPrevM   = settleMonth===1 ? 12 : settleMonth-1;
+    const _atndPrevKey = `${_atndPrevY}-${String(_atndPrevM).padStart(2,'0')}`;
+    const _atndNextY   = settleMonth===12 ? settleYear+1 : settleYear;
+    const _atndNextM   = settleMonth===12 ? 1 : settleMonth+1;
+    const _atndNextKey = `${_atndNextY}-${String(_atndNextM).padStart(2,'0')}`;
+    // 이전달 + 정산달 + 다음달 모두 병합 (정산달이 최우선)
+    const _atndBase    = prevMonthLessonsCache[_atndKey] || null;
+    const _attendLessons = Object.assign(
+      {},
+      mdb.lessons,                              // base: 현재 뷰 병합본
+      prevMonthLessonsCache[_atndPrevKey]||{},  // 정산달 이전달 캐시
+      prevMonthLessonsCache[_atndNextKey]||{},  // 정산달 다음달 캐시
+      _atndBase||{}                             // 정산달 캐시 (최우선)
+    );
 
-    if(unsetList.length){
+    // 정산달 캐시 없으면 백그라운드 로드 후 재렌더
+    if((settleYear!==st.year||settleMonth!==st.month) && !prevMonthLessonsCache[_atndKey]){
+      _loadLessonsForMonth(settleYear, settleMonth).then(data=>{
+        prevMonthLessonsCache[_atndKey]=data;
+        render();
+      });
+    }
+    // 이전달 캐시 없으면 백그라운드 로드 (1회차가 이전달인 경우)
+    if(!prevMonthLessonsCache[_atndPrevKey]){
+      _loadLessonsForMonth(_atndPrevY, _atndPrevM).then(data=>{
+        prevMonthLessonsCache[_atndPrevKey]=data;
+        render();
+      });
+    }
+    // 다음달 캐시 없으면 백그라운드 로드 (마지막회차가 다음달인 경우)
+    if(!prevMonthLessonsCache[_atndNextKey]){
+      _loadLessonsForMonth(_atndNextY, _atndNextM).then(data=>{
+        prevMonthLessonsCache[_atndNextKey]=data;
+        render();
+      });
+    }
+
+    // ── 미정산 목록 먼저 전계산 (출결 상태 포함) — 필터링에 사용 ──
+    const _atndMonthKey = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
+    const _unsetRaw = filtered
+      .filter(s=>!isAttendSettled(s.id,settleYear,settleMonth))
+      .sort((a,b)=>a.name.localeCompare(b.name,'ko'))
+      .map(s=>{
+        const _ctInfo = CT()[s.classType];
+        const _reqSess = _ctInfo ? (_ctInfo.sessions||0) : 0;
+        const _ownCycle = _getAllCycles(s.classType).find(c=>c.ownerMonth===_atndMonthKey);
+        const _sessions = _ownCycle ? _ownCycle.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
+        const _sJoin = s.joinDate||'';
+        const _validSess = _sJoin ? _sessions.filter(sess=>sess.dateStr>=_sJoin) : _sessions;
+        const _canEarn = _reqSess>0 && _sessions.length>=_reqSess && _validSess.length>=_reqSess;
+        const _isCycleDone = _reqSess>0 && _sessions.length>=_reqSess;
+        let _abs=0, _late=0, _att=0;
+        _validSess.forEach(sess=>{
+          const l=_attendLessons[lk(s.id,sess.dateStr)];
+          if(!l) return;
+          if(l.attendance==='absent') _abs++;
+          else if(l.attendance==='late') _late++;
+          else if(l.attendance==='attend') _att++;
+        });
+        let _sys='nodata';
+        if(!_isCycleDone) _sys='incomplete';
+        else if(!_canEarn) _sys='nodata';
+        else if(_abs===0&&_late===0&&_att>=_validSess.length) _sys='perfect';
+        else if(_abs===0&&_late>=1&&_late<=2&&(_att+_late)>=_validSess.length) _sys='steady';
+        else if(_abs>0) _sys='absent';
+        return {s, sessions:_sessions, reqSess:_reqSess, validSess:_validSess, canEarn:_canEarn, isCycleComplete:_isCycleDone, absCount:_abs, lateCount:_late, attendCount:_att, totalRec:_abs+_late+_att, sysRecommend:_sys};
+      });
+
+    // 출결 상태 필터
+    const attendFilter = st.ptAttendFilter||'all';
+    const _fCounts = {
+      perfect:    _unsetRaw.filter(r=>r.sysRecommend==='perfect').length,
+      steady:     _unsetRaw.filter(r=>r.sysRecommend==='steady').length,
+      absent:     _unsetRaw.filter(r=>r.sysRecommend==='absent').length,
+      nodata:     _unsetRaw.filter(r=>r.sysRecommend==='nodata'||r.sysRecommend==='incomplete').length,
+    };
+    const unsetData = attendFilter==='all'     ? _unsetRaw
+      : attendFilter==='perfect'  ? _unsetRaw.filter(r=>r.sysRecommend==='perfect')
+      : attendFilter==='steady'   ? _unsetRaw.filter(r=>r.sysRecommend==='steady')
+      : attendFilter==='absent'   ? _unsetRaw.filter(r=>r.sysRecommend==='absent')
+      : attendFilter==='nodata'   ? _unsetRaw.filter(r=>r.sysRecommend==='nodata'||r.sysRecommend==='incomplete')
+      : _unsetRaw;
+    const unsetList = unsetData.map(r=>r.s);
+
+    // 정산완료 목록
+    const doneList = filtered.filter(s=>isAttendSettled(s.id,settleYear,settleMonth)).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+
+    if(_unsetRaw.length){
+      // ── 출결 상태 필터 버튼 ──
+      const _fBtn=(val,label,col,bg,cnt)=>{
+        const act=attendFilter===val;
+        return `<button onclick="st.ptAttendFilter='${val}';render()"
+          style="padding:3px 11px;font-size:11px;border-radius:20px;cursor:pointer;font-family:inherit;font-weight:${act?700:500};
+          background:${act?col:bg};color:${act?'#fff':col};border:1.5px solid ${col}">
+          ${label} <b>${cnt}</b>
+        </button>`;
+      };
+      h += `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:var(--bg2);border-radius:var(--r);border:1px solid var(--border)">
+        <span style="font-size:11px;font-weight:600;color:var(--text2)">출결 필터</span>
+        ${_fBtn('all',     '전체',      '#444',    '#e8e8e8', _unsetRaw.length)}
+        ${_fBtn('perfect', '🏅 PERFECT','#1e6e3a', '#e2f2e9', _fCounts.perfect)}
+        ${_fBtn('steady',  '⭐ STEADY', '#1558a8', '#e5effc', _fCounts.steady)}
+
+
+      </div>`;
+
       h += `<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">
-        미정산 (${unsetList.length}명) — 시스템 출결은 참고용 · 어나더클래스 확인 후 최종 선택
+        미정산 ${attendFilter!=='all'?`(필터: ${unsetList.length}명 / 전체 ${_unsetRaw.length}명)`:`(${_unsetRaw.length}명)`} — 시스템 출결은 참고용 · 어나더클래스 확인 후 최종 선택
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:16px">`;
 
-      unsetList.forEach(s=>{
+      unsetData.forEach(({s, sessions, reqSess, validSess, canEarn: canEarnAttendSettle, isCycleComplete, absCount, lateCount, attendCount, totalRec, sysRecommend})=>{
         const ct  = CT()[s.classType];
         const sel = (st.ptAttendSel||{})[s.id]||'none';
         const selPt = sel==='perfect'?PT.PERFECT:sel==='steady'?PT.STEADY:0;
-
-        const _ownCycle=_getAllCycles(s.classType).find(c=>c.ownerMonth===`${settleYear}-${String(settleMonth).padStart(2,'0')}`);
-        const sessions = _ownCycle ? _ownCycle.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
-        const ctInfo = CT()[s.classType];
-        const reqSess = ctInfo ? (ctInfo.sessions||0) : 0;
-        // 등록일 기준 참여 가능 회차
-        const sJoinDate = s.joinDate||'';
-        const validSess = sJoinDate ? sessions.filter(sess=>sess.dateStr>=sJoinDate) : sessions;
-        const canEarnAttendSettle = reqSess>0 && sessions.length>=reqSess && validSess.length>=reqSess;
-
-        let absCount=0, lateCount=0, attendCount=0;
-        validSess.forEach(sess=>{
-          const l = mdb.lessons[lk(s.id, sess.dateStr)];
-          if(!l) return;
-          if(l.attendance==='absent') absCount++;
-          else if(l.attendance==='late') lateCount++;
-          else if(l.attendance==='attend') attendCount++;
-        });
-        const totalRec = absCount+lateCount+attendCount;
-        const isCycleComplete = reqSess>0 && sessions.length>=reqSess;
-
-        let sysRecommend = 'none';
-        if(canEarnAttendSettle){
-          if(absCount===0 && lateCount===0 && attendCount>=reqSess) sysRecommend='perfect';
-          else if(absCount===0 && lateCount>=1 && lateCount<=2 && (attendCount+lateCount)>=reqSess) sysRecommend='steady';
-        }
         const recBadge = !isCycleComplete
           ? `<span style="font-size:10px;padding:1px 7px;border-radius:20px;background:#f0f0f0;color:#888;border:1px solid #ddd;font-weight:600">기준 회차(${reqSess}회) 미완료</span>`
           : !canEarnAttendSettle
@@ -3936,6 +3966,23 @@ function rPoints(){
           : `<span style="font-size:10px;color:var(--text3)">기록 없음</span>`;
 
         const selBorderColor = sel==='perfect'?'#80c090':sel==='steady'?'#90b8e8':'var(--border)';
+
+        // 사이클 경계 날짜 안내 (이전달/다음달에 걸친 회차)
+        const _settleMonthPfx = _atndMonthKey; // 'YYYY-MM'
+        const _crossDates = sessions.map((sess,i)=>({no:i+1, dateStr:sess.dateStr}))
+          .filter(x=>x.dateStr.substring(0,7)!==_settleMonthPfx);
+        const _crossNotice = _crossDates.length
+          ? `<div style="font-size:10px;color:#7a4e00;background:#fff8e8;border-top:1px solid #f0dda0;padding:3px 8px;display:flex;gap:6px;flex-wrap:wrap">
+              ${_crossDates.map(x=>{
+                const isPrev = x.dateStr.substring(0,7) < _settleMonthPfx;
+                const label = isPrev ? '이전달' : '다음달';
+                const color = isPrev ? '#7a4e00' : '#1558a8';
+                const bg    = isPrev ? '#fff3d0' : '#e5effc';
+                const border= isPrev ? '#e0c060' : '#90b8e8';
+                return `<span style="font-size:10px;padding:1px 6px;border-radius:10px;background:${bg};color:${color};border:1px solid ${border};font-weight:600">${label} ${x.dateStr.substring(5)} · ${x.no}회차</span>`;
+              }).join('')}
+            </div>`
+          : '';
 
         h += `<div data-pt-name="${esc(s.name)}" style="border:1px solid ${selBorderColor};border-radius:var(--r);background:#fff;overflow:hidden">
           <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;flex-wrap:wrap;border-bottom:1px solid var(--border)">
@@ -3964,6 +4011,7 @@ function rPoints(){
                 border:1px solid ${canEarnAttendSettle?(sel==='steady'?'#1558a8':'#90b8e8'):'#ddd'}">⭐ STEADY</button>
             </div>
           </div>
+          ${_crossNotice}
         </div>`;
       });
       h += `</div>`;
@@ -3983,7 +4031,7 @@ function rPoints(){
         <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
           ${isPrin&&anySelected?`<button class="btn btn-primary" onclick="confirmAttendSettle(${settleYear},${settleMonth})">✅ ${settleYl} 출결 포인트 적립</button>`:''}
           ${anySelected?`<button class="btn" onclick="st.ptAttendSel={};render()">초기화</button>`:''}
-          ${isPrin&&unsetList.length?`<button class="btn" style="color:var(--text3)" onclick="skipAttendSettle(${settleYear},${settleMonth})">이달 출결 없음으로 완료</button>`:''}
+          ${isPrin&&_unsetRaw.length?`<button class="btn" style="color:var(--text3)" onclick="skipAttendSettle(${settleYear},${settleMonth})">이달 출결 없음으로 완료</button>`:''}
         </div>
       </div>`;
     }
@@ -4033,31 +4081,79 @@ function rPoints(){
     <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">DAILY 챌린지상 / MASTER 인증상 — 시스템 자동 계산 결과</div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:16px">`;
 
-    // 정산 기준월 데이터 사용 — 반드시 3-way 머지본(_mergedLessonsCache) 사용
+    // 정산 기준월 데이터 사용 — 이전달 캐시도 병합 (사이클이 월 경계 걸치는 경우 대응)
+    // 예: 5월 사이클에 4월 30일(1회차)가 포함된 경우 → 4월 lesson도 필요
     const _settleKey = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
-    const _curKey2 = `${st.year}-${String(st.month).padStart(2,'0')}`;
-    const _isCurrentMonth = (_settleKey === _curKey2);
-    const _mergedCached = _mergedLessonsCache[_settleKey];
-    const _settleLessons = _isCurrentMonth ? mdb.lessons : (_mergedCached || null);
-    if(!_isCurrentMonth && !_mergedCached){
-      _loadLessonsForMonth(settleYear, settleMonth).then(()=>{ render(); });
+    const _settlePrevY = settleMonth===1 ? settleYear-1 : settleYear;
+    const _settlePrevM = settleMonth===1 ? 12 : settleMonth-1;
+    const _settlePrevKey = `${_settlePrevY}-${String(_settlePrevM).padStart(2,'0')}`;
+    const _settleNextY = settleMonth===12 ? settleYear+1 : settleYear;
+    const _settleNextM = settleMonth===12 ? 1 : settleMonth+1;
+    const _settleNextKey = `${_settleNextY}-${String(_settleNextM).padStart(2,'0')}`;
+    // 이전달 + 현재(정산)달 병합 (현재달이 우선)
+    // mdb.lessons(이전달+현재달+다음달 병합)를 base로 깔고
+    // 정산달 캐시가 있으면 덮어씌워서 정확한 데이터 사용
+    // → 4월 30일처럼 사이클이 이전달에 걸친 날짜도 반드시 포함됨
+    const _settleBase = prevMonthLessonsCache[_settleKey] || null;
+    const _settleLessons = Object.assign(
+      {},
+      mdb.lessons,                                      // base: 이전달+현재달+다음달 병합
+      prevMonthLessonsCache[_settlePrevKey]||{},        // 정산달 이전달 캐시
+      _settleBase||{}                                   // 정산달 캐시 (있으면 우선)
+    );
+
+    // 정산 기준월 캐시 없으면 백그라운드 로드
+    if((settleYear!==st.year||settleMonth!==st.month) && !prevMonthLessonsCache[_settleKey]){
+      _loadLessonsForMonth(settleYear, settleMonth).then(data=>{
+        prevMonthLessonsCache[_settleKey]=data;
+        render(); // 로드 완료 후 재렌더
+      });
+    }
+    // 이전달 캐시도 없으면 백그라운드 로드
+    if(!prevMonthLessonsCache[_settlePrevKey]){
+      _loadLessonsForMonth(_settlePrevY, _settlePrevM).then(data=>{
+        prevMonthLessonsCache[_settlePrevKey]=data;
+      });
     }
 
+    // ── 월간 요약 기준으로 수상 여부 판단 ──
+    // calcMonthAwardsFromSummary: 월간 요약 탭과 동일한 로직으로 해당 월 수상자 계산
     filtered.forEach((s,i)=>{
       const ct = CT()[s.classType];
-      const earned = calcMonthPoints(s.id, s.classType, settleYear, settleMonth, _settleLessons)
-        .filter(e=>e.type==='DAILY'||e.type==='MASTER_HIGH'||e.type==='MASTER_LOW');
+      // 월간 요약 기준 수상 여부 (DAILY/MASTER)
+      const summaryAwards = calcMonthAwardsFromSummary(s.id, s.classType, settleYear, settleMonth, _settleLessons);
+      const summaryAwardIds = summaryAwards.awards.map(a=>a.id);
+      const hasDaily  = summaryAwardIds.includes('daily');
+      const hasMaster = summaryAwardIds.includes('master');
+
+      // 포인트 계산 (기존 calcMonthPoints 사용 — 금액/노트 추출용)
+      const allEarned = calcMonthPoints(s.id, s.classType, settleYear, settleMonth, _settleLessons);
+      // 월간 요약 수상자에 포함된 항목만 표시
+      const earned = allEarned.filter(e=>{
+        if(e.type==='DAILY') return hasDaily;
+        if(e.type==='MASTER_HIGH'||e.type==='MASTER_LOW') return hasMaster;
+        return false;
+      });
+
       const alreadySettled = (pointsData[s.id]?.history||[])
         .some(h=>h.year===settleYear&&h.month===settleMonth&&(h.type==='DAILY'||h.type==='MASTER_HIGH'||h.type==='MASTER_LOW'));
       if(!earned.length && !alreadySettled) return;
 
+      // 수상 배지 표시 (월간 요약 기준 DAILY/MASTER 배지)
+      const awardBadges = summaryAwards.awards
+        .filter(a=>a.id==='daily'||a.id==='master')
+        .map(a=>`<span style="display:inline-flex;align-items:center;gap:2px;font-size:9px;padding:1px 6px;border-radius:10px;font-weight:700;background:${a.bg};color:${a.color};border:1px solid ${a.border}">${a.icon} ${a.label} ${a.sub}</span>`)
+        .join(' ');
+
       h += `<div data-pt-name="${esc(s.name)}" style="border:1px solid var(--border);border-radius:var(--r);background:#fff;overflow:hidden;display:flex;flex-direction:column">
         <div style="padding:7px 10px;flex:1">
-          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px">
+          <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:4px">
             <b style="font-size:20px">${esc(s.name)}</b>
             ${s.grade?`<span style="font-size:9px;padding:1px 5px;border-radius:8px;background:#eef0f3;color:#3a4555;border:1px solid #d8dde5">${s.grade}</span>`:''}
             ${ct?`<span class="badge ${ct.badge||'b-mwf'}" style="font-size:9px">${ct.label}</span>`:''}
           </div>
+          ${awardBadges?`<div style="margin-bottom:5px;display:flex;flex-wrap:wrap;gap:3px">${awardBadges}</div>`:''}
+          <div style="font-size:10px;color:var(--text3);margin-bottom:4px">📊 출 ${summaryAwards.stats.attend} 지 ${summaryAwards.stats.late} 결 ${summaryAwards.stats.absent}${summaryAwards.stats.testAvg!==null?' · 시험평균 '+summaryAwards.stats.testAvg+'점':''} <span style="color:var(--blue)">— ${settleYear}년 ${settleMonth}월 월간요약 기준</span></div>
           ${earned.map(e=>`<div style="font-size:13px;color:var(--text2)">• ${esc(e.label)} <b style="color:#1e6e3a">+${e.points.toLocaleString()}P</b> <span style="color:var(--text3)">${esc(e.note)}</span></div>`).join('')}
           ${alreadySettled?`<div style="font-size:10px;color:#1e6e3a;margin-top:2px">✅ 이미 적립됨</div>`:''}
         </div>
@@ -4066,7 +4162,12 @@ function rPoints(){
     });
 
     const anyOther = filtered.some(s=>{
-      const earned=calcMonthPoints(s.id,s.classType,settleYear,settleMonth,_settleLessons).filter(e=>e.type==='DAILY'||e.type==='MASTER_HIGH'||e.type==='MASTER_LOW');
+      const summaryAwards = calcMonthAwardsFromSummary(s.id, s.classType, settleYear, settleMonth, _settleLessons);
+      const summaryAwardIds = summaryAwards.awards.map(a=>a.id);
+      const hasDaily  = summaryAwardIds.includes('daily');
+      const hasMaster = summaryAwardIds.includes('master');
+      const earned = calcMonthPoints(s.id,s.classType,settleYear,settleMonth,_settleLessons)
+        .filter(e=>(e.type==='DAILY'&&hasDaily)||(( e.type==='MASTER_HIGH'||e.type==='MASTER_LOW')&&hasMaster));
       const done=(pointsData[s.id]?.history||[]).some(h=>h.year===settleYear&&h.month===settleMonth&&(h.type==='DAILY'||h.type==='MASTER_HIGH'||h.type==='MASTER_LOW'));
       return earned.length||done;
     });
@@ -4182,30 +4283,18 @@ function rPoints(){
             <div style="font-size:10px;color:var(--text3)">✅ 성적표 인증 완료</div>
             ${alreadyDone?`<div style="font-size:11px;color:#1e6e3a;margin-top:2px">✅ 이미 적립됨</div>`:''}
           </div>
-          ${isPrin&&!alreadyDone?`<button class="btn btn-sm btn-primary" onclick="settleSchoolExamPoint('${s.id}','${settleId}',${c.points},'${c.type}','${c.label}','${c.note.replace(/'/g,"\'")}')">+${c.points.toLocaleString()}P 적립</button>`:''}
+          ${isPrin&&!alreadyDone?`<button class="btn btn-sm btn-primary" onclick="settleSchoolExamPoint('${s.id}','${settleId}',${c.points},'${c.type}','${c.label}','${c.note.replace(/'/g,"\'")}',${settleYear},${settleMonth})">+${c.points.toLocaleString()}P 적립</button>`:''}
         </div>`;
       });
     }
     h += `</div>`;
     h += `</div>`; // 학교 성적 포인트 wrapper 닫기
 
-    // 성적 보상 수동 적립 안내
-    h += `<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">✏️ 성적 보상 수동 적립</div>
-    <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--rl);background:var(--bg);margin-bottom:8px">
-      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">자동 목록 외 추가 적립이 필요한 경우 직접 입력하세요. <b>성적표 인증된 학생만 지급</b>.</div>
-      ${isPrin?`<button class="btn btn-primary btn-sm" onclick="openM('addManualPoint')">✏️ 수동 적립</button>`:''}
-      <div style="font-size:11px;color:var(--text3);margin-top:6px">💡 성적 기록은 학생 관리 → 상세 탭에서 확인 및 입력할 수 있습니다.</div>
-    </div>
+    // 이달 수상자 현황 요약
+    h += `<div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px;flex-wrap:wrap"><span style="font-size:12px;font-weight:700;color:var(--text2)">🏆 ${settleYl} 수상 현황 요약</span><span style="font-size:10px;color:var(--text3);display:inline-flex;align-items:center;gap:6px"><span style="font-size:10px;padding:2px 8px;border-radius:20px;font-weight:600;background:#fdf0d8;color:#7a4e00;border:1px solid #e0c060">⏳ 적립 예정</span><span style="font-size:10px;padding:2px 8px;border-radius:20px;font-weight:600;background:#e2f2e9;color:#1e6e3a;border:1px solid #80c090">✅ 적립 완료</span><span style="font-size:10px;color:var(--text3)">월간요약 기준</span></span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">`;
 
-    <!-- 이달 수상자 현황 요약 -->
-    <div style="margin:16px 0 8px;display:flex;align-items:center;gap:8px">
-      <button onclick="st.ptAwardOpen=!st.ptAwardOpen;render()" style="display:flex;align-items:center;gap:6px;padding:6px 14px;font-size:12px;font-weight:700;border:1px solid var(--border2);border-radius:var(--r);background:${st.ptAwardOpen?'var(--text)':'var(--bg)'};color:${st.ptAwardOpen?'#fff':'var(--text2)'};cursor:pointer;font-family:inherit">
-        🏆 ${settleYl} 수상 현황 요약 ${st.ptAwardOpen?'▲':'▼'}
-      </button>
-    </div>
-    `;
-
-    // 수상 현황 계산 (토글 여부와 무관하게 항상 계산)
+    // 수상 현황 계산
     const awardDefs2 = [
       {id:'perfect', label:'🏅 PERFECT 출석상', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
       {id:'steady',  label:'⭐ STEADY 출석상',  color:'#1558a8', bg:'#e5effc', border:'#90b8e8'},
@@ -4216,31 +4305,36 @@ function rPoints(){
     const awardNames = {perfect:[], steady:[], daily:[], master:[]};
 
     filtered.forEach(s=>{
+      // 월간 요약 기준 수상 계산 (calcMonthAwardsFromSummary — 포인트 적립 여부와 무관)
+      const summaryResult = calcMonthAwardsFromSummary(s.id, s.classType, settleYear, settleMonth, _settleLessons);
+      const summaryIds = summaryResult.awards.map(a=>a.id);
+      // 포인트 적립 내역도 함께 확인 (이미 적립 완료 여부)
       const hist = pointsData[s.id]?.history||[];
-      const hasPerf  = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='PERFECT');
-      const hasSteady= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='STEADY');
-      const hasDaily = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='DAILY');
-      const hasMaster= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&(h.type==='MASTER_HIGH'||h.type==='MASTER_LOW'));
-      if(hasPerf)  { awardCount.perfect++; awardNames.perfect.push(s.name); }
-      if(hasSteady){ awardCount.steady++;  awardNames.steady.push(s.name);  }
-      if(hasDaily) { awardCount.daily++;   awardNames.daily.push(s.name);   }
-      if(hasMaster){ awardCount.master++;  awardNames.master.push(s.name);  }
+      const settledPerf  = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='PERFECT');
+      const settledSteady= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='STEADY');
+      const settledDaily = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='DAILY');
+      const settledMaster= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&(h.type==='MASTER_HIGH'||h.type==='MASTER_LOW'));
+      // 월간요약 기준 수상자 OR 이미 적립 완료된 경우 모두 카운트
+      const hasPerf  = summaryIds.includes('perfect')  || settledPerf;
+      const hasSteady= summaryIds.includes('steady')   || settledSteady;
+      const hasDaily = summaryIds.includes('daily')    || settledDaily;
+      const hasMaster= summaryIds.includes('master')   || settledMaster;
+      if(hasPerf)  { awardCount.perfect++; awardNames.perfect.push(s.name+(settledPerf?'':' ⏳')); }
+      if(hasSteady){ awardCount.steady++;  awardNames.steady.push(s.name+(settledSteady?'':' ⏳'));  }
+      if(hasDaily) { awardCount.daily++;   awardNames.daily.push(s.name+(settledDaily?'':' ⏳'));   }
+      if(hasMaster){ awardCount.master++;  awardNames.master.push(s.name+(settledMaster?'':' ⏳')); }
     });
 
-    // 버튼 클릭 시에만 수상 현황 카드 표시
-    if(st.ptAwardOpen){
-      h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">`;
-      awardDefs2.forEach(def=>{
-        const cnt   = awardCount[def.id];
-        const names = awardNames[def.id];
-        h += `<div style="padding:10px 12px;border-radius:var(--rl);border:1px solid ${def.border};background:${def.bg}">
-          <div style="font-size:12px;font-weight:700;color:${def.color};margin-bottom:4px">${def.label}</div>
-          <div style="font-size:20px;font-weight:800;color:${def.color};margin-bottom:4px">${cnt}명</div>
-          ${names.length?`<div style="font-size:10px;color:${def.color};opacity:.8">${names.map(n=>esc(n)).join(', ')}</div>`:'<div style="font-size:10px;color:var(--text3)">해당 없음</div>'}
-        </div>`;
-      });
-      h += `</div>`;
-    }
+    awardDefs2.forEach(def=>{
+      const cnt   = awardCount[def.id];
+      const names = awardNames[def.id];
+      h += `<div style="padding:10px 12px;border-radius:var(--rl);border:1px solid ${def.border};background:${def.bg}">
+        <div style="font-size:12px;font-weight:700;color:${def.color};margin-bottom:4px">${def.label}</div>
+        <div style="font-size:20px;font-weight:800;color:${def.color};margin-bottom:4px">${cnt}명</div>
+        ${names.length?`<div style="font-size:10px;color:${def.color};opacity:.8">${names.map(n=>esc(n)).join(', ')}</div>`:'<div style="font-size:10px;color:var(--text3)">해당 없음</div>'}
+      </div>`;
+    });
+    h += `</div>`;
   }
 
   // ══════════════════════════════════════
@@ -4317,7 +4411,7 @@ function rPoints(){
               h += `<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;background:var(--bg2);flex-wrap:wrap">
                 <div style="flex:1;min-width:80px">
                   <div style="font-size:11px;font-weight:600">${esc(item.label)}</div>
-                  <div style="font-size:10px;color:var(--text3)">${esc(item.date||'')}${item.by?' · '+esc(item.by):''}</div>
+                  <div style="font-size:10px;color:var(--text3)">${esc(item.date||'')}${item.by?' · '+esc(item.by):''}${item.note?' · '+esc(item.note):''}</div>
                 </div>
                 <span style="font-size:13px;font-weight:700;color:${isPlus?'#1e6e3a':'var(--red)'};white-space:nowrap">${isPlus?'+':''}${item.points.toLocaleString()}P</span>
                 ${isPrin?`<button class="btn btn-sm" style="color:var(--red);padding:1px 5px;font-size:10px"
@@ -4380,6 +4474,176 @@ function ptBalSearchFilter(val){
   if(xBtn) xBtn.style.display = kw ? '' : 'none';
 }
 
+
+// ── 정산 내역 보기 ──
+function showSettleSummary(){
+  const studs = cfg.students||[];
+  const filterClass = st.ptFilterClass||'all';
+  const printYear   = st.ptSettleYear  || (st.month===1 ? st.year-1 : st.year);
+  const printMonth  = st.ptSettleMonth || (st.month===1 ? 12 : st.month-1);
+  const yl = `${printYear}년 ${printMonth}월`;
+  const filtered = studs.filter(s=> filterClass==='all' || s.classType===filterClass);
+
+  function getHistory(sid){
+    return (pointsData[sid]?.history||[]).filter(h=>h.year===printYear && h.month===printMonth);
+  }
+
+  // 항목별 학생 분류
+  const GROUPS = [
+    { label:'🏅 출결 포인트', items:[
+      { type:'PERFECT',     label:'PERFECT 출석상',   pts:5000  },
+      { type:'STEADY',      label:'STEADY 출석상',    pts:2000  },
+    ]},
+    { label:'📊 학원 포인트', items:[
+      { type:'DAILY',       label:'DAILY 챌린지상',   pts:2000  },
+      { type:'MASTER_HIGH', label:'MASTER 인증상 High', pts:5000 },
+      { type:'MASTER_LOW',  label:'MASTER 인증상 Low',  pts:2000 },
+    ]},
+    { label:'🏫 학교생활 포인트', items:[
+      { type:'TOP_HONOR',       label:'Top Honor',          pts:20000 },
+      { type:'HIGH_HONOR_HIGH', label:'High Honor (고등)',  pts:10000 },
+      { type:'HIGH_HONOR_MID',  label:'High Honor (중등)',  pts:5000  },
+    ]},
+    { label:'📈 성장상 포인트', items:[
+      { type:'GROWTH_30', label:'Growth +30', pts:20000 },
+      { type:'GROWTH_20', label:'Growth +20', pts:10000 },
+      { type:'GROWTH_10', label:'Growth +10', pts:5000  },
+    ]},
+  ];
+
+  // 학생별 이달 적립 총합
+  const studentTotals = {};
+  filtered.forEach(s=>{
+    const hist = getHistory(s.id);
+    const earned = hist.filter(h=>h.points>0).reduce((a,h)=>a+h.points,0);
+    if(earned>0) studentTotals[s.id] = earned;
+  });
+
+  const totalStudents = Object.keys(studentTotals).length;
+  const totalPoints   = Object.values(studentTotals).reduce((a,v)=>a+v,0);
+
+  // 그룹별 HTML 생성
+  let groupsHtml = '';
+  GROUPS.forEach(g=>{
+    let itemsHtml = '';
+    let groupHasAny = false;
+    g.items.forEach(item=>{
+      const names = filtered
+        .map(s=>({ s, hist: getHistory(s.id) }))
+        .filter(({hist})=> hist.some(h=>h.type===item.type))
+        .map(({s})=>s.name);
+      if(!names.length) return;
+      groupHasAny = true;
+      itemsHtml += `
+        <div style="display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px solid #f0f0ee;flex-wrap:wrap">
+          <div style="min-width:180px;font-weight:600;font-size:13px">${item.label}
+            <span style="font-size:11px;font-weight:400;color:#1e6e3a;margin-left:4px">+${item.pts.toLocaleString()}P</span>
+          </div>
+          <div style="font-size:12px;color:#444;font-weight:700;min-width:30px">${names.length}명</div>
+          <div style="font-size:12px;color:#666;flex:1">${names.join(', ')}</div>
+        </div>`;
+    });
+    if(!groupHasAny) return;
+    groupsHtml += `
+      <div style="margin-bottom:20px">
+        <div style="font-size:13px;font-weight:800;color:#1a1a1a;padding:8px 12px;background:#f0f4fa;border-radius:8px;margin-bottom:6px;border-left:4px solid #1558a8">${g.label}</div>
+        ${itemsHtml}
+      </div>`;
+  });
+
+  if(!groupsHtml){
+    groupsHtml = '<div style="text-align:center;padding:40px;color:#aaa;font-size:14px">이달 적립 내역이 없습니다</div>';
+  }
+
+  // 학생별 합계 테이블
+  const studentRows = filtered
+    .filter(s=>studentTotals[s.id])
+    .sort((a,b)=>(studentTotals[b.id]||0)-(studentTotals[a.id]||0))
+    .map((s,i)=>{
+      const hist = getHistory(s.id);
+      const items = hist.filter(h=>h.points>0).map(h=>`${h.label} +${h.points.toLocaleString()}P`).join(' · ');
+      const bg = i%2===0?'#fff':'#f8f8f6';
+      return `<tr>
+        <td style="padding:5px 10px;font-weight:600;background:${bg}">${s.name}</td>
+        <td style="padding:5px 10px;font-size:11px;color:#666;background:${bg}">${items}</td>
+        <td style="padding:5px 10px;text-align:right;font-weight:800;color:#1e6e3a;background:${bg}">+${studentTotals[s.id].toLocaleString()}P</td>
+      </tr>`;
+    }).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>${yl} 정산 내역 — ES수학</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;color:#1a1a1a;padding:20px;max-width:900px;margin:0 auto}
+  h1{font-size:22px;font-weight:800;margin-bottom:4px}
+  .sub{font-size:13px;color:#666;margin-bottom:24px}
+  .summary{display:flex;gap:12px;margin-bottom:24px}
+  .scard{flex:1;padding:14px 18px;border-radius:10px;border:1px solid #e2e2de;background:#fff}
+  .scard .num{font-size:24px;font-weight:800;margin-top:4px}
+  .scard .lbl{font-size:11px;color:#888}
+  h2{font-size:15px;font-weight:800;margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid #1a1a1a}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{background:#f0f4fa;padding:7px 10px;text-align:left;font-weight:700;border-bottom:2px solid #d0d8e8}
+  td{border-bottom:1px solid #eee}
+  @media print{
+    body{padding:10px}
+    @page{margin:10mm;size:A4}
+    button{display:none}
+  }
+</style>
+</head>
+<body>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:8px">
+    <div>
+      <h1>📋 ${yl} 포인트 정산 내역</h1>
+      <div class="sub">ES수학학원${filterClass!=='all'?' · '+( (()=>{ try{ return Object.values(cfg?.classTypes||{}); }catch(e){ return []; } })().find(v=>v&&v.key===filterClass)||{label:filterClass}).label:''}</div>
+    </div>
+    <button onclick="window.print()" style="padding:8px 16px;background:#1a1a1a;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit">🖨️ 인쇄</button>
+  </div>
+
+  <div class="summary">
+    <div class="scard" style="border-color:#80c090;background:#f0faf4">
+      <div class="lbl">이달 적립 학생</div>
+      <div class="num" style="color:#1e6e3a">${totalStudents}명</div>
+    </div>
+    <div class="scard" style="border-color:#90b8e8;background:#eef4fb">
+      <div class="lbl">이달 총 적립 포인트</div>
+      <div class="num" style="color:#1558a8">${totalPoints.toLocaleString()}P</div>
+    </div>
+    <div class="scard">
+      <div class="lbl">정산 기준월</div>
+      <div class="num" style="font-size:18px">${yl}</div>
+    </div>
+  </div>
+
+  <div style="margin-bottom:28px">
+    <h2>항목별 현황</h2>
+    ${groupsHtml}
+  </div>
+
+  <div>
+    <h2>학생별 적립 내역</h2>
+    <table>
+      <thead><tr>
+        <th style="width:80px">이름</th>
+        <th>적립 항목</th>
+        <th style="width:90px;text-align:right">합계</th>
+      </tr></thead>
+      <tbody>${studentRows}</tbody>
+    </table>
+    ${!studentRows?'<div style="text-align:center;padding:30px;color:#aaa">적립 내역이 없습니다</div>':''}
+  </div>
+</body>
+</html>`;
+
+  const w = window.open('','_blank','width=960,height=800');
+  w.document.write(html);
+  w.document.close();
+}
+
 // 포인트 인쇄용 페이지 (해당월 체크박스 형식)
 function printPointsSummary(){
   const studs = cfg.students||[];
@@ -4424,9 +4688,6 @@ function printPointsSummary(){
   }
 
   function isChecked(history, colKey){
-    // 1) type 필드가 colKey와 정확히 일치 (학교성적상 포함)
-    if(history.some(h=>h.type===colKey)) return true;
-    // 2) MANUAL 타입으로 저장된 경우 label fallback 매칭
     const labelMap = {
       TOP_HONOR:       'Top Honor',
       HIGH_HONOR_HIGH: 'High Honor 고등',
@@ -4438,7 +4699,7 @@ function printPointsSummary(){
     if(labelMap[colKey]){
       return history.some(h=>h.type==='MANUAL' && (h.label||'').replace(/\s/g,'').toLowerCase().includes(labelMap[colKey].replace(/\s/g,'').toLowerCase()));
     }
-    return false;
+    return history.some(h=>h.type===colKey);
   }
 
   // 이전달 누적 잔액 계산 (이달 적립 전)
@@ -4501,21 +4762,17 @@ function printPointsSummary(){
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:11px;color:#1a1a1a;padding:14px}
   h1{font-size:20px;font-weight:800;text-align:center;margin-bottom:16px;letter-spacing:-.3px}
-  h2{font-size:14px;font-weight:800;margin:20px 0 10px;padding-bottom:4px;border-bottom:2px solid #1558a8;color:#1a3a6a}
   table{width:100%;border-collapse:collapse;font-size:11px}
   th,td{border:1px solid #bbb;padding:4px 5px;vertical-align:middle}
   th{font-weight:600}
   @media print{
     body{padding:6px}
     @page{margin:8mm;size:A3 landscape}
-    .no-print{display:none}
   }
 </style>
 </head>
 <body>
   <h1>ES수학학원 종합 포인트 관리 시스템 (${yl})</h1>
-
-  <!-- 섹션 1: 체크표 -->
   <table>
     <thead>
       <tr>
@@ -4530,7 +4787,6 @@ function printPointsSummary(){
     </thead>
     <tbody>${rows}</tbody>
   </table>
-
   <script>window.onload=()=>window.print();<\/script>
 </body>
 </html>`;
@@ -4640,43 +4896,18 @@ function isAttendSettled(sid, year, month){
 // 기타 포인트 (DAILY/MASTER) 개별 적립
 // 특정 연/월의 lesson 데이터를 로드 (캐시 활용)
 // 현재 보는 달(mdb)과 같으면 mdb.lessons 반환, 다르면 Firestore에서 로드
-// 단순 Firestore 로드 (머지 없음) — 내부 전용
-const _rawLessonsCache = {}; // 머지 전 단순 캐시 (prevMonthLessonsCache와 분리)
-async function _fetchMonthRaw(y, m){
-  const k=`${y}-${String(m).padStart(2,'0')}`;
-  if(_rawLessonsCache[k]) return _rawLessonsCache[k];
-  try{
-    const {getDocs,collection}=fb();
-    const snaps=await getDocs(collection(fbDb(),`lessons_${k}`));
-    const d={};
-    snaps.forEach(s=>{ const v=s.data(); d[v.key||s.id]=v; });
-    _rawLessonsCache[k]=d;
-    return d;
-  }catch(e){ return {}; }
-}
-
-// 머지 완료 캐시 (3-way merge)
-const _mergedLessonsCache = {};
-
 async function _loadLessonsForMonth(year, month){
   if(year===st.year && month===st.month) return mdb.lessons;
   const cacheKey=`${year}-${String(month).padStart(2,'0')}`;
-  if(_mergedLessonsCache[cacheKey]) return _mergedLessonsCache[cacheKey];
+  if(prevMonthLessonsCache[cacheKey]) return prevMonthLessonsCache[cacheKey];
   try{
-    // mdb.lessons 와 동일하게 이전달 + 해당달 + 다음달 3-way 머지
-    // 우선순위: 이전달 < 다음달 < 해당달
-    const pm = month===1?12:month-1, py = month===1?year-1:year;
-    const nm = month===12?1:month+1, ny = month===12?year+1:year;
-    const [prevL, curL, nextL] = await Promise.all([
-      _fetchMonthRaw(py, pm),
-      _fetchMonthRaw(year, month),
-      _fetchMonthRaw(ny, nm),
-    ]);
-    const merged = Object.assign({}, prevL, nextL, curL);
-    _mergedLessonsCache[cacheKey]=merged;
-    // prevMonthLessonsCache도 동기화 (다른 코드에서 참조할 수 있으므로)
-    prevMonthLessonsCache[cacheKey]=merged;
-    return merged;
+    const {getDocs,collection}=fb();
+    const col=collection(fbDb(),`lessons_${cacheKey}`);
+    const snaps=await getDocs(col);
+    const lessons={};
+    snaps.forEach(d=>{ const data=d.data(); lessons[data.key||d.id]=data; });
+    prevMonthLessonsCache[cacheKey]=lessons;
+    return lessons;
   }catch(e){
     console.warn('월 데이터 로드 실패:', cacheKey, e);
     return {};
@@ -4686,8 +4917,18 @@ async function _loadLessonsForMonth(year, month){
 async function settleOtherPoints(sid, year, month){
   const s = (cfg.students||[]).find(x=>x.id===sid);
   if(!s) return;
-  // 정산 기준월이 현재 보는 월과 다르면 해당 월 데이터 로드
-  const lessonsOverride = await _loadLessonsForMonth(year, month);
+  // 정산달 + 이전달 + 다음달 모두 로드해서 병합 (사이클이 월 경계 걸치는 경우 대응)
+  const prevY = month===1 ? year-1 : year;
+  const prevM = month===1 ? 12 : month-1;
+  const nextY = month===12 ? year+1 : year;
+  const nextM = month===12 ? 1 : month+1;
+  const [curData, prevData, nextData] = await Promise.all([
+    _loadLessonsForMonth(year, month),
+    _loadLessonsForMonth(prevY, prevM),
+    _loadLessonsForMonth(nextY, nextM),
+  ]);
+  // 이전달 → 다음달 → 정산달 순으로 병합 (정산달 최우선)
+  const lessonsOverride = Object.assign({}, prevData, nextData, curData);
   const earned = calcMonthPoints(sid, s.classType, year, month, lessonsOverride)
     .filter(e=>e.type==='DAILY'||e.type==='MASTER_HIGH'||e.type==='MASTER_LOW');
   if(!earned.length){ toast('적립할 포인트가 없습니다',true); return; }
@@ -4800,6 +5041,31 @@ function exportWeeklyExcel(){
   toast('주간요약 엑셀 다운로드 완료');
 }
 
+function matrixNameFilter(val){
+  st.studentNameFilter = val;
+  // DOM show/hide 방식으로 render() 없이 필터 적용 (한글 IME 조합 끊김 방지)
+  const kw = (val||'').normalize('NFC').toLowerCase();
+  document.querySelectorAll('[data-matrix-name]').forEach(el=>{
+    const name = (el.getAttribute('data-matrix-name')||'').normalize('NFC').toLowerCase();
+    el.closest('tr').style.display = (!kw || name.includes(kw)) ? '' : 'none';
+  });
+  // X 버튼 토글
+  const xBtn = document.getElementById('matrixNameClearBtn');
+  if(xBtn) xBtn.style.display = kw ? '' : 'none';
+  // 필터 초기화 버튼 토글
+  const resetBtn = document.getElementById('matrixFilterResetBtn');
+  if(resetBtn) resetBtn.style.display = (kw||st.studentGradeFilter||st.studentLevelFilter||st.studentTeacherFilter) ? '' : 'none';
+}
+
+// 한글 검색 보조: 입력값과 이름을 NFC 정규화하여 비교 (조합 중 자모 분리 방지)
+function koreanNameMatch(name, query){
+  if(!query) return true;
+  // NFC 정규화로 완성형 비교
+  const nName=(name||'').normalize('NFC').toLowerCase();
+  const nQuery=query.normalize('NFC').toLowerCase();
+  return nName.includes(nQuery);
+}
+
 /* ── MATRIX ── */
 function rMatrix(){
   const isPrin=session?.role==='principal';
@@ -4854,7 +5120,6 @@ function rMatrix(){
   // 필터 바 데이터 계산
   const _gradeF0=st.studentGradeFilter||'';
   const _levelF0=st.studentLevelFilter||'';
-  const _attF0=st.studentAttFilter||'';
   const _teacherF0=st.studentTeacherFilter||'';
   const allStuds=cfg.students||[];
   // 학년 목록
@@ -4873,21 +5138,22 @@ function rMatrix(){
     }).join('<span style="color:#ccc;margin:0 2px">·</span>');
     return `<span style="display:inline-flex;align-items:center;gap:4px;background:${bg};color:${color};border:1px solid ${border};border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600;${groupActive?'outline:2px solid '+color+';outline-offset:1px;':''}">${label} ${items}</span>`;
   };
-  // 이름 검색 필터
-  const _nameF0=st.matrixNameSearch||'';
-  const isFiltered0=_gradeF0||_levelF0||_teacherF0||_nameF0;
 
+  const _nameF0=st.studentNameFilter||'';
+  const isFiltered0b=_gradeF0||_levelF0||_teacherF0||_nameF0;
   let filterBar=`<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px">`;
-  // 이름 검색 인풋 (DOM 직접 필터 방식 — render 없이 실시간)
+  // 이름 검색 입력창 — compositionend로 IME 조합 완료 후에만 필터 적용 (한글 끊김 방지)
   filterBar+=`<div style="display:inline-flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--border2);border-radius:20px;padding:2px 10px">
     <span style="font-size:12px;color:var(--text3)">🔍</span>
     <input type="text" id="matrixNameSearch" placeholder="이름 검색" value="${esc(_nameF0)}"
-      oninput="matrixNameSearchFilter(this.value)"
-      style="border:none;outline:none;font-size:12px;width:100px;background:transparent;font-family:inherit;color:var(--text)">
-    ${_nameF0?`<span onclick="matrixNameSearchFilter('');document.getElementById('matrixNameSearch').value=''" style="font-size:12px;cursor:pointer;color:var(--text3)">✕</span>`:''}
+      oninput="if(!this._composing) matrixNameFilter(this.value)"
+      oncompositionstart="this._composing=true"
+      oncompositionend="this._composing=false; matrixNameFilter(this.value)"
+      style="border:none;outline:none;background:transparent;font-size:12px;font-family:inherit;width:90px;padding:2px 0;color:var(--text)">
+    <span id="matrixNameClearBtn" onclick="matrixNameFilter('');document.getElementById('matrixNameSearch').value=''" style="cursor:pointer;font-size:11px;color:var(--text3);padding:0 2px;display:${_nameF0?'':'none'}" title="검색 초기화">✕</span>
   </div>`;
   if(gradeSet.length){ filterBar+=renderGradeGroup('초등','#5a3c00','#fef3e2','#e8c87a',elems0); filterBar+=renderGradeGroup('중등','#1e4a80','#e5effc','#90b8e8',middle0); filterBar+=renderGradeGroup('고등','#3a1e6e','#f0e8fc','#c090e0',high0); }
-  if(isFiltered0) filterBar+=`<button class="btn btn-sm" onclick="st.studentGradeFilter='';st.studentLevelFilter='';st.studentTeacherFilter='';matrixNameSearchFilter('');const ni=document.getElementById('matrixNameSearch');if(ni)ni.value='';render()" style="font-size:11px">✕ 필터 초기화</button>`;
+  if(isFiltered0b) filterBar+=`<button id="matrixFilterResetBtn" class="btn btn-sm" onclick="st.studentGradeFilter='';st.studentLevelFilter='';st.studentTeacherFilter='';st.studentNameFilter='';render()" style="font-size:11px">✕ 필터 초기화</button>`;
   filterBar+=`</div>`;
 
   let h=`<div class="toolbar">
@@ -4914,11 +5180,11 @@ function rMatrix(){
     const _gradeF=st.studentGradeFilter||'';
     const _levelF=st.studentLevelFilter||'';
     const _teacherF=st.studentTeacherFilter||'';
-    const _nameF=st.matrixNameSearch||'';
     if(_gradeF) studs=studs.filter(s=>s.grade===_gradeF);
     if(_levelF) studs=studs.filter(s=>s.level===_levelF);
     if(_teacherF) studs=studs.filter(s=>isStudentOfTeacher(s,_teacherF));
-    if(_nameF) studs=studs.filter(s=>(s.name||'').includes(_nameF));
+    const _nameF=st.studentNameFilter||'';
+    if(_nameF) studs=studs.filter(s=>koreanNameMatch(s.name,_nameF));
     if(!studs.length) return;
 
     const monthSessions=sessionsForMonthWithCycle(cls,st.year,st.month);
@@ -5013,7 +5279,7 @@ function renderMatrixTable(studs,mergedCols,todayStr,cls){
     const testAvg=null; // 시험평균 칩 미표시
     const avgChip='';
     const specialNote=s.specialNote||'';
-    h+=`<tr class="${ri%2===0?'row-e':'row-o'}"><td class="col-student">
+    h+=`<tr class="${ri%2===0?'row-e':'row-o'}" data-matrix-name="${esc(s.name)}"><td class="col-student">
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
         <span style="font-weight:600">${s.name}</span>
         ${s.grade?gradeBadge(s.grade):''}
@@ -5930,17 +6196,17 @@ function rSchedule(){
   return h;
 }
 
-/* 토요일 보강 시간표 — 이번 달 보강일들의 학생을 1교시(10-12)/2교시(12-14)별로 담당 그룹핑하여 표시 */
+/* 토요일 보강 시간표 — 이번 달 + 인접 달 보강일들의 학생을 1교시(10-12)/2교시(12-14)별로 담당 그룹핑하여 표시 */
 function renderSaturdayTable(){
-  // 이번 달 + 다음 달 보강일 표시 (전월 결석 → 다음달 보강 케이스 대응)
-  const nm=st.month===12?1:st.month+1, ny=st.month===12?st.year+1:st.year;
-  const nextKey=`${ny}-${String(nm).padStart(2,'0')}`;
-  const days=getMakeupDays();
-  const nextDays=(cfg.makeupDays||{})[nextKey]||[];
-  // 다음 달 보강일 중 학생이 등록된 경우만 표시
-  const nextDaysWithStuds=nextDays.filter(e=>getMakeupStudents(e).length>0);
-  const allDays=[...days, ...nextDaysWithStuds].sort((a,b)=>a.date.localeCompare(b.date));
-  if(!allDays.length) return '';
+  // 현재 달 보강일만 표시 (이전달/다음달 제외)
+  const md=cfg.makeupDays||{};
+  const curKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
+  // 현재 달 보강일만 날짜순 정렬
+  const allEntries=[...(md[curKey]||[])].sort((a,b)=>a.date.localeCompare(b.date));
+  // 중복 제거 (같은 날짜 있을 경우)
+  const seenDates=new Set();
+  const days=allEntries.filter(e=>{ if(seenDates.has(e.date)) return false; seenDates.add(e.date); return true; });
+  if(!days.length) return '';
   const isPrin=session?.role==='principal';
   const allStuds=cfg.students||[];
   const studs=(!isPrin && !st.viewAll)
@@ -5948,7 +6214,7 @@ function renderSaturdayTable(){
     : allStuds;
 
   // 등록된 보강일을 모두 표시 (학생 없어도)
-  const activeDays=allDays;
+  const activeDays=days;
   if(!activeDays.length) return '';
 
   let h=`<div style="margin-top:24px">
@@ -6119,89 +6385,8 @@ async function schQuickSave(sid, field, val){
   const pop=document.getElementById('schPop'); if(pop) pop.remove();
 }
 
-/* makeup_days 컬렉션 전체 로드 → cfg.makeupDays 캐시 재구성 */
-async function loadMakeupDaysFromCollection(){
-  const {getDocs, collection} = fb();
-  try{
-    const snap = await getDocs(collection(fbDb(), 'makeup_days'));
-    const newMd = {};
-    snap.forEach(doc => {
-      const data = doc.data();
-      const dateStr = doc.id; // 문서 ID = YYYY-MM-DD
-      const monthKey = dateStr.slice(0,7);
-      if(!newMd[monthKey]) newMd[monthKey] = [];
-      newMd[monthKey].push({ date: dateStr, students: data.students || [] });
-    });
-    // 월별 정렬
-    Object.keys(newMd).forEach(k => newMd[k].sort((a,b) => a.date.localeCompare(b.date)));
-    cfg.makeupDays = newMd;
-
-    // 구버전 마이그레이션: config/main 또는 config/makeupDays에 데이터가 남아있으면 이전
-    await migrateLegacyMakeupDays();
-  } catch(e){
-    console.warn('makeup_days 로드 실패:', e);
-    if(!cfg.makeupDays) cfg.makeupDays = {};
-  }
-}
-
-/* 구버전 cfg.makeupDays → makeup_days 컬렉션 자동 마이그레이션 */
-async function migrateLegacyMakeupDays(){
-  const {getDoc, setDoc} = fb();
-  // config/makeupDays 문서 확인 (이전 분리 방식)
-  let legacyMd = null;
-  try{
-    const oldSnap = await getDoc(makeupDayDocRef('__legacy__').parent.parent || configDocRef());
-    // config/main에 makeupDays가 있는지 확인
-    const mainSnap = await getDoc(configDocRef());
-    if(mainSnap.exists() && mainSnap.data().makeupDays){
-      legacyMd = mainSnap.data().makeupDays;
-    }
-  } catch(e){}
-
-  if(!legacyMd || typeof legacyMd !== 'object') return;
-  if(Array.isArray(legacyMd)) return; // 너무 구버전은 스킵
-
-  // makeup_days 컬렉션이 이미 비어있지 않으면 마이그레이션 스킵
-  const existingDates = Object.values(cfg.makeupDays).flat().map(e=>e.date);
-  if(existingDates.length > 0) return;
-
-  console.log('구버전 makeupDays 마이그레이션 시작...');
-  const writes = [];
-  Object.values(legacyMd).forEach(monthList => {
-    if(!Array.isArray(monthList)) return;
-    monthList.forEach(entry => {
-      if(!entry || !entry.date) return;
-      writes.push(setDoc(makeupDayDocRef(entry.date), {
-        date: entry.date,
-        students: entry.students || []
-      }));
-    });
-  });
-  if(writes.length > 0){
-    await Promise.all(writes);
-    await loadMakeupDaysFromCollection(); // 다시 로드
-    console.log(`마이그레이션 완료: ${writes.length}개 보강일`);
-  }
-}
-
-/* 단일 보강일 문서 저장 (학생 배열 변경 시 해당 날짜만 저장) */
-async function saveMakeupDayDoc(dateStr){
-  const {setDoc} = fb();
-  const entry = getMkEntryByDate(dateStr);
-  if(!entry) return;
-  await setDoc(makeupDayDocRef(dateStr), {
-    date: dateStr,
-    students: entry.students || []
-  });
-}
-
-/* 보강일 문서 삭제 */
-async function deleteMakeupDayDoc(dateStr){
-  const {deleteDoc} = fb();
-  await deleteDoc(makeupDayDocRef(dateStr));
-}
-
-
+/* ── MAKEUP ── */
+/* ── 토요 보강 ── */
 function getMakeupDays(){
   // cfg.makeupDays = { 'YYYY-MM': [{ date, studentIds:[] }] }
   const key=`${st.year}-${String(st.month).padStart(2,'0')}`;
@@ -6887,8 +7072,8 @@ function rSettings(){
     h+=`<div class="toolbar" style="margin-top:14px"><b>💾 데이터</b></div>
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-green" onclick="exportExcel()">📥 이달 전체 엑셀</button>
-      <button class="btn btn-primary" onclick="exportESReport(1)">📋 1분기 레포트 (1~12월)</button>
-      <button class="btn btn-primary" onclick="exportESReport(2)" style="background:#1558a8;border-color:#1558a8">📋 2분기 레포트 (4~다음해3월)</button>
+      <button class="btn btn-primary" onclick="exportESReport()">📋 ES 분기 레포트</button>
+      <button class="btn btn-primary" onclick="exportESReportWithRoadmap()" style="background:#7b1fa2;border-color:#7b1fa2">🗺️ 로드맵 레포트</button>
       <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
         <span style="font-size:11px;color:var(--text3)">마지막 백업: ${lastBackup}</span>
         <button class="btn btn-primary" onclick="backupAllData()">💾 전체 백업</button>
@@ -8063,6 +8248,11 @@ function rModal(){
     const preSelSid = st.modalArg1||'';
     const studs = cfg.students||[];
     const MANUAL_TYPES=[
+      {label:'PERFECT 출석상', pts:5000},
+      {label:'STEADY 출석상', pts:2000},
+      {label:'DAILY 챌린지상', pts:2000},
+      {label:'MASTER 인증상 (High)', pts:5000},
+      {label:'MASTER 인증상 (Low)', pts:2000},
       {label:'TOP HONOR (내신 100점/고등 1등급)', pts:20000},
       {label:'HIGH HONOR 중등 (내신 90점↑)', pts:10000},
       {label:'HIGH HONOR 고등 (내신 90점↑)', pts:20000},
@@ -8675,15 +8865,20 @@ function rModal(){
     const absentDate=st.modalArg2; // 결석한 날짜
     const s=(cfg.students||[]).find(x=>x.id===sid);
     if(!s){ closeM(); return; }
-    // 설정에 등록된 토요보강일만 표시 (이번 달 또는 다음 달 초까지)
+    // 설정에 등록된 토요보강일만 표시 (이전 달 + 이번 달 + 다음 달)
     const allMkDates=getAllMakeupDates();
     const ys=st.year, ms=st.month;
-    // 이번 달 + 다음 달의 등록된 보강일만 (보통 결석한 달의 보강일에 신청)
+    // 결석일 기준 달(absentDate 슬라이스)의 보강일 + 다음 달까지 포함
+    const absentMonthKey=absentDate.slice(0,7);
+    const absentYear=parseInt(absentDate.slice(0,4)), absentMonth=parseInt(absentDate.slice(5,7));
+    const nextAY=absentMonth===12?absentYear+1:absentYear, nextAM=absentMonth===12?1:absentMonth+1;
+    const nextAbsentKey=`${nextAY}-${String(nextAM).padStart(2,'0')}`;
+    // 현재 탭 달도 포함 (어느 달에서 모달을 열든 결석달+다음달+현재탭달 모두)
     const monthKey=`${ys}-${String(ms).padStart(2,'0')}`;
-    const nextY=ms===12?ys+1:ys;
-    const nextM=ms===12?1:ms+1;
+    const nextY=ms===12?ys+1:ys, nextM=ms===12?1:ms+1;
     const nextKey=`${nextY}-${String(nextM).padStart(2,'0')}`;
-    const saturdays=allMkDates.filter(d=>d.startsWith(monthKey)||d.startsWith(nextKey));
+    const allowedKeys=new Set([absentMonthKey, nextAbsentKey, monthKey, nextKey]);
+    const saturdays=allMkDates.filter(d=>allowedKeys.has(d.slice(0,7)));
     // 이미 등록된 보강 정보
     const existingMakeup=findStudentMakeupInMonth(sid, ys, ms);
     // 학생의 평일/금 담당 (기본값)
@@ -8697,7 +8892,12 @@ function rModal(){
         <select id="mkReqDate" style="width:100%" ${!saturdays.length?'disabled':''}>
           ${saturdays.length?saturdays.map(d=>{
             const dt=parseDate(d);
-            return `<option value="${d}">${d.slice(0,7)===monthKey?'이번 달':'다음 달'} ${d.slice(5)} (${DAY[dt.getDay()]})</option>`;
+            const dMonthKey=d.slice(0,7);
+            const dYear=parseInt(d.slice(0,4)), dMon=parseInt(d.slice(5,7));
+            const relLabel=dMonthKey===absentMonthKey?`결석 당월(${dMon}월)`
+              :dMonthKey===nextAbsentKey?`결석 다음달(${dMon}월)`
+              :`${dYear}년 ${dMon}월`;
+            return `<option value="${d}">${relLabel} ${d.slice(5)} (${DAY[dt.getDay()]})</option>`;
           }).join(''):'<option value="">등록된 보강일 없음</option>'}
         </select>
       </div>
@@ -9192,7 +9392,7 @@ async function mAttend(sid,d,v){
   l.attendance=(l.attendance===v?'':v);
   // 결석에서 다른 상태(출/지/없음)로 바뀌고, 보강 신청이 있으면 자동 제거
   if(oldV==='absent' && l.attendance!=='absent' && l.makeupRequest){
-    await autoRemoveMakeupRequest(l);
+    autoRemoveMakeupRequest(l);
   }
   render();
   await persistLesson(l);
@@ -9237,7 +9437,7 @@ async function tAttend(sid,d,v){
   l.attendance=(l.attendance===v?'':v);
   // 결석에서 다른 상태로 바뀌고, 보강 신청이 있으면 자동 제거
   if(oldV==='absent' && l.attendance!=='absent' && l.makeupRequest){
-    await autoRemoveMakeupRequest(l);
+    autoRemoveMakeupRequest(l);
   }
   render();
   await persistLesson(l);
@@ -9391,7 +9591,7 @@ async function confAddStuToSat(sid, targetDate){
   }
   entry.students=arr;
   delete entry.studentIds;
-  await saveMakeupDayDoc(targetDate);
+  await gasCall('saveConfig',{config:cfg});
   toast(`${targetDate} ${period}교시 보강 등록되었습니다`);
   closeM();
   render();
@@ -9447,14 +9647,14 @@ async function confRequestMakeup(sid, absentDate){
   const l=getOrCreate(sid, absentDate);
   l.makeupRequest={date:targetDate, period, teacher};
   await persistLesson(l);
-  await saveMakeupDayDoc(targetDate);
+  await gasCall('saveConfig',{config:cfg});
   toast(`${targetDate} ${period}교시 보강 등록되었습니다`);
   closeM();
   render();
 }
 
 // 결석 해제 시 자동 호출 — 확인 없이 보강 신청 제거 (cfg 저장은 호출자가 함)
-async function autoRemoveMakeupRequest(lesson){
+function autoRemoveMakeupRequest(lesson){
   if(!lesson || !lesson.makeupRequest) return;
   const req=lesson.makeupRequest;
   const entry=getMkEntryByDate(req.date);
@@ -9465,92 +9665,23 @@ async function autoRemoveMakeupRequest(lesson){
     delete entry.studentIds;
   }
   delete lesson.makeupRequest;
-  try{ await saveMakeupDayDoc(req.date); }
-  catch(e){ console.warn('makeup_days 저장 실패:',e); }
+  // prevMonthLessonsCache에도 반영
+  const lKey=lesson.studentId+'_'+lesson.date;
+  const lessonMonth=lesson.date?lesson.date.slice(0,7):'';
+  if(lessonMonth && prevMonthLessonsCache[lessonMonth] && prevMonthLessonsCache[lessonMonth][lKey]){
+    delete prevMonthLessonsCache[lessonMonth][lKey].makeupRequest;
+    try{
+      const ssCached=sessionStorage.getItem(`lessons_cache_${lessonMonth}`);
+      if(ssCached){
+        const ssObj=JSON.parse(ssCached);
+        if(ssObj[lKey]) delete ssObj[lKey].makeupRequest;
+        sessionStorage.setItem(`lessons_cache_${lessonMonth}`, JSON.stringify(ssObj));
+      }
+    }catch(e){}
+  }
+  // cfg 저장은 비동기로 백그라운드 처리 (출결 변경과 함께 일어나도록)
+  gasCall('saveConfig',{config:cfg}).catch(e=>console.warn('cfg 저장 실패:',e));
   toast('결석 해제 → 보강 신청 자동 취소됨');
-}
-
-// ── 진단: 결석 연결 안 됨 → 수정 저장 ──
-// makeupDays의 교시·담당 수정 + lesson에 결석일 연결
-async function editMakeupNoAbsent(sid, makeupDate, editId){
-  const periodEl=document.getElementById(editId+'_period');
-  const teacherEl=document.getElementById(editId+'_teacher');
-  const absEl=document.getElementById(editId+'_abs');
-  const period=periodEl?periodEl.value:'';
-  const teacher=teacherEl?teacherEl.value:'';
-  const absentDate=absEl?absEl.value:'';
-  // 1) makeupDays 항목 교시·담당 업데이트
-  const entry=getMkEntryByDate(makeupDate);
-  if(entry){
-    let arr=getMakeupStudents(entry);
-    const idx=arr.findIndex(x=>x.id===sid);
-    if(idx>=0){ arr[idx]={...arr[idx], period, teacher}; }
-    else { arr.push({id:sid, period, teacher}); }
-    entry.students=arr;
-    delete entry.studentIds;
-  }
-  // 2) 결석일 연결: 지정된 결석 lesson에 makeupRequest 기록
-  const updatedLessons=[];
-  if(absentDate){
-    const l=getOrCreate(sid, absentDate);
-    l.makeupRequest={date:makeupDate, period, teacher};
-    updatedLessons.push(l);
-  }
-  try{
-    await saveMakeupDayDoc(makeupDate);
-    for(const l of updatedLessons){ await persistLesson(l); }
-    toast('보강 데이터 수정 완료');
-    diagnoseMakeupData();
-    render();
-  }catch(e){ toast('수정 실패: '+e.message,true); }
-}
-
-// ── 진단: 고아 보강 신청 → 단건 신청 제거 ──
-async function clearOrphanSingle(sid, absentDate){
-  const stud=(cfg.students||[]).find(s=>s.id===sid);
-  if(!confirm(`${stud?.name||'해당 학생'}의 결석(${absentDate}) lesson에서 보강 신청 정보만 제거합니다.\n결석 기록은 유지됩니다.`)) return;
-  const l=Object.values(mdb.lessons||{}).find(x=>x.studentId===sid && x.date===absentDate);
-  if(!l||!l.makeupRequest){ toast('삭제할 정보가 없습니다'); return; }
-  delete l.makeupRequest;
-  try{
-    await persistLesson(l);
-    toast('보강 신청 정보 제거 완료');
-    diagnoseMakeupData();
-  }catch(e){ toast('제거 실패: '+e.message,true); }
-}
-
-// ── 진단: 고아 보강 신청 → 보강일 재연결(토요보강 시간표에 다시 등록) ──
-async function reattachOrphan(sid, absentDate, editId){
-  const dateEl=document.getElementById(editId+'_date');
-  const periodEl=document.getElementById(editId+'_period');
-  const teacherEl=document.getElementById(editId+'_teacher');
-  const targetDate=dateEl?dateEl.value:'';
-  const period=periodEl?periodEl.value:'';
-  const teacher=teacherEl?teacherEl.value:'';
-  if(!targetDate){ toast('보강일을 선택하세요',true); return; }
-  const entry=getMkEntryByDate(targetDate);
-  if(!entry){ toast('선택한 날짜는 등록된 보강일이 아닙니다',true); return; }
-  // 1) makeupDays에 학생 추가
-  let arr=getMakeupStudents(entry);
-  const alreadyIdx=arr.findIndex(x=>x.id===sid && (x.period||'')===String(period));
-  if(alreadyIdx>=0){
-    // 이미 있으면 담당만 업데이트
-    arr[alreadyIdx]={...arr[alreadyIdx], teacher};
-  } else {
-    arr.push({id:sid, period, teacher});
-  }
-  entry.students=arr;
-  delete entry.studentIds;
-  // 2) lesson의 makeupRequest 업데이트
-  const l=getOrCreate(sid, absentDate);
-  l.makeupRequest={date:targetDate, period, teacher};
-  try{
-    await saveMakeupDayDoc(targetDate);
-    await persistLesson(l);
-    toast(`${targetDate} ${period}교시 보강으로 재연결 완료`);
-    diagnoseMakeupData();
-    render();
-  }catch(e){ toast('재연결 실패: '+e.message,true); }
 }
 
 // 설정에서 보강일에 등록된 학생 1명 제거
@@ -9567,16 +9698,23 @@ async function removeStudentFromMakeup(sid, makeupDate){
     delete entry.studentIds;
   }
   // 2) 학생의 lesson에서 makeupRequest도 제거 (역참조)
+  // mdb.lessons + prevMonthLessonsCache 모든 캐시에서 검색 (다른 달 결석일 포함)
   const updatedLessons=[];
-  Object.values(mdb.lessons||{}).forEach(l=>{
-    if(l.studentId===sid && l.makeupRequest && l.makeupRequest.date===makeupDate){
-      delete l.makeupRequest;
-      updatedLessons.push(l);
-    }
+  const allLessonSources=[mdb.lessons, ...Object.values(prevMonthLessonsCache)];
+  const seenKeys=new Set();
+  allLessonSources.forEach(src=>{
+    Object.values(src||{}).forEach(l=>{
+      if(seenKeys.has(l.studentId+'_'+l.date)) return;
+      if(l.studentId===sid && l.makeupRequest && l.makeupRequest.date===makeupDate){
+        seenKeys.add(l.studentId+'_'+l.date);
+        delete l.makeupRequest;
+        updatedLessons.push(l);
+      }
+    });
   });
   // 3) 저장
   try{
-    await saveMakeupDayDoc(makeupDate);
+    await gasCall('saveConfig',{config:cfg});
     for(const l of updatedLessons){ await persistLesson(l); }
     toast(`${studName} 학생을 보강일에서 제거했습니다`);
     render();
@@ -9676,7 +9814,7 @@ async function confAddSatStudent(){
   }
 
   try{
-    await saveMakeupDayDoc(date);
+    await gasCall('saveConfig',{config:cfg});
     if(lessonToSave) await persistLesson(lessonToSave);
     if(absentDate){
       toast(`${absentDate} 결석 처리 → ${date} ${period}교시 보강 등록 완료`);
@@ -9706,11 +9844,32 @@ function satStuPopover(sid, mkDate, anchor){
   pop.className='sch-popover';
   pop.style.cssText='position:absolute;background:#fff;border:1px solid var(--border2);border-radius:var(--r);box-shadow:0 4px 16px rgba(0,0,0,.12);padding:12px;z-index:200;min-width:240px';
 
+  // 이 학생의 결석일 목록 (makeupRequest.date === mkDate 인 것 찾기)
+  const _absentLesson = Object.values(mdb.lessons||{}).find(l=>
+    l.studentId===sid && l.makeupRequest && l.makeupRequest.date===mkDate
+  );
+  const _curAbsentDate = _absentLesson ? _absentLesson.date : (cur.absentDate||'');
+  // 결석 가능한 날짜 목록 — 이 학생의 absent lesson (makeupRequest 없거나 이미 이 보강에 연결된 것)
+  const _absentOptions = Object.values(mdb.lessons||{})
+    .filter(l=> l.studentId===sid && l.attendance==='absent' &&
+      (!l.makeupRequest || l.makeupRequest.date===mkDate))
+    .sort((a,b)=>a.date.localeCompare(b.date));
+
   pop.innerHTML=`
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">
       <b>${esc(s.name)}</b>
       ${s.grade?gradeBadge(s.grade):''}
       <span style="margin-left:auto;font-size:11px;color:var(--text2)">${mkDate}</span>
+    </div>
+    <div style="margin-bottom:8px">
+      <div class="field-lbl">어느 결석에 대한 보강?</div>
+      ${_absentOptions.length
+        ? `<select id="popAbsentDate" style="width:100%;padding:4px 7px" onchange="updateSatStuAbsent('${sid}','${mkDate}',this.value)">
+            <option value="">-- 선택 --</option>
+            ${_absentOptions.map(l=>`<option value="${l.date}" ${l.date===_curAbsentDate?'selected':''}>${l.date} 결석</option>`).join('')}
+           </select>`
+        : `<div style="font-size:11px;color:var(--text3);padding:4px 0">${_curAbsentDate ? `${_curAbsentDate} 결석` : '결석 기록 없음'}</div>`
+      }
     </div>
     <div style="margin-bottom:8px">
       <div class="field-lbl">교시</div>
@@ -9750,6 +9909,29 @@ function satStuPopover(sid, mkDate, anchor){
   }, 0);
 }
 
+// 토요보강 — 연결 결석일 변경
+async function updateSatStuAbsent(sid, mkDate, newAbsentDate){
+  if(!newAbsentDate) return;
+  // 기존 연결 lesson의 makeupRequest 제거
+  Object.values(mdb.lessons||{}).forEach(l=>{
+    if(l.studentId===sid && l.makeupRequest && l.makeupRequest.date===mkDate){
+      delete l.makeupRequest;
+      persistLesson(l);
+    }
+  });
+  // 새 결석 lesson에 makeupRequest 연결
+  const entry=getMkEntryByDate(mkDate);
+  const arr=entry?getMakeupStudents(entry):[];
+  const cur=arr.find(x=>x.id===sid);
+  const newLesson=mdb.lessons[lk(sid,newAbsentDate)];
+  if(newLesson){
+    newLesson.makeupRequest={date:mkDate, period:cur?.period||'', teacher:cur?.teacher||''};
+    await persistLesson(newLesson);
+  }
+  toast('결석일이 변경되었습니다');
+  render();
+}
+
 // 토요보강 학생 정보 업데이트 (교시 또는 담당)
 async function updateSatStu(sid, mkDate, field, val){
   const entry=getMkEntryByDate(mkDate);
@@ -9767,7 +9949,7 @@ async function updateSatStu(sid, mkDate, field, val){
     }
   });
   try{
-    await saveMakeupDayDoc(mkDate);
+    await gasCall('saveConfig',{config:cfg});
     toast(`${field==='period'?'교시':'담당'} 변경되었습니다`);
   }catch(e){ toast('저장 실패: '+e.message,true); }
 }
@@ -9789,7 +9971,7 @@ async function cancelMakeupRequest(sid, absentDate){
   // lesson에서 makeupRequest 제거
   delete l.makeupRequest;
   await persistLesson(l);
-  await saveMakeupDayDoc(req.date);
+  await gasCall('saveConfig',{config:cfg});
   toast('보강 신청이 취소되었습니다');
   render();
 }
@@ -9881,6 +10063,18 @@ async function confAddMkDay(){
     return;
   }
   const monthKey=v.slice(0,7);
+  // 마이그레이션: 배열이면 객체로 변환
+  if(Array.isArray(cfg.makeupDays)){
+    const old=cfg.makeupDays;
+    cfg.makeupDays={};
+    old.forEach(e=>{
+      if(e && e.date){
+        const mk=e.date.slice(0,7);
+        if(!cfg.makeupDays[mk]) cfg.makeupDays[mk]=[];
+        cfg.makeupDays[mk].push(e);
+      }
+    });
+  }
   if(!cfg.makeupDays) cfg.makeupDays={};
   if(!cfg.makeupDays[monthKey]) cfg.makeupDays[monthKey]=[];
   if(cfg.makeupDays[monthKey].find(e=>e.date===v)){
@@ -9889,7 +10083,7 @@ async function confAddMkDay(){
   }
   cfg.makeupDays[monthKey].push({date:v, students:[]});
   cfg.makeupDays[monthKey].sort((a,b)=>a.date.localeCompare(b.date));
-  await saveMakeupDayDoc(v);
+  await gasCall('saveConfig',{config:cfg});
   closeM(); render();
 }
 
@@ -9916,7 +10110,7 @@ async function delMkDay(d){
     cfg.makeupDays[monthKey]=cfg.makeupDays[monthKey].filter(e=>e.date!==d);
     if(!cfg.makeupDays[monthKey].length) delete cfg.makeupDays[monthKey];
   }
-  await deleteMakeupDayDoc(d);
+  await gasCall('saveConfig',{config:cfg});
   render();
 }
 
@@ -10094,34 +10288,36 @@ async function delCt(k){
 }
 
 
-/* ── ES 분기 레포트 엑셀 (원본 구조 유지 + 로드맵 시트 추가)
-   현재 보는 달(st.month)에 따라 분기 자동 결정:
-   1분기=1~3월 → 1~3월 / 2분기=4~6월 → 4~6월 / ...
-   버튼에서 reportType(1~4)을 지정하면 해당 분기 강제 선택 ── */
-function exportESReport(reportType){
+/* ── ES 분기 레포트 엑셀 (원본과 동일: EF,GH 2열씩 병합) ── */
+function exportESReport(){
   const wb = XLSX.utils.book_new();
   const y = st.year;
-  const qMap = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]};
-  const qNum = reportType || Math.ceil(st.month/3);
+  const qMap = {1:[1,2,3],2:[4,5,6],3:[7,8,9],4:[10,11,12]};
+  const qNum = Math.ceil(st.month/3);
   const months = qMap[qNum];
 
   // 열 구조 (0-indexed):
   // 0~3: A~D  라벨 (4열 병합)
   // 4,5: E,F  → 1차 (EF 병합)
-  // 6,7: G,H  → 2차 (GH 병합) ...
-  // 평균: col 28 (AC열)
-  const DATA_START = 4;
-  const DATA_STEP  = 2;
+  // 6,7: G,H  → 2차 (GH 병합)
+  // ...
+  // 4 + (n-1)*2, 4 + (n-1)*2 + 1 → n차
+  // 28,29,30,31: AC~AF 여백
+  // 평균: col 28 (AC열, 단독)
+  const LABEL_COLS = 4;
+  const DATA_START = 4;   // E열
+  const DATA_STEP  = 2;   // 2열씩 병합
   const MAX_SESS   = 12;
-  const AVG_COL    = 28;
-  const TOTAL_COLS = 32;
+  const AVG_COL    = 28;  // AC열
+  const TOTAL_COLS = 32;  // AF열까지
 
+  // 빈 행 생성
   function emptyRow(){ return new Array(TOTAL_COLS).fill(''); }
 
   (cfg.students||[]).forEach(s => {
     const myTests = textbookTests[s.id]||{};
 
-    // 전범위 시험 결과 — 마지막(최신) 결과만
+    // 전범위 시험 결과
     const testResultLines = [];
     (s.textbooks||[]).forEach(t => {
       const bk = t.tbId?(cfg.textbooks||[]).find(b=>b.id===t.tbId):null;
@@ -10129,20 +10325,17 @@ function exportESReport(reportType){
       const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
       const attempts = myTests[tbId]||[];
       if(!attempts.length) return;
-      // 마지막 attempt(최신 차수)만 표시
-      const lastA = attempts[attempts.length-1];
-      if(!lastA) return;
-      const scoreStr = lastA.manualComplete?'완료':(lastA.score!=null?lastA.score+'점':'');
-      if(!scoreStr) return;
-      const suffix = lastA.attempt>1
-        ? `전범위 서술형 ${lastA.attempt}차 시험 결과`
+      const passA = attempts.find(a=>a.passed);
+      if(!passA) return;
+      const scoreStr = passA.manualComplete?'완료':passA.score+'점';
+      const suffix = passA.attempt>1
+        ? `전범위 서술형 ${passA.attempt}차 시험 결과`
         : `전범위 서술형 시험 결과`;
-      const passStr = lastA.passed ? '합격' : '불합격';
-      testResultLines.push(`${tbName} ${suffix} : ${scoreStr} ${passStr}`);
+      testResultLines.push(`${tbName} ${suffix} : ${scoreStr} 합격`);
     });
 
     const rows = [];
-    const merges = [];
+    const merges = []; // {s:{r,c}, e:{r,c}}
     let testResultRow = -1;
 
     months.forEach(m => {
@@ -10157,11 +10350,14 @@ function exportESReport(reportType){
       hRow[AVG_COL] = '평균';
       const hRowIdx = rows.length;
       rows.push(hRow);
+      // 월 라벨 A~D 병합
       merges.push({s:{r:hRowIdx,c:0}, e:{r:hRowIdx,c:3}});
+      // 각 회차 2열씩 병합 (E~F, G~H, ...)
       for(let i=0;i<MAX_SESS;i++){
         const c = DATA_START + i*DATA_STEP;
         merges.push({s:{r:hRowIdx,c:c}, e:{r:hRowIdx,c:c+1}});
       }
+      // 평균 AC~AF 4열 병합
       merges.push({s:{r:hRowIdx,c:AVG_COL}, e:{r:hRowIdx,c:AVG_COL+3}});
 
       // ── 출결행 ──
@@ -10202,6 +10398,7 @@ function exportESReport(reportType){
         }
       }
       const testRowIdx = rows.length;
+      // X/*붙은값 제외 후 ROUNDUP(AVERAGE,2) 직접 계산
       const testAvg = testScores.length
         ? Math.ceil(testScores.reduce((a,b)=>a+b,0)/testScores.length * 100) / 100
         : '';
@@ -10246,76 +10443,103 @@ function exportESReport(reportType){
       rows.push(emptyRow());
     });
 
-    // 전범위 시험결과 (마지막 차수)
+    // 전범위 시험결과
     if(testResultLines.length){
       testResultRow = rows.length;
       const tr = emptyRow();
       tr[0] = '전범위\n시험결과';
       tr[DATA_START] = testResultLines.join('\n');
       rows.push(tr);
+      // 라벨 A~D 병합, 내용 E~AB 병합
       merges.push({s:{r:testResultRow,c:0}, e:{r:testResultRow,c:3}});
       merges.push({s:{r:testResultRow,c:DATA_START}, e:{r:testResultRow,c:AVG_COL-1}});
     }
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
+
+    // 모든 셀 가운데 정렬 (XLSX.js 0.18.5 스타일 적용 시도)
     Object.keys(ws).forEach(addr=>{
       if(addr.startsWith('!')) return;
       if(!ws[addr]) return;
       ws[addr].s = {alignment:{horizontal:'center', vertical:'center', wrapText:false}};
     });
+
     ws['!merges'] = merges;
+
+    // 행 높이: 전범위 시험결과 행
     if(testResultRow >= 0){
       if(!ws['!rows']) ws['!rows'] = [];
       ws['!rows'][testResultRow] = {hpt: testResultLines.length * 20 + 10};
     }
-    ws['!cols'] = [{wch:10},{wch:3},{wch:3},{wch:3}];
-    for(let i=0;i<MAX_SESS;i++) ws['!cols'].push({wch:5},{wch:5});
-    ws['!cols'].push({wch:3},{wch:3},{wch:3},{wch:9});
+
+    // 열 너비
+    ws['!cols'] = [
+      {wch:10},{wch:3},{wch:3},{wch:3}, // A~D 라벨
+    ];
+    for(let i=0;i<MAX_SESS;i++){
+      ws['!cols'].push({wch:5},{wch:5}); // E~X 데이터+병합
+    }
+    ws['!cols'].push({wch:3},{wch:3},{wch:3},{wch:9}); // AC~AF + 평균
 
     XLSX.utils.book_append_sheet(wb, ws, (s.name||'학생').slice(0,31));
   });
 
   if(!wb.SheetNames.length){ toast('학생이 없습니다.', true); return; }
-
-  // ── 로드맵 시트 추가 (학생별 개인 시트가 끝난 후, 별도 시트로) ──
-  (cfg.students||[]).forEach(s => {
-    const rmWs = _buildRoadmapSheet(s.id, s);
-    const sheetName = ((s.name||'학생')+'_로드맵').slice(0,31);
-    XLSX.utils.book_append_sheet(wb, rmWs, sheetName);
-  });
-
   XLSX.writeFile(wb, `ES분기레포트_${y}_${qNum}분기.xlsx`, {cellStyles:true});
-  toast(`ES ${qNum}분기 레포트 다운로드 완료`);
+  toast('ES 분기 레포트 다운로드 완료');
 }
+
 /* ── 교재 로드맵 엑셀 내보내기 (학생 개인) ── */
 function exportRoadmapExcel(sid){
   const s=(cfg.students||[]).find(x=>x.id===sid);
   if(!s){ toast('학생을 찾을 수 없습니다.',true); return; }
   const wb=XLSX.utils.book_new();
-  const ws=_buildRoadmapSheet(sid,s);
+  const ws=_buildRoadmapSheet(sid,s,null);
   XLSX.utils.book_append_sheet(wb, ws, '교재로드맵');
   XLSX.writeFile(wb, `교재로드맵_${s.name||sid}_${new Date().getFullYear()}.xlsx`,{cellStyles:true});
   toast(`${s.name} 교재 로드맵 다운로드 완료`);
 }
 
 /* ── 로드맵 시트 빌더 (개인/분기레포트 공용) ── */
-function _buildRoadmapSheet(sid, s){
+/* qNum: 분기 번호 (1~4). null이면 1~12월 고정.
+ * 1분기: 1~12월(기준년), 2분기: 4월~다음해3월, 3분기: 7월~다음해6월, 4분기: 10월~다음해9월 */
+function _buildRoadmapSheet(sid, s, qNum){
   const rmYear=new Date().getFullYear();
-  const MONTHS=[1,2,3,4,5,6,7,8,9,10,11,12];
   const myTests=textbookTests[sid]||{};
   const books=cfg.textbooks||[];
   const sTbs=s.textbooks||[];
 
+  // 분기별 월 슬롯 계산 (달만 표시, 년도 없음)
+  // 각 슬롯은 {year, month, label} 형태
+  let monthSlots=[];
+  if(!qNum||qNum===1){
+    // 1분기: 기준년 1월~12월
+    for(let m=1;m<=12;m++) monthSlots.push({year:rmYear, month:m, label:m+'월'});
+  } else if(qNum===2){
+    // 2분기: 기준년 4월~다음해 3월
+    for(let m=4;m<=12;m++) monthSlots.push({year:rmYear, month:m, label:m+'월'});
+    for(let m=1;m<=3;m++) monthSlots.push({year:rmYear+1, month:m, label:m+'월'});
+  } else if(qNum===3){
+    // 3분기: 기준년 7월~다음해 6월
+    for(let m=7;m<=12;m++) monthSlots.push({year:rmYear, month:m, label:m+'월'});
+    for(let m=1;m<=6;m++) monthSlots.push({year:rmYear+1, month:m, label:m+'월'});
+  } else if(qNum===4){
+    // 4분기: 기준년 10월~다음해 9월
+    for(let m=10;m<=12;m++) monthSlots.push({year:rmYear, month:m, label:m+'월'});
+    for(let m=1;m<=9;m++) monthSlots.push({year:rmYear+1, month:m, label:m+'월'});
+  }
+  const totalMonths=monthSlots.length; // 12개
+
   // 열 구조: A=교재명(col0), B=구분(col1), C1~C24=월초/월말 슬롯(col2~col25)
-  // 헤더행1: 교재 | 구분 | 1월초 1월말 | 2월초 2월말 | ... | 12월초 12월말
+  // 헤더행1: 교재 | 구분 | 1월초 1월말 | ... (달만, 년도 없음)
   const hdr1=['교재','구분'];
   const hdr2=['',''];
   const merges=[];
-  MONTHS.forEach(function(m){
-    hdr1.push(m+'월','');
+  monthSlots.forEach(function(slot, i){
+    hdr1.push(slot.label,'');
     hdr2.push('월초','월말');
     // 월 헤더 2열 병합
-    const c=2+(m-1)*2;
+    const c=2+i*2;
     merges.push({s:{r:0,c:c},e:{r:0,c:c+1}});
   });
 
@@ -10332,40 +10556,45 @@ function _buildRoadmapSheet(sid, s){
     const passDate=passAttempt?passAttempt.date:'';
     const rowType=t.rowType||'현행';
 
-    const startYear=startDate?parseInt(startDate.substring(0,4)):0;
-    const startMonth=startDate?parseInt(startDate.substring(5,7)):0;
-    const startDay=startDate?parseInt(startDate.substring(8,10)):0;
-    const passYear=passDate?parseInt(passDate.substring(0,4)):0;
-    const passMonth=passDate?parseInt(passDate.substring(5,7)):0;
-    const passDay=passDate?parseInt(passDate.substring(8,10)):0;
+    const startY=startDate?parseInt(startDate.substring(0,4)):0;
+    const startM=startDate?parseInt(startDate.substring(5,7)):0;
+    const startD=startDate?parseInt(startDate.substring(8,10)):0;
+    const passY=passDate?parseInt(passDate.substring(0,4)):0;
+    const passM=passDate?parseInt(passDate.substring(5,7)):0;
+    const passD=passDate?parseInt(passDate.substring(8,10)):0;
 
     const row=[tbName, rowType];
-    for(let m=1;m<=12;m++){
+    const rowIdx=rows.length; // 이 교재 행의 인덱스 (병합 범위 계산용)
+    let activeStart=-1, activeEnd=-1; // 셀 병합용 active 범위
+
+    monthSlots.forEach(function(slot, i){
+      const slotYear=slot.year, slotM=slot.month;
       for(let half=0;half<2;half++){
+        const colIdx=2+i*2+half;
         const dayFrom=half===0?1:16;
         const dayTo=half===0?15:31;
         if(!startDate){ row.push(''); continue; }
-        if(startYear>rmYear){ row.push(''); continue; }
 
-        // active 여부
+        // 시작 전 슬롯인지
         let slotAfterStart=false;
-        if(startYear<rmYear){ slotAfterStart=true; }
-        else if(startYear===rmYear){
-          if(startMonth<m){ slotAfterStart=true; }
-          else if(startMonth===m){
-            if(half===0){ slotAfterStart=(startDay<=15); }
+        if(startY<slotYear){ slotAfterStart=true; }
+        else if(startY===slotYear){
+          if(startM<slotM){ slotAfterStart=true; }
+          else if(startM===slotM){
+            if(half===0){ slotAfterStart=(startD<=15); }
             else { slotAfterStart=true; }
           }
         }
 
+        // 종료 후 슬롯인지
         let slotBeforeEnd=true;
         if(passDate){
-          if(passYear<rmYear){ slotBeforeEnd=false; }
-          else if(passYear===rmYear){
-            if(passMonth<m){ slotBeforeEnd=false; }
-            else if(passMonth===m){
-              if(half===0){ slotBeforeEnd=(passDay>=1); }
-              else { slotBeforeEnd=(passDay>=16); }
+          if(passY<slotYear){ slotBeforeEnd=false; }
+          else if(passY===slotYear){
+            if(passM<slotM){ slotBeforeEnd=false; }
+            else if(passM===slotM){
+              if(half===0){ slotBeforeEnd=(passD>=1); }
+              else { slotBeforeEnd=(passD>=16); }
             }
           }
         }
@@ -10375,16 +10604,26 @@ function _buildRoadmapSheet(sid, s){
           // 해당 반달에 수업일이 있는지
           const allDates=_getAllSessionDates(s.classType);
           const hasSession=allDates.some(function(d){
-            return parseInt(d.substring(0,4))===rmYear &&
-                   parseInt(d.substring(5,7))===m &&
+            return parseInt(d.substring(0,4))===slotYear &&
+                   parseInt(d.substring(5,7))===slotM &&
                    parseInt(d.substring(8,10))>=dayFrom &&
                    parseInt(d.substring(8,10))<=dayTo;
           });
-          row.push(hasSession?'●':'○');
+          // 수업일이 있는 active 슬롯은 빈 값으로 놔두되 병합 범위 추적 (색칠 가능하도록)
+          row.push(hasSession?'':'');
+          if(hasSession){
+            if(activeStart===-1) activeStart=colIdx;
+            activeEnd=colIdx;
+          }
         }
       }
-    }
+    });
     rows.push(row);
+
+    // active 범위를 하나의 병합 셀로 만들어 색칠 가능하게
+    if(activeStart!==-1 && activeStart!==activeEnd){
+      merges.push({s:{r:rowIdx,c:activeStart},e:{r:rowIdx,c:activeEnd}});
+    }
   });
 
   // 시작일/합격일 요약행
@@ -10409,11 +10648,130 @@ function _buildRoadmapSheet(sid, s){
 
   // 컬럼 너비
   ws['!cols']=[{wch:16},{wch:6}];
-  for(let i=0;i<24;i++) ws['!cols'].push({wch:5});
+  for(let i=0;i<totalMonths*2;i++) ws['!cols'].push({wch:5});
 
   return ws;
 }
 
+/* ── 분기 레포트에 로드맵 시트 추가 ── */
+function exportESReportWithRoadmap(){
+  const wb=XLSX.utils.book_new();
+  const y=st.year;
+  // 분기별 월 범위 (출결/시험/과제 데이터용)
+  const qMap={1:[1,2,3],2:[4,5,6],3:[7,8,9],4:[10,11,12]};
+  const qNum=Math.ceil(st.month/3);
+  const months=qMap[qNum];
+
+  const LABEL_COLS=4, DATA_START=4, DATA_STEP=2, MAX_SESS=12, AVG_COL=28, TOTAL_COLS=32;
+  function emptyRow(){ return new Array(TOTAL_COLS).fill(''); }
+
+  (cfg.students||[]).forEach(s=>{
+    const myTests=textbookTests[s.id]||{};
+
+    // 전범위 시험 결과
+    const testResultLines=[];
+    (s.textbooks||[]).forEach(t=>{
+      const bk=t.tbId?(cfg.textbooks||[]).find(b=>b.id===t.tbId):null;
+      const tbName=bk?bk.name:(t.name||'교재');
+      const tbId=t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
+      const attempts=myTests[tbId]||[];
+      const passA=attempts.find(a=>a.passed);
+      if(!passA) return;
+      const scoreStr=passA.manualComplete?'완료':passA.score+'점';
+      const suffix=passA.attempt>1?`전범위 서술형 ${passA.attempt}차 시험 결과`:`전범위 서술형 시험 결과`;
+      testResultLines.push(`${tbName} ${suffix} : ${scoreStr} 합격`);
+    });
+
+    const rows=[], merges=[];
+    let testResultRow=-1;
+
+    months.forEach(m=>{
+      const dates=sessionDatesForMonth(s.classType,y,m);
+      const hRow=emptyRow();
+      hRow[0]=String(m)+'월';
+      for(let i=0;i<MAX_SESS;i++) hRow[DATA_START+i*DATA_STEP]=`${i+1}차`;
+      hRow[AVG_COL]='평균';
+      const hRowIdx=rows.length;
+      rows.push(hRow);
+      merges.push({s:{r:hRowIdx,c:0},e:{r:hRowIdx,c:3}});
+      for(let i=0;i<MAX_SESS;i++){const c=DATA_START+i*DATA_STEP;merges.push({s:{r:hRowIdx,c:c},e:{r:hRowIdx,c:c+1}});}
+      merges.push({s:{r:hRowIdx,c:AVG_COL},e:{r:hRowIdx,c:AVG_COL+3}});
+
+      const attRow=emptyRow(); attRow[0]='출결';
+      for(let i=0;i<MAX_SESS;i++){const d=dates[i];if(d){const l=(mdb.lessons||{})[s.id+'_'+d]||{};attRow[DATA_START+i*DATA_STEP]=l.attendance==='absent'?'X':'O';}}
+      const attRowIdx=rows.length; rows.push(attRow);
+      merges.push({s:{r:attRowIdx,c:0},e:{r:attRowIdx,c:3}});
+      for(let i=0;i<MAX_SESS;i++){const c=DATA_START+i*DATA_STEP;merges.push({s:{r:attRowIdx,c:c},e:{r:attRowIdx,c:c+1}});}
+      merges.push({s:{r:attRowIdx,c:AVG_COL},e:{r:attRowIdx,c:AVG_COL+3}});
+
+      const testRow=emptyRow(); testRow[0]='복습 테스트';
+      const testScores=[];
+      for(let i=0;i<MAX_SESS;i++){const d=dates[i];if(d){const l=(mdb.lessons||{})[s.id+'_'+d]||{};if(l.attendance==='absent'){testRow[DATA_START+i*DATA_STEP]='X';continue;}const ts=l.testScore;if(!ts&&ts!==0){testRow[DATA_START+i*DATA_STEP]='X';continue;}const tsStr=String(ts);const hasStar=tsStr.includes('*')||l.testIsFullRange;const val=hasStar?(tsStr.includes('*')?tsStr:tsStr+'*'):tsStr;testRow[DATA_START+i*DATA_STEP]=val;if(!hasStar){const n=parseFloat(tsStr);if(!isNaN(n))testScores.push(n);}}}
+      const testAvg=testScores.length?Math.ceil(testScores.reduce((a,b)=>a+b,0)/testScores.length*100)/100:'';
+      testRow[AVG_COL]=testAvg;
+      const testRowIdx=rows.length; rows.push(testRow);
+      merges.push({s:{r:testRowIdx,c:0},e:{r:testRowIdx,c:3}});
+      for(let i=0;i<MAX_SESS;i++){const c=DATA_START+i*DATA_STEP;merges.push({s:{r:testRowIdx,c:c},e:{r:testRowIdx,c:c+1}});}
+      merges.push({s:{r:testRowIdx,c:AVG_COL},e:{r:testRowIdx,c:AVG_COL+3}});
+
+      const hwRow=emptyRow(); hwRow[0]='과제';
+      const hwScores=[];
+      for(let i=0;i<MAX_SESS;i++){const d=dates[i];if(d){const l=(mdb.lessons||{})[s.id+'_'+d]||{};if(l.attendance==='absent'){hwRow[DATA_START+i*DATA_STEP]='X';continue;}const hw=l.homeworkScore;if(!hw&&hw!==0){continue;}hwRow[DATA_START+i*DATA_STEP]=String(hw);const n=parseFloat(hw);if(!isNaN(n))hwScores.push(n);}}
+      const hwAvg=hwScores.length?Math.ceil(hwScores.reduce((a,b)=>a+b,0)/hwScores.length*100)/100:'';
+      hwRow[AVG_COL]=hwAvg;
+      const hwRowIdx=rows.length; rows.push(hwRow);
+      merges.push({s:{r:hwRowIdx,c:0},e:{r:hwRowIdx,c:3}});
+      for(let i=0;i<MAX_SESS;i++){const c=DATA_START+i*DATA_STEP;merges.push({s:{r:hwRowIdx,c:c},e:{r:hwRowIdx,c:c+1}});}
+      merges.push({s:{r:hwRowIdx,c:AVG_COL},e:{r:hwRowIdx,c:AVG_COL+3}});
+
+      rows.push(emptyRow());
+    });
+
+    if(testResultLines.length){
+      testResultRow=rows.length;
+      const tr=emptyRow(); tr[0]='전범위\n시험결과'; tr[DATA_START]=testResultLines.join('\n');
+      rows.push(tr);
+      merges.push({s:{r:testResultRow,c:0},e:{r:testResultRow,c:3}});
+      merges.push({s:{r:testResultRow,c:DATA_START},e:{r:testResultRow,c:AVG_COL-1}});
+    }
+
+    // 로드맵 섹션 추가 (분기별 월 범위)
+    rows.push(emptyRow());
+    // 로드맵 헤더 행을 출결/시험 데이터 아래에 추가
+    const rmSheet=_buildRoadmapSheet(s.id,s,qNum);
+    // 로드맵 시트의 행들을 현재 ws에 추가 (별도 시트 없이 하단에 삽입)
+    const rmData=XLSX.utils.sheet_to_json(rmSheet,{header:1,defval:''});
+    const rmStartRow=rows.length;
+    rmData.forEach(r=>rows.push(r.concat(new Array(Math.max(0,TOTAL_COLS-r.length)).fill(''))));
+    // 로드맵 셀 병합 (오프셋 적용)
+    if(rmSheet['!merges']){
+      rmSheet['!merges'].forEach(mg=>{
+        merges.push({s:{r:mg.s.r+rmStartRow,c:mg.s.c},e:{r:mg.e.r+rmStartRow,c:mg.e.c}});
+      });
+    }
+
+    const ws=XLSX.utils.aoa_to_sheet(rows);
+    Object.keys(ws).forEach(addr=>{
+      if(addr.startsWith('!')) return;
+      if(!ws[addr]) return;
+      ws[addr].s={alignment:{horizontal:'center',vertical:'center',wrapText:false}};
+    });
+    ws['!merges']=merges;
+    if(testResultRow>=0){
+      if(!ws['!rows']) ws['!rows']=[];
+      ws['!rows'][testResultRow]={hpt:testResultLines.length*20+10};
+    }
+    ws['!cols']=[{wch:10},{wch:3},{wch:3},{wch:3}];
+    for(let i=0;i<MAX_SESS;i++) ws['!cols'].push({wch:5},{wch:5});
+    ws['!cols'].push({wch:3},{wch:3},{wch:3},{wch:9});
+
+    XLSX.utils.book_append_sheet(wb,ws,(s.name||'학생').slice(0,31));
+  });
+
+  if(!wb.SheetNames.length){toast('학생이 없습니다.',true);return;}
+  XLSX.writeFile(wb,`ES분기레포트_${y}_${qNum}분기_로드맵.xlsx`,{cellStyles:true});
+  toast('로드맵 분기 레포트 다운로드 완료');
+}
 
 
 /* ── EXCEL ── */
@@ -10612,6 +10970,138 @@ function toast(msg,isErr=false){
     await showApp();
   }catch(e){ localStorage.removeItem('session'); }
 })();
+
+// ══════════════════════════════════════════════════════
+// 🔍 디버그: 월간요약 vs 포인트탭 출결 수상 비교
+// 콘솔에서 debugAwardDiff(2026, 5) 로 실행
+// ══════════════════════════════════════════════════════
+window.debugAwardDiff = function(year, month){
+  const targetKey = `${year}-${String(month).padStart(2,'0')}`;
+  const prevY = month===1 ? year-1 : year;
+  const prevM = month===1 ? 12 : month-1;
+  const prevKey = `${prevY}-${String(prevM).padStart(2,'0')}`;
+
+  // lessons 소스 구성
+  // 월간요약: mdb.lessons (현재 탭 기준 병합)
+  const monthlyLessons = mdb.lessons;
+  // 포인트탭: settleMonth 캐시 + 이전달 병합
+  const settleBase = prevMonthLessonsCache[targetKey] || mdb.lessons;
+  const pointsLessons = Object.assign({}, prevMonthLessonsCache[prevKey]||{}, settleBase);
+
+  const studs = cfg.students||[];
+  const results = [];
+
+  studs.forEach(s=>{
+    // ── 월간요약 기준 (calcMonthAwardsFromSummary, lessons=null → mdb.lessons) ──
+    const monthly = calcMonthAwardsFromSummary(s.id, s.classType, year, month, monthlyLessons);
+
+    // ── 포인트탭 출결카드 기준 ──
+    const _ownCycle = _getAllCycles(s.classType).find(c=>c.ownerMonth===targetKey);
+    const sessions  = _ownCycle ? _ownCycle.dates.map((d,i)=>({sessionNo:i+1,dateStr:d})) : [];
+    const ctInfo    = CT()[s.classType];
+    const reqSess   = ctInfo ? (ctInfo.sessions||0) : 0;
+    const sJoinDate = s.joinDate||'';
+    const validSess = sJoinDate ? sessions.filter(sess=>sess.dateStr>=sJoinDate) : sessions;
+    const canEarn   = reqSess>0 && sessions.length>=reqSess && validSess.length>=reqSess;
+    let absCount=0, lateCount=0, attendCount=0;
+    validSess.forEach(sess=>{
+      const l = pointsLessons[lk(s.id, sess.dateStr)];
+      if(!l) return;
+      if(l.attendance==='absent') absCount++;
+      else if(l.attendance==='late') lateCount++;
+      else if(l.attendance==='attend') attendCount++;
+    });
+    const vLen = validSess.length;
+    let ptRecommend = 'none';
+    if(canEarn){
+      if(absCount===0&&lateCount===0&&attendCount>=vLen) ptRecommend='perfect';
+      else if(absCount===0&&lateCount>=1&&lateCount<=2&&(attendCount+lateCount)>=vLen) ptRecommend='steady';
+    }
+
+    // ── 비교 ──
+    const mAwardIds = monthly.awards.map(a=>a.id);
+    const mAttend   = mAwardIds.includes('perfect') ? 'perfect' : mAwardIds.includes('steady') ? 'steady' : 'none';
+    const diff      = mAttend !== ptRecommend;
+
+    results.push({
+      name: s.name,
+      classType: s.classType,
+      joinDate: s.joinDate||'',
+      cycle: targetKey,
+      cycleDates: sessions.map(s=>s.dateStr),
+      sessions_total: sessions.length,
+      validSessions: vLen,
+      reqSess,
+      canEarn_monthly: monthly.awards.length > 0 || monthly.stats.attend > 0,
+      canEarn_points: canEarn,
+
+      monthly_attend: monthly.stats.attend,
+      monthly_absent: monthly.stats.absent,
+      monthly_late:   monthly.stats.late,
+      monthly_award:  mAttend,
+
+      points_attend:  attendCount,
+      points_absent:  absCount,
+      points_late:    lateCount,
+      points_award:   ptRecommend,
+
+      DIFF: diff ? '⚠️ 다름' : '✅ 일치',
+
+      // 회차별 세부 비교
+      sessionDetail: sessions.map(sess=>{
+        const lm = monthlyLessons[lk(s.id, sess.dateStr)];
+        const lp = pointsLessons[lk(s.id, sess.dateStr)];
+        const inValid = !sJoinDate || sess.dateStr >= sJoinDate;
+        return {
+          date: sess.dateStr,
+          inValidSess: inValid,
+          monthly_att:  lm?.attendance||'(없음)',
+          points_att:   lp?.attendance||'(없음)',
+          same: (lm?.attendance||'') === (lp?.attendance||'')
+        };
+      }).filter(d=>!d.same || d.monthly_att==='(없음)' || d.points_att==='(없음)')
+    });
+  });
+
+  const diffs = results.filter(r=>r.DIFF==='⚠️ 다름');
+  console.log(`
+=== ${year}년 ${month}월 월간요약 vs 포인트탭 출결 비교 ===`);
+  console.log(`전체 ${results.length}명 중 차이: ${diffs.length}명`);
+
+  if(diffs.length){
+    console.log('\n▼ 차이 있는 학생:');
+    diffs.forEach(r=>{
+      console.group(`${r.name} (${r.classType}) - 월간요약: ${r.monthly_award} / 포인트: ${r.points_award}`);
+      console.log(`등록일: ${r.joinDate||'없음'} | 사이클: ${r.cycleDates[0]}~${r.cycleDates[r.cycleDates.length-1]} | 전체${r.sessions_total}회/유효${r.validSessions}회/필요${r.reqSess}회`);
+      console.log(`월간요약 출 ${r.monthly_attend} 지 ${r.monthly_late} 결 ${r.monthly_absent}`);
+      console.log(`포인트탭 출 ${r.points_attend} 지 ${r.points_late} 결 ${r.points_absent}`);
+      if(r.sessionDetail.length){
+        console.log('회차별 차이:');
+        r.sessionDetail.forEach(d=>console.log(`  ${d.date} ${d.inValidSess?'[유효]':'[제외]'} 월간:${d.monthly_att} / 포인트:${d.points_att} ${d.same?'':'← 다름'}`));
+      }
+      console.groupEnd();
+    });
+  } else {
+    console.log('✅ 모든 학생 일치');
+  }
+
+  console.log('\n전체 결과(표):');
+  console.table(results.map(r=>({
+    이름: r.name,
+    반: r.classType,
+    등록일: r.joinDate,
+    유효회차: r.validSessions,
+    필요회차: r.reqSess,
+    월간요약: `출${r.monthly_attend}지${r.monthly_late}결${r.monthly_absent}→${r.monthly_award}`,
+    포인트탭: `출${r.points_attend}지${r.points_late}결${r.points_absent}→${r.points_award}`,
+    결과: r.DIFF
+  })));
+
+  return diffs;
+};
+console.log('✅ debugAwardDiff 로드됨. 사용법: debugAwardDiff(2026, 5)');
+
+window.debugAwardDiff=function(year,month){var tk=year+'-'+(month<10?'0':'')+month,py=month===1?year-1:year,pm=month===1?12:month-1,pk=py+'-'+(pm<10?'0':'')+pm,mL=mdb.lessons,pL=Object.assign({},mdb.lessons,prevMonthLessonsCache[pk]||{},prevMonthLessonsCache[tk]||{});var rows=(cfg.students||[]).map(function(s){var m=calcMonthAwardsFromSummary(s.id,s.classType,year,month,mL),p=calcMonthAwardsFromSummary(s.id,s.classType,year,month,pL),ma=m.awards.map(function(a){return a.id;}).sort().join(',')||'none',pa=p.awards.map(function(a){return a.id;}).sort().join(',')||'none';return{name:s.name,m_attend:m.stats.attend,m_absent:m.stats.absent,m_late:m.stats.late,m_awards:ma,p_attend:p.stats.attend,p_absent:p.stats.absent,p_late:p.stats.late,p_awards:pa,DIFF:ma!==pa?'DIFF':'OK'};});var diffs=rows.filter(function(r){return r.DIFF==='DIFF';});console.log(year+'/'+month+' total:'+rows.length+' diff:'+diffs.length);if(diffs.length)console.table(diffs);else console.log('ALL MATCH');console.table(rows);};
 </script>
 </body>
 </html>
