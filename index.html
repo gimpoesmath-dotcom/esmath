@@ -1,4 +1,4 @@
-<!-- v20260608_fix_sessioncache -->
+<!-- v20260609_fix_school_point_print -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -3683,6 +3683,9 @@ async function settleSchoolExamPoint(sid, settleId, points, type, label, note){
   if((pd.history||[]).some(h=>h.settleId===settleId)){
     toast('이미 적립된 내역입니다.', true); return;
   }
+  // 정산 연월 기준으로 저장 (현재 날짜 아님)
+  const recYear  = st.ptSettleYear  || (st.month===1 ? st.year-1 : st.year);
+  const recMonth = st.ptSettleMonth || (st.month===1 ? 12 : st.month-1);
   pd.balance = (pd.balance||0) + points;
   pd.history = [...(pd.history||[]), {
     id:'h'+Date.now()+Math.random(),
@@ -3691,8 +3694,8 @@ async function settleSchoolExamPoint(sid, settleId, points, type, label, note){
     points,
     note,
     settleId,
-    year: new Date().getFullYear(),
-    month: new Date().getMonth()+1,
+    year: recYear,
+    month: recMonth,
     date: dk(new Date()),
     by: session?.username||'',
   }];
@@ -4426,7 +4429,9 @@ function printPointsSummary(){
   function isChecked(history, colKey){
     // 1) type 필드가 colKey와 정확히 일치 (학교성적상 포함)
     if(history.some(h=>h.type===colKey)) return true;
-    // 2) MANUAL 타입으로 저장된 경우 label fallback 매칭
+    // 2) settleId 기반 매칭 — 학교성적 포인트는 settleId가 "TYPE__gradeLabel__examKey" 형태
+    if(history.some(h=>h.settleId && h.settleId.startsWith(colKey+'__'))) return true;
+    // 3) MANUAL 타입으로 저장된 경우 label fallback 매칭
     const labelMap = {
       TOP_HONOR:       'Top Honor',
       HIGH_HONOR_HIGH: 'High Honor 고등',
