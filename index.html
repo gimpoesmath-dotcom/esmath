@@ -4033,14 +4033,16 @@ function rPoints(){
     <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">DAILY 챌린지상 / MASTER 인증상 — 시스템 자동 계산 결과</div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:16px">`;
 
-    // 정산 기준월 데이터 사용 (캐시에 있으면 사용, 없으면 현재 mdb.lessons)
-    const _settleLessons = prevMonthLessonsCache[`${settleYear}-${String(settleMonth).padStart(2,'0')}`] || mdb.lessons;
-
-    // 정산 기준월 캐시 없으면 백그라운드 로드 (render는 버튼 클릭 시에만)
+    // 정산 기준월 데이터 사용
     const _settleKey = `${settleYear}-${String(settleMonth).padStart(2,'0')}`;
-    if((settleYear!==st.year||settleMonth!==st.month) && !prevMonthLessonsCache[_settleKey]){
+    const _curKey2 = `${st.year}-${String(st.month).padStart(2,'0')}`;
+    const _isCurrentMonth = (_settleKey === _curKey2);
+    const _cachedLessons = prevMonthLessonsCache[_settleKey];
+    const _settleLessons = _isCurrentMonth ? mdb.lessons : (_cachedLessons || null);
+    if(!_isCurrentMonth && !_cachedLessons){
       _loadLessonsForMonth(settleYear, settleMonth).then(data=>{
         prevMonthLessonsCache[_settleKey]=data;
+        render();
       });
     }
 
@@ -4647,12 +4649,29 @@ async function _loadLessonsForMonth(year, month){
   if(prevMonthLessonsCache[cacheKey]) return prevMonthLessonsCache[cacheKey];
   try{
     const {getDocs,collection}=fb();
-    const col=collection(fbDb(),`lessons_${cacheKey}`);
-    const snaps=await getDocs(col);
-    const lessons={};
-    snaps.forEach(d=>{ const data=d.data(); lessons[data.key||d.id]=data; });
-    prevMonthLessonsCache[cacheKey]=lessons;
-    return lessons;
+
+    async function _fetchMonthRaw(y, m){
+      const k=`${y}-${String(m).padStart(2,'0')}`;
+      if(prevMonthLessonsCache[k]) return prevMonthLessonsCache[k];
+      const snaps=await getDocs(collection(fbDb(),`lessons_${k}`));
+      const d={};
+      snaps.forEach(s=>{ const v=s.data(); d[v.key||s.id]=v; });
+      prevMonthLessonsCache[k]=d;
+      return d;
+    }
+
+    // mdb.lessons 와 동일하게 이전달 + 해당달 + 다음달 3-way 머지
+    // 우선순위: 이전달 < 다음달 < 해당달
+    const pm = month===1?12:month-1, py = month===1?year-1:year;
+    const nm = month===12?1:month+1, ny = month===12?year+1:year;
+    const [prevL, curL, nextL] = await Promise.all([
+      _fetchMonthRaw(py, pm),
+      _fetchMonthRaw(year, month),
+      _fetchMonthRaw(ny, nm),
+    ]);
+    const merged = Object.assign({}, prevL, nextL, curL);
+    prevMonthLessonsCache[cacheKey]=merged;
+    return merged;
   }catch(e){
     console.warn('월 데이터 로드 실패:', cacheKey, e);
     return {};
