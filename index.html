@@ -1,4 +1,4 @@
-<!-- v20260610_fix_makeup_makeuptyp_sync -->
+<!-- v20260610_fix_makeup_special_legacy -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -1521,8 +1521,19 @@ function diagnoseMakeupData(){
       </div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:6px">보강 등록은 되어있지만 어느 결석에 대한 보강인지 lesson에 기록이 없습니다. (이전에 결석 → 출석 변경했을 가능성)<br>결석일을 지정해 연결하거나, 교시·담당을 수정할 수 있습니다.</div>`;
     issues.noAbsent.forEach((o,oi)=>{
-      // 해당 학생의 결석 lesson 목록
-      const absentLessons=Object.values(mdb.lessons||{}).filter(l=>
+      // 특강 여부 판단: specialLessons에 이 학생의 보강 신청이 있으면 특강
+      const spEntry=Object.entries(specialLessons||{}).find(([,l])=>
+        l.studentId===o.sid && l.specialMakeupRequest && l.specialMakeupRequest.date===o.date
+      );
+      const oIsSpecial=!!(spEntry || (()=>{
+        const entry=getMkEntryByDate(o.date);
+        if(!entry) return false;
+        const arr=getMakeupStudents(entry);
+        const cur=arr.find(x=>x.id===o.sid);
+        return cur?.makeupType==='special';
+      })());
+      // 해당 학생의 결석 lesson 목록 (정규만)
+      const absentLessons=oIsSpecial ? [] : Object.values(mdb.lessons||{}).filter(l=>
         l.studentId===o.sid && l.attendance==='absent' && !l.makeupRequest
       ).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
       const absentOpts=absentLessons.length
@@ -1533,11 +1544,16 @@ function diagnoseMakeupData(){
         <div style="display:flex;align-items:center;gap:6px;font-size:12px;flex-wrap:wrap">
           <span>📅 <b>${esc(o.date)}</b></span>
           <span style="font-weight:600">${esc(o.name)}</span>
+          ${oIsSpecial?`<span style="font-size:10px;background:#f3e8fc;color:#5a2080;border-radius:20px;padding:1px 7px;font-weight:600">🎯 특강</span>`:''}
           <span style="color:var(--text3)">${o.period?o.period+'교시':'교시미정'} · ${esc(o.teacher||'미지정')}</span>
-          <button class="btn btn-sm btn-primary" style="margin-left:auto;font-size:10px;padding:2px 8px"
-            onclick="document.getElementById('${editId}').style.display=document.getElementById('${editId}').style.display==='none'?'block':'none'">✏️ 수정</button>
+          ${oIsSpecial
+            ? `<button class="btn btn-sm btn-green" style="margin-left:auto;font-size:10px;padding:2px 8px" onclick="fixSpecialNoAbsent('${o.sid}','${o.date}')">⚡ 자동수정</button>`
+            : `<button class="btn btn-sm btn-primary" style="margin-left:auto;font-size:10px;padding:2px 8px"
+                onclick="document.getElementById('${editId}').style.display=document.getElementById('${editId}').style.display==='none'?'block':'none'">✏️ 수정</button>`
+          }
           <button class="btn btn-sm" style="color:var(--red);font-size:10px;padding:2px 8px" onclick="removeStudentFromMakeup('${o.sid}','${o.date}')">🗑 제거</button>
         </div>
+        ${oIsSpecial ? '' : `
         <div id="${editId}" style="display:none;margin-top:8px;padding:8px;background:#fff;border:1px solid #e0d080;border-radius:4px">
           <div style="font-size:11px;color:var(--text2);margin-bottom:6px">연결할 결석일, 교시, 담당을 선택 후 [저장]</div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
@@ -1560,7 +1576,7 @@ function diagnoseMakeupData(){
             </label>
             <button class="btn btn-sm btn-primary" style="font-size:11px" onclick="editMakeupNoAbsent('${o.sid}','${o.date}','${editId}')">💾 저장</button>
           </div>
-        </div>
+        </div>`}
       </div>`;
     });
     h+=`</div>`;
@@ -9831,6 +9847,31 @@ async function editMakeupNoAbsent(sid, makeupDate, editId){
   }catch(e){ toast('수정 실패: '+e.message,true); }
 }
 
+// ── 진단: 특강 noAbsent 자동수정 — makeupType:'special' 태깅 + specialMakeupRequest 동기화 ──
+async function fixSpecialNoAbsent(sid, makeupDate){
+  // 1) makeupDays에서 해당 학생 항목을 makeupType:'special'로 업데이트
+  const entry=getMkEntryByDate(makeupDate);
+  if(!entry){ toast('보강일 항목을 찾을 수 없습니다',true); return; }
+  let arr=getMakeupStudents(entry);
+  const idx=arr.findIndex(x=>x.id===sid);
+  if(idx<0){ toast('학생 항목을 찾을 수 없습니다',true); return; }
+  const cur=arr[idx];
+  // specialLessons에서 연결된 항목 찾기
+  const spEntry=Object.entries(specialLessons||{}).find(([,l])=>
+    l.studentId===sid && l.specialMakeupRequest && l.specialMakeupRequest.date===makeupDate
+  );
+  const spId=spEntry?spEntry[1].specialId:(cur.specialId||'');
+  arr[idx]={id:sid, period:cur.period||'', teacher:cur.teacher||'', makeupType:'special', specialId:spId};
+  entry.students=arr;
+  delete entry.studentIds;
+  try{
+    await saveMakeupDayDoc(makeupDate);
+    toast('특강 보강으로 수정되었습니다');
+    diagnoseMakeupData();
+    render();
+  }catch(e){ toast('수정 실패: '+e.message,true); }
+}
+
 // ── 진단: 고아 보강 신청 → 단건 신청 제거 ──
 async function clearOrphanSingle(sid, absentDate){
   const stud=(cfg.students||[]).find(s=>s.id===sid);
@@ -10051,16 +10092,39 @@ function satStuPopover(sid, mkDate, anchor){
   if(!cur) return;
   const teacherList=allTeachers();
 
-  // 이 학생의 연결된 결석 lesson 찾기
-  const linkedLesson=Object.values(mdb.lessons||{}).find(
-    l=>l.studentId===sid && l.makeupRequest && l.makeupRequest.date===mkDate
-  );
-  const linkedAbsentDate=linkedLesson?.date||'';
+  // 특강 학생 여부 판단 — makeupType 명시 없는 구형 데이터도 specialLessons에서 검색
+  let isSpecial=cur.makeupType==='special';
+  if(!isSpecial && cur.makeupType!=='regular'){
+    // 구형 데이터: specialLessons에 이 학생의 보강 신청이 있으면 특강으로 판단
+    isSpecial=Object.values(specialLessons||{}).some(l=>
+      l.studentId===sid && l.specialMakeupRequest && l.specialMakeupRequest.date===mkDate
+    );
+  }
+
+  // 이 학생의 연결된 결석 lesson 찾기 (정규 / 특강 분기)
+  let linkedAbsentDate='';
+  let linkedSpecialKey=''; // 특강용
+  if(isSpecial){
+    const spEntry=Object.entries(specialLessons||{}).find(([,l])=>
+      l.studentId===sid && l.specialMakeupRequest && l.specialMakeupRequest.date===mkDate
+    );
+    if(spEntry){
+      linkedSpecialKey=spEntry[0];
+      linkedAbsentDate=spEntry[1].date||'';
+    }
+  } else {
+    const linkedLesson=Object.values(mdb.lessons||{}).find(
+      l=>l.studentId===sid && l.makeupRequest && l.makeupRequest.date===mkDate
+    );
+    linkedAbsentDate=linkedLesson?.date||'';
+  }
 
   // 결석 후보 목록: 이 학생의 makeupRequest 없는 결석들 (현재 연결된 것 포함)
-  const absentCandidates=Object.values(mdb.lessons||{}).filter(
-    l=>l.studentId===sid && l.attendance==='absent' && (!l.makeupRequest || l.date===linkedAbsentDate)
-  ).sort((a,b)=>a.date.localeCompare(b.date));
+  const absentCandidates=isSpecial
+    ? [] // 특강은 결석일 변경 UI 제공 안 함 (특강 탭에서 관리)
+    : Object.values(mdb.lessons||{}).filter(
+        l=>l.studentId===sid && l.attendance==='absent' && (!l.makeupRequest || l.date===linkedAbsentDate)
+      ).sort((a,b)=>a.date.localeCompare(b.date));
 
   // 보강일 후보 목록 (현재 등록된 모든 토요보강일)
   const allMkDates=getAllMakeupDates();
@@ -10076,7 +10140,9 @@ function satStuPopover(sid, mkDate, anchor){
       ${s.grade?gradeBadge(s.grade):''}
       <span style="margin-left:auto;font-size:11px;color:var(--text2)">${mkDate}</span>
     </div>
-    <div style="margin-bottom:8px">
+    ${isSpecial
+      ? `<div style="margin-bottom:8px;font-size:11px;background:#f3e8fc;border:1px solid #c8a8e8;border-radius:5px;padding:6px 9px;color:#5a2080">🎯 특강 보강 · 결석 연결은 특강 탭에서 관리합니다${linkedAbsentDate?`<br>연결된 결석일: <b>${linkedAbsentDate}</b>`:''}</div>`
+      : `<div style="margin-bottom:8px">
       <div class="field-lbl">결석일 (어느 날 결석에 대한 보강인지)</div>
       <select id="popAbsentDate" style="width:100%;padding:4px 7px">
         <option value="">-- 연결 안 함 --</option>
@@ -10087,7 +10153,8 @@ function satStuPopover(sid, mkDate, anchor){
           return `<option value="${l.date}" ${l.date===linkedAbsentDate?'selected':''}>${l.date} (${dow}) ${ct?ct.label:''}</option>`;
         }).join('')}
       </select>
-    </div>
+    </div>`
+    }
     <div style="margin-bottom:8px">
       <div class="field-lbl">보강 날짜 변경</div>
       <select id="popMkDate" style="width:100%;padding:4px 7px">
@@ -10115,7 +10182,7 @@ function satStuPopover(sid, mkDate, anchor){
     <div style="display:flex;gap:6px">
       <button class="btn btn-sm" style="flex:1" onclick="document.getElementById('satStuPop')?.remove()">취소</button>
       <button class="btn btn-sm" style="color:var(--red)" onclick="removeStudentFromMakeup('${sid}','${mkDate}');document.getElementById('satStuPop')?.remove()">🗑</button>
-      <button class="btn btn-sm btn-primary" style="flex:2" onclick="saveSatStuPopover('${sid}','${mkDate}','${linkedAbsentDate}')">저장</button>
+      <button class="btn btn-sm btn-primary" style="flex:2" onclick="saveSatStuPopover('${sid}','${mkDate}','${linkedAbsentDate}',${isSpecial?`'${linkedSpecialKey}'`:'null'})">저장</button>
     </div>
   `;
 
@@ -10142,13 +10209,14 @@ function satStuPopover(sid, mkDate, anchor){
 }
 
 /* satStuPopover 저장 — 결석일 연결 + 보강날짜 이동 + 교시/담당 변경 통합 처리 */
-async function saveSatStuPopover(sid, oldMkDate, oldAbsentDate){
+async function saveSatStuPopover(sid, oldMkDate, oldAbsentDate, specialKey){
   const newMkDate=document.getElementById('popMkDate')?.value||oldMkDate;
   const newAbsentDate=document.getElementById('popAbsentDate')?.value||'';
   const period=document.getElementById('popPeriod')?.value||'';
   const teacher=document.getElementById('popTeacher')?.value||'';
 
   const dateChanged=newMkDate!==oldMkDate;
+  const isSpecial=!!specialKey;
 
   // 1) 기존 보강일 entry에서 학생 제거 (날짜 바뀌는 경우)
   if(dateChanged){
@@ -10162,32 +10230,50 @@ async function saveSatStuPopover(sid, oldMkDate, oldAbsentDate){
     }
   }
 
-  // 2) 새 보강일 entry에 학생 추가/업데이트
+  // 2) 새 보강일 entry에 학생 추가/업데이트 (makeupType 보존)
   const newEntry=getMkEntryByDate(newMkDate);
   if(!newEntry){ toast('선택한 보강일이 등록되어 있지 않습니다',true); return; }
   let arr=getMakeupStudents(newEntry);
   const idx=arr.findIndex(x=>x.id===sid);
-  if(idx>=0){ arr[idx]={id:sid, period, teacher, makeupType:'regular'}; }
-  else { arr.push({id:sid, period, teacher, makeupType:'regular'}); }
+  const newRec=isSpecial
+    ? {id:sid, period, teacher, makeupType:'special', specialId:specialLessons[specialKey]?.specialId||''}
+    : {id:sid, period, teacher, makeupType:'regular'};
+  if(idx>=0){ arr[idx]=newRec; }
+  else { arr.push(newRec); }
   newEntry.students=arr;
   delete newEntry.studentIds;
 
-  // 3) 기존 연결된 결석 lesson에서 makeupRequest 제거
-  if(oldAbsentDate && (dateChanged || newAbsentDate!==oldAbsentDate)){
-    const oldL=mdb.lessons[lk(sid,oldAbsentDate)];
-    if(oldL && oldL.makeupRequest && oldL.makeupRequest.date===oldMkDate){
-      delete oldL.makeupRequest;
-      await persistLesson(oldL).catch(()=>{});
+  // 3) 기존 연결된 결석 lesson에서 request 제거 (날짜 변경 시)
+  if(dateChanged){
+    if(isSpecial && specialKey && specialLessons[specialKey]){
+      const spL=specialLessons[specialKey];
+      if(spL.specialMakeupRequest && spL.specialMakeupRequest.date===oldMkDate){
+        spL.specialMakeupRequest={...spL.specialMakeupRequest, date:newMkDate, period, teacher};
+        await gasCall('saveSpecialLesson',{lesson:spL}).catch(()=>{});
+      }
+    } else if(!isSpecial && oldAbsentDate){
+      const oldL=mdb.lessons[lk(sid,oldAbsentDate)];
+      if(oldL && oldL.makeupRequest && oldL.makeupRequest.date===oldMkDate){
+        delete oldL.makeupRequest;
+        await persistLesson(oldL).catch(()=>{});
+      }
     }
   }
 
-  // 4) 새 결석일에 makeupRequest 기록
+  // 4) 새 결석일에 request 기록 / 역참조 동기화
   const saves=[];
-  if(newAbsentDate){
-    const l=getOrCreate(sid, newAbsentDate);
-    if(l.attendance!=='absent'){
-      l.attendance='absent';
+  if(isSpecial){
+    // 특강: specialMakeupRequest 날짜/교시/담당 동기화
+    if(specialKey && specialLessons[specialKey]){
+      const spL=specialLessons[specialKey];
+      if(spL.specialMakeupRequest){
+        spL.specialMakeupRequest={...spL.specialMakeupRequest, date:newMkDate, period, teacher};
+        saves.push(gasCall('saveSpecialLesson',{lesson:spL}));
+      }
     }
+  } else if(newAbsentDate){
+    const l=getOrCreate(sid, newAbsentDate);
+    if(l.attendance!=='absent') l.attendance='absent';
     l.makeupRequest={date:newMkDate, period, teacher};
     saves.push(persistLesson(l));
   } else {
