@@ -1371,17 +1371,26 @@ function diagnoseMakeupData(){
         issues.duplicate.push({date, sid:es.id, name:studName, period:es.period||''});
       }
       slotMap.set(slotKey, true);
-      // 결석 연결 안 됨
-      const hasAbsentLink=lessons.some(l=>
-        l.studentId===es.id && l.makeupRequest && l.makeupRequest.date===date
-      );
+      // 결석 연결 안 됨 — makeupType에 따라 정규/특강 분기
+      let hasAbsentLink=false;
+      if(es.makeupType==='special'){
+        // 특강 보강: specialLessons에서 specialMakeupRequest.date === date 확인
+        hasAbsentLink=Object.values(specialLessons||{}).some(l=>
+          l.studentId===es.id && l.specialMakeupRequest && l.specialMakeupRequest.date===date
+        );
+      } else {
+        // 정규 보강 (makeupType==='regular' 또는 태그 없는 구형 데이터)
+        hasAbsentLink=lessons.some(l=>
+          l.studentId===es.id && l.makeupRequest && l.makeupRequest.date===date
+        );
+      }
       if(!hasAbsentLink){
         issues.noAbsent.push({date, sid:es.id, name:studName, period:es.period||'', teacher:es.teacher||''});
       }
     });
   });
 
-  // 2) lessons에 makeupRequest 있는데 makeupDays에 학생 없는 케이스
+  // 2) lessons에 makeupRequest 있는데 makeupDays에 정규 항목 없는 케이스
   // 전월 결석 → 다음달 보강 케이스 대응: 현재 달뿐 아니라 전체 makeupDays에서 검색
   lessons.forEach(l=>{
     if(!l.makeupRequest) return;
@@ -1390,7 +1399,8 @@ function diagnoseMakeupData(){
     let foundInMakeup=false;
     if(entry){
       const arr=getMakeupStudents(entry);
-      foundInMakeup=arr.some(x=>x.id===l.studentId);
+      // 정규 항목(makeupType!=='special')으로만 매칭
+      foundInMakeup=arr.some(x=>x.id===l.studentId && x.makeupType!=='special');
     }
     if(!foundInMakeup){
       const stu=studs.find(s=>s.id===l.studentId);
@@ -1401,6 +1411,32 @@ function diagnoseMakeupData(){
         name:stu?.name||'(?)',
         period:l.makeupRequest.period||'',
         teacher:l.makeupRequest.teacher||''
+      });
+    }
+  });
+
+  // 3) specialLessons에 specialMakeupRequest 있는데 makeupDays에 특강 항목 없는 케이스
+  Object.values(specialLessons||{}).forEach(l=>{
+    if(!l.specialMakeupRequest) return;
+    const reqDate=l.specialMakeupRequest.date;
+    const entry=getMkEntryByDate(reqDate);
+    let foundInMakeup=false;
+    if(entry){
+      const arr=getMakeupStudents(entry);
+      foundInMakeup=arr.some(x=>x.id===l.studentId && x.makeupType==='special');
+    }
+    if(!foundInMakeup){
+      const stu=studs.find(s=>s.id===l.studentId);
+      issues.orphanRequest.push({
+        absentDate: l.date||'(날짜 미입력)',
+        reqDate,
+        sid: l.studentId,
+        name: stu?.name||'(?)',
+        period: l.specialMakeupRequest.period||'',
+        teacher: l.specialMakeupRequest.teacher||'',
+        isSpecial: true,
+        specialId: l.specialId,
+        sessionNo: l.sessionNo,
       });
     }
   });
@@ -1531,7 +1567,8 @@ function diagnoseMakeupData(){
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fce6e6;border:1px solid #e8a8a8;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <b style="font-size:13px">🔍 미연결 보강 신청 (${issues.orphanRequest.length}건)</b>
-        <button class="btn btn-sm btn-primary" onclick="fixOrphanRequests()">일괄 정리</button>
+        <button class="btn btn-sm btn-green" onclick="autoFixOrphansByReattach()">⚡ 자동 복구</button>
+        <button class="btn btn-sm btn-primary" onclick="fixOrphanRequests()">일괄 정리(신청 제거)</button>
       </div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:6px">결석 lesson에 makeupRequest 정보는 있지만, 토요보강 데이터에서는 학생이 빠진 경우입니다.<br>보강일을 등록해 연결하거나, 신청 정보를 제거할 수 있습니다.</div>`;
     issues.orphanRequest.forEach((o,oi)=>{
@@ -1543,6 +1580,7 @@ function diagnoseMakeupData(){
         <div style="display:flex;align-items:center;gap:6px;font-size:12px;flex-wrap:wrap">
           <span>📅 <b>${o.absentDate}</b> 결석 → <b>${o.reqDate}</b> 보강(없음)</span>
           <span style="font-weight:600">${esc(o.name)}</span>
+          ${o.isSpecial?`<span style="font-size:10px;padding:1px 6px;border-radius:10px;background:#f3e8fc;color:#5a2080;font-weight:600">특강</span>`:`<span style="font-size:10px;padding:1px 6px;border-radius:10px;background:var(--blue-bg);color:var(--blue);font-weight:600">정규</span>`}
           <button class="btn btn-sm btn-primary" style="margin-left:auto;font-size:10px;padding:2px 8px"
             onclick="document.getElementById('${editId2}').style.display=document.getElementById('${editId2}').style.display==='none'?'block':'none'">✏️ 수정/재연결</button>
           <button class="btn btn-sm" style="color:var(--red);font-size:10px;padding:2px 8px" onclick="clearOrphanSingle('${o.sid}','${o.absentDate}')">🗑 신청 제거</button>
@@ -1622,34 +1660,99 @@ async function fixOldFormat(){
   }catch(e){ toast('변환 실패: '+e.message,true); }
 }
 
-// 고아 보강 신청 정리 - lesson에서 makeupRequest 제거
-async function fixOrphanRequests(){
-  if(!confirm('lesson에 남아있는 미연결 보강 신청 정보를 모두 제거하시겠어요?\n(결석 기록은 그대로 유지되고, 보강 신청 정보만 삭제됩니다)')) return;
-  const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
-  const days=(cfg.makeupDays||{})[monthKey]||[];
-  const updated=[];
+// ── 보강 자동 복구: makeupDays 누락 학생 전부 복구 (정규 + 특강 분리 처리) ──
+// 기존 콘솔 수작업 스크립트를 UI 버튼으로 통합
+async function autoFixOrphansByReattach(){
+  if(!confirm('lesson/specialLesson에 연결 정보가 있는 보강을 makeupDays에 자동으로 복구합니다.\n계속하시겠어요?')) return;
+
+  let fixed=0;
+  const saves=[];
+
+  // 1) 정규 보강: mdb.lessons.makeupRequest → makeupDays 복구
   Object.values(mdb.lessons||{}).forEach(l=>{
     if(!l.makeupRequest) return;
-    const reqDate=l.makeupRequest.date;
-    const entry=days.find(e=>e.date===reqDate);
-    let foundInMakeup=false;
-    if(entry){
-      const arr=getMakeupStudents(entry);
-      foundInMakeup=arr.some(x=>x.id===l.studentId);
+    const {date:reqDate, period, teacher} = l.makeupRequest;
+    const entry=getMkEntryByDate(reqDate);
+    if(!entry){
+      console.warn('⚠️ 보강일 자체가 없음(등록 필요):', reqDate, (cfg.students||[]).find(s=>s.id===l.studentId)?.name);
+      return;
     }
-    if(!foundInMakeup){
-      delete l.makeupRequest;
-      updated.push(l);
-    }
+    const arr=getMakeupStudents(entry);
+    const already=arr.find(x=>x.id===l.studentId && x.makeupType!=='special');
+    if(already) return;
+    arr.push({id:l.studentId, period, teacher, makeupType:'regular'});
+    entry.students=arr;
+    delete entry.studentIds;
+    saves.push(saveMakeupDayDoc(reqDate));
+    fixed++;
+    console.log('✅ 정규 복구:', (cfg.students||[]).find(s=>s.id===l.studentId)?.name, '결석:', l.date, '→ 보강:', reqDate, period+'교시');
   });
-  if(updated.length===0){ toast('정리할 데이터가 없습니다'); return; }
+
+  // 2) 특강 보강: specialLessons.specialMakeupRequest → makeupDays 복구
+  Object.values(specialLessons||{}).forEach(l=>{
+    if(!l.specialMakeupRequest) return;
+    const {date:reqDate, period, teacher} = l.specialMakeupRequest;
+    const entry=getMkEntryByDate(reqDate);
+    if(!entry){
+      console.warn('⚠️ 보강일 자체가 없음(등록 필요):', reqDate, (cfg.students||[]).find(s=>s.id===l.studentId)?.name, '(특강)');
+      return;
+    }
+    const arr=getMakeupStudents(entry);
+    const already=arr.find(x=>x.id===l.studentId && x.makeupType==='special' && x.specialId===l.specialId);
+    if(already) return;
+    arr.push({id:l.studentId, period, teacher, makeupType:'special', specialId:l.specialId});
+    entry.students=arr;
+    delete entry.studentIds;
+    saves.push(saveMakeupDayDoc(reqDate));
+    fixed++;
+    console.log('✅ 특강 복구:', (cfg.students||[]).find(s=>s.id===l.studentId)?.name, '→ 보강:', reqDate, period+'교시');
+  });
+
+  if(fixed===0){ toast('복구할 누락 항목이 없습니다 ✅'); diagnoseMakeupData(); return; }
   try{
-    for(const l of updated){ await persistLesson(l); }
-    toast(`${updated.length}건의 미연결 보강 정보를 정리했습니다`);
+    await Promise.all(saves);
+    toast(`${fixed}건 복구 완료`);
     diagnoseMakeupData();
     render();
+  }catch(e){ toast('복구 저장 실패: '+e.message, true); }
+}
+
+
+// 고아 보강 신청 정리 — lesson / specialLesson에서 미연결 보강 정보 제거 (정규 + 특강)
+async function fixOrphanRequests(){
+  if(!confirm('lesson/specialLesson에 남아있는 미연결 보강 신청 정보를 모두 제거하시겠어요?\n(결석 기록은 그대로 유지됩니다)')) return;
+  const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
+  const days=(cfg.makeupDays||{})[monthKey]||[];
+  const updatedLessons=[], updatedSpecial=[];
+
+  Object.values(mdb.lessons||{}).forEach(l=>{
+    if(!l.makeupRequest) return;
+    const entry=days.find(e=>e.date===l.makeupRequest.date);
+    const arr=entry?getMakeupStudents(entry):[];
+    if(!arr.some(x=>x.id===l.studentId && x.makeupType!=='special')){
+      delete l.makeupRequest; updatedLessons.push(l);
+    }
+  });
+
+  Object.values(specialLessons||{}).forEach(l=>{
+    if(!l.specialMakeupRequest) return;
+    const entry=days.find(e=>e.date===l.specialMakeupRequest.date);
+    const arr=entry?getMakeupStudents(entry):[];
+    if(!arr.some(x=>x.id===l.studentId && x.makeupType==='special')){
+      delete l.specialMakeupRequest; updatedSpecial.push(l);
+    }
+  });
+
+  const total=updatedLessons.length+updatedSpecial.length;
+  if(total===0){ toast('정리할 데이터가 없습니다'); return; }
+  try{
+    for(const l of updatedLessons){ await persistLesson(l); }
+    for(const l of updatedSpecial){ await gasCall('saveSpecialLesson',{lesson:l}); }
+    toast(`${total}건 정리 완료 (정규 ${updatedLessons.length}, 특강 ${updatedSpecial.length})`);
+    diagnoseMakeupData(); render();
   }catch(e){ toast('정리 실패: '+e.message,true); }
 }
+
 
 async function loadActivityLogs(){
   const container=document.getElementById('activityLogContainer');
@@ -2495,12 +2598,26 @@ async function confSpecialMakeup(spId, sid, sn){
   const entry=getMkEntryByDate(targetDate);
   if(!entry){ alert('해당 날짜는 등록된 토요보강일이 아닙니다'); return; }
 
-  // makeupDays에 학생 추가 (특강 보강은 정규와 동일 시간표 사용)
+  // makeupDays에 학생 추가 (특강 보강은 정규와 동일 시간표 사용, makeupType 태깅)
   let arr=getMakeupStudents(entry);
-  const idx=arr.findIndex(x=>x.id===sid && (x.period||'')===String(period));
-  if(idx<0) arr.push({id:sid, period, teacher});
-  else arr[idx]={id:sid, period, teacher};
+  const idx=arr.findIndex(x=>x.id===sid && x.makeupType==='special' && x.specialId===spId);
+  if(idx<0) arr.push({id:sid, period, teacher, makeupType:'special', specialId:spId});
+  else arr[idx]={id:sid, period, teacher, makeupType:'special', specialId:spId};
   entry.students=arr;
+
+  // ── 특강 사이클 내 중복 보강 경고 ──
+  // 같은 특강(spId)에서 이미 다른 회차 보강이 등록된 경우 알림
+  const spKey=spLessonKey(spId,sid,sn);
+  const existingSpecialMakeups=Object.entries(specialLessons||{}).filter(([k,v])=>
+    k!==spKey &&
+    v.studentId===sid &&
+    v.specialId===spId &&
+    v.specialMakeupRequest
+  );
+  if(existingSpecialMakeups.length){
+    const dateList=existingSpecialMakeups.map(([,v])=>`  · ${v.sessionNo}회차 → ${v.specialMakeupRequest.date} 보강`).join('\n');
+    if(!confirm(`⚠️ 이 특강에 이미 보강이 있습니다.\n${dateList}\n\n추가 보강은 예외적으로 처리됩니다. 그래도 등록하시겠어요?`)) return;
+  }
   delete entry.studentIds;
 
   // specialLesson에 specialMakeupRequest 저장
@@ -2524,11 +2641,11 @@ async function cancelSpecialMakeup(spId, sid, sn){
   const l=specialLessons[key];
   if(!l||!l.specialMakeupRequest) return;
   const req=l.specialMakeupRequest;
-  // makeupDays에서 학생 제거
+  // makeupDays에서 해당 특강 항목만 제거 (같은 날 정규 보강은 유지)
   const entry=getMkEntryByDate(req.date);
   if(entry){
     let arr=getMakeupStudents(entry);
-    arr=arr.filter(x=>x.id!==sid);
+    arr=arr.filter(x=>!(x.id===sid && x.makeupType==='special' && x.specialId===spId));
     entry.students=arr;
     delete entry.studentIds;
     await saveMakeupDayDoc(req.date).catch(()=>{});
@@ -9559,9 +9676,9 @@ async function confAddStuToSat(sid, targetDate){
   let arr=getMakeupStudents(entry);
   const idx=arr.findIndex(x=>x.id===sid);
   if(idx>=0){
-    arr[idx]={id:sid, period, teacher};
+    arr[idx]={id:sid, period, teacher, makeupType: arr[idx].makeupType||'regular'};
   } else {
-    arr.push({id:sid, period, teacher});
+    arr.push({id:sid, period, teacher, makeupType:'regular'});
   }
   entry.students=arr;
   delete entry.studentIds;
@@ -9607,13 +9724,33 @@ async function confRequestMakeup(sid, absentDate){
     return;
   }
   let arr=getMakeupStudents(entry);
-  // 같은 학생 + 같은 날 + 같은 교시는 중복 안됨
-  const sameSlot=arr.findIndex(x=>x.id===sid && (x.period||'')===String(period));
+  // 같은 학생 + 같은 날 + 같은 교시 + 정규 중복 체크
+  const sameSlot=arr.findIndex(x=>x.id===sid && (x.period||'')===String(period) && x.makeupType!=='special');
   if(sameSlot>=0){
     alert('이 학생은 이미 해당 보강일·교시에 등록되어 있습니다.');
     return;
   }
-  arr.push({id:sid, period, teacher});
+  // ── 사이클 내 정규 보강 중복 경고 ──
+  // 이 결석이 속한 사이클의 다른 날짜에 이미 정규 보강이 있으면 알림
+  const stu=(cfg.students||[]).find(s=>s.id===sid);
+  if(stu){
+    const cycles=_getAllCycles(stu.classType||'');
+    const absentCycle=cycles.find(c=>c.dates.includes(absentDate));
+    if(absentCycle){
+      const existingMakeupInCycle=Object.values(mdb.lessons||{}).filter(l=>
+        l.studentId===sid &&
+        l.makeupRequest &&
+        l.date!==absentDate && // 지금 신청하는 결석은 제외
+        absentCycle.dates.includes(l.date) // 같은 사이클 안의 다른 결석
+      );
+      if(existingMakeupInCycle.length){
+        const dateList=existingMakeupInCycle.map(l=>`  · ${l.date} 결석 → ${l.makeupRequest.date} 보강`).join('\n');
+        const go=confirm(`⚠️ 이 사이클에 이미 보강이 있습니다.\n${dateList}\n\n추가 보강은 예외적으로 처리됩니다. 그래도 등록하시겠어요?`);
+        if(!go) return;
+      }
+    }
+  }
+  arr.push({id:sid, period, teacher, makeupType:'regular'});
   entry.students=arr;
   delete entry.studentIds;
   // 결석한 lesson에 보강 신청 정보 기록
@@ -9739,7 +9876,7 @@ async function removeStudentFromMakeup(sid, makeupDate){
     entry.students=arr;
     delete entry.studentIds;
   }
-  // 2) 학생의 lesson에서 makeupRequest도 제거 (역참조)
+  // 2) 정규 lesson의 makeupRequest 역참조 제거
   const updatedLessons=[];
   Object.values(mdb.lessons||{}).forEach(l=>{
     if(l.studentId===sid && l.makeupRequest && l.makeupRequest.date===makeupDate){
@@ -9747,10 +9884,19 @@ async function removeStudentFromMakeup(sid, makeupDate){
       updatedLessons.push(l);
     }
   });
-  // 3) 저장
+  // 3) 특강 specialMakeupRequest 역참조 제거
+  const updatedSpecial=[];
+  Object.values(specialLessons||{}).forEach(l=>{
+    if(l.studentId===sid && l.specialMakeupRequest && l.specialMakeupRequest.date===makeupDate){
+      delete l.specialMakeupRequest;
+      updatedSpecial.push(l);
+    }
+  });
+  // 4) 저장
   try{
     await saveMakeupDayDoc(makeupDate);
     for(const l of updatedLessons){ await persistLesson(l); }
+    for(const l of updatedSpecial){ await gasCall('saveSpecialLesson',{lesson:l}).catch(()=>{}); }
     toast(`${studName} 학생을 보강일에서 제거했습니다`);
     render();
   }catch(e){ toast('제거 실패: '+e.message,true); }
@@ -9830,10 +9976,28 @@ async function confAddSatStudent(){
     if(!rule.ok){
       if(!confirm(`⚠️ 보강 규칙 초과\n${rule.reason}\n\n그래도 등록하시겠습니까?`)) return;
     }
+    // ── 사이클 내 정규 보강 중복 경고 ──
+    const stuX=(cfg.students||[]).find(s=>s.id===sid);
+    if(stuX){
+      const cycles=_getAllCycles(stuX.classType||'');
+      const absentCycle=cycles.find(c=>c.dates.includes(absentDate));
+      if(absentCycle){
+        const existingMakeupInCycle=Object.values(mdb.lessons||{}).filter(l=>
+          l.studentId===sid &&
+          l.makeupRequest &&
+          l.date!==absentDate &&
+          absentCycle.dates.includes(l.date)
+        );
+        if(existingMakeupInCycle.length){
+          const dateList=existingMakeupInCycle.map(l=>`  · ${l.date} 결석 → ${l.makeupRequest.date} 보강`).join('\n');
+          if(!confirm(`⚠️ 이 사이클에 이미 보강이 있습니다.\n${dateList}\n\n추가 보강은 예외적으로 처리됩니다. 그래도 등록하시겠어요?`)) return;
+        }
+      }
+    }
   }
 
   // 보강일 학생 배열에 추가
-  arr.push({id:sid, period, teacher});
+  arr.push({id:sid, period, teacher, makeupType:'regular'});
   entry.students=arr;
   delete entry.studentIds;
 
