@@ -1,4 +1,4 @@
-<!-- v20260609_fix_school_point_print -->
+<!-- v20260610_fix_makeup_makeuptyp_sync -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -10167,8 +10167,8 @@ async function saveSatStuPopover(sid, oldMkDate, oldAbsentDate){
   if(!newEntry){ toast('선택한 보강일이 등록되어 있지 않습니다',true); return; }
   let arr=getMakeupStudents(newEntry);
   const idx=arr.findIndex(x=>x.id===sid);
-  if(idx>=0){ arr[idx]={id:sid, period, teacher}; }
-  else { arr.push({id:sid, period, teacher}); }
+  if(idx>=0){ arr[idx]={id:sid, period, teacher, makeupType:'regular'}; }
+  else { arr.push({id:sid, period, teacher, makeupType:'regular'}); }
   newEntry.students=arr;
   delete newEntry.studentIds;
 
@@ -10190,8 +10190,8 @@ async function saveSatStuPopover(sid, oldMkDate, oldAbsentDate){
     }
     l.makeupRequest={date:newMkDate, period, teacher};
     saves.push(persistLesson(l));
-  } else if(!dateChanged && !oldAbsentDate){
-    // 결석 연결 없이 교시/담당만 변경: lesson 역참조도 동기화
+  } else {
+    // 결석 연결 없이 교시/담당/날짜 변경 시: lesson 역참조도 동기화
     Object.values(mdb.lessons||{}).forEach(l=>{
       if(l.studentId===sid && l.makeupRequest && l.makeupRequest.date===oldMkDate){
         l.makeupRequest={date:newMkDate, period, teacher};
