@@ -1,4 +1,4 @@
-<!-- v20260610_fix_makeup_special_legacy -->
+<!-- v20260610_fix_makeup_orphan_special_legacy -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -1429,7 +1429,8 @@ function diagnoseMakeupData(){
     let foundInMakeup=false;
     if(entry){
       const arr=getMakeupStudents(entry);
-      foundInMakeup=arr.some(x=>x.id===l.studentId && x.makeupType==='special');
+      // makeupType==='special' 또는 구형 데이터(makeupType 없음)도 매칭
+      foundInMakeup=arr.some(x=>x.id===l.studentId && (x.makeupType==='special' || !x.makeupType));
     }
     if(!foundInMakeup){
       const stu=studs.find(s=>s.id===l.studentId);
