@@ -708,8 +708,59 @@ async function backupAllData(){
   const wb=XLSX.utils.book_new();
 
   try{
-    // 1. 학생 정보
+    // ── 백업 전 최신 데이터 로드 (아직 로드 안 된 항목) ──
+    toast('데이터 불러오는 중... (1/4) 특강·교재·포인트');
+    await Promise.all([
+      loadSpecialLessons(),
+      loadTextbookProgress(),
+      loadTextbookTests(),
+      loadPointsData(),
+    ]);
+    toast('데이터 불러오는 중... (2/4) 성적·단원');
+    await Promise.all([
+      loadSchoolExamData(),
+      loadTextbookUnits(),
+    ]);
+
+    // 전체 수업 기록 (Firestore에서 모든 lessons_* 컬렉션 직접 읽기)
+    toast('데이터 불러오는 중... (3/4) 전체 수업 기록');
+    const {getDocs: _gd, collection: _col} = fb();
+    // Firebase는 컬렉션 목록 API가 제한적이므로 현재 연도 기준 ±2년 범위를 스캔
+    const allLessonsMap = {}; // key → lessonData (중복 방지)
+    const scanYear = st.year;
+    const scanPromises = [];
+    for(let y = scanYear - 2; y <= scanYear + 1; y++){
+      for(let m = 1; m <= 12; m++){
+        const colName = `lessons_${y}-${String(m).padStart(2,'0')}`;
+        scanPromises.push(
+          _gd(_col(fbDb(), colName))
+            .then(snaps => snaps.forEach(d => { const data = d.data(); allLessonsMap[data.key||d.id] = data; }))
+            .catch(() => {}) // 없는 컬렉션은 무시
+        );
+      }
+    }
+    await Promise.all(scanPromises);
+
+    // 전체 주간 평가 (weekly_eval_*)
+    toast('데이터 불러오는 중... (4/4) 주간 평가·보강 일정');
+    const allWeeklyEval = {}; // key → evalData
+    const wScanPromises = [];
+    for(let y = scanYear - 2; y <= scanYear + 1; y++){
+      for(let m = 1; m <= 12; m++){
+        const wColName = `weekly_eval_${y}-${String(m).padStart(2,'0')}`;
+        wScanPromises.push(
+          _gd(_col(fbDb(), wColName))
+            .then(snaps => snaps.forEach(d => { const data = d.data(); allWeeklyEval[data.key||d.id] = data; }))
+            .catch(() => {})
+        );
+      }
+    }
+    await Promise.all(wScanPromises);
+
     const studs=(cfg.students||[]).sort((a,b)=>a.name.localeCompare(b.name,'ko'));
+    const ATT={attend:'출석',late:'지각',absent:'결석'};
+
+    // 1. 학생 정보
     const studRows=[['학생명','학년','반','레벨','평일담당','금요일담당','평일교시','금요일교시','등록일','특이사항']];
     studs.forEach(s=>studRows.push([s.name,s.grade||'',s.classType||'',s.level||'',s.teacher||'',s.fridayTeacher||'',s.weekdayTime||'',s.fridayTime||'',s.joinDate||'',s.specialNote||'']));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(studRows), '학생');
@@ -747,20 +798,15 @@ async function backupAllData(){
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(examRows), '학교성적');
 
-    // 5. 수업 기록 (현재 월 ± 최근 3개월)
-    const lessonRows=[['학생명','날짜','출결','과제점수','시험점수','진도','과제','특이사항']];
-    const ATT={attend:'출석',late:'지각',absent:'결석'};
-    // 현재 로드된 mdb.lessons 사용
-    Object.values(mdb.lessons||{}).forEach(l=>{
+    // 5. 수업 기록 (Firestore 전체 스캔 결과 사용)
+    const lessonRows=[['학생명','날짜','출결','과제점수','시험점수','진도','과제','특이사항','보강여부']];
+    Object.values(allLessonsMap).forEach(l=>{
       const s=studs.find(x=>x.id===l.studentId);
-      lessonRows.push([s?.name||l.studentId, l.date||'', ATT[l.attendance]||'', l.homeworkScore??'', l.testScore??'', l.progress||'', l.homework||'', l.note||'']);
-    });
-    // 이전 달 캐시에서도 추가
-    Object.values(prevMonthLessonsCache).forEach(monthLessons=>{
-      Object.values(monthLessons).forEach(l=>{
-        const s=studs.find(x=>x.id===l.studentId);
-        lessonRows.push([s?.name||l.studentId, l.date||'', ATT[l.attendance]||'', l.homeworkScore??'', l.testScore??'', l.progress||'', l.homework||'', l.note||'']);
-      });
+      lessonRows.push([
+        s?.name||l.studentId, l.date||'', ATT[l.attendance]||'',
+        l.homeworkScore??'', l.testScore??'', l.progress||'', l.homework||'', l.note||'',
+        l.makeupClass?'O':''
+      ]);
     });
     lessonRows.sort((a,b)=>{ if(a[0]!==b[0]) return a[0].localeCompare(b[0],'ko'); return (a[1]||'').localeCompare(b[1]||''); });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(lessonRows), '수업기록');
@@ -780,17 +826,100 @@ async function backupAllData(){
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(unitRows), '단원체크');
 
-    // 저장
-    XLSX.writeFile(wb, 'ES수학_전체백업.xlsx');
+    // 7. 교재 진도 (textbook_progress)
+    const tbProgRows=[['학생명','교재명','현재쪽수','전체쪽수','시작일','메모','수정일']];
+    Object.values(textbookProgress).forEach(p=>{
+      const s=studs.find(x=>x.id===p.studentId);
+      const bk=(cfg.textbooks||[]).find(b=>b.id===p.textbookId);
+      tbProgRows.push([
+        s?.name||p.studentId, bk?.name||p.textbookId,
+        p.currentPage??'', p.totalPage??'', p.startDate||'', p.memo||'',
+        (p.updatedAt||'').slice(0,10)
+      ]);
+    });
+    tbProgRows.sort((a,b)=>a[0].localeCompare(b[0],'ko'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(tbProgRows), '교재진도');
+
+    // 8. 교재 시험 (textbook_tests)
+    const tbTestRows=[['학생명','교재명','시도','점수','합격여부','날짜','메모','수동합격']];
+    Object.entries(textbookTests).forEach(([sid, byTb])=>{
+      const s=studs.find(x=>x.id===sid);
+      Object.entries(byTb).forEach(([tbId, attempts])=>{
+        const bk=(cfg.textbooks||[]).find(b=>b.id===tbId);
+        attempts.forEach(a=>{
+          tbTestRows.push([
+            s?.name||sid, bk?.name||tbId, a.attempt||'',
+            a.score??'', a.passed?'합격':'불합격', a.date||'', a.memo||'', a.manualComplete?'O':''
+          ]);
+        });
+      });
+    });
+    tbTestRows.sort((a,b)=>a[0].localeCompare(b[0],'ko'));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(tbTestRows), '교재시험');
+
+    // 9. 특강 수업기록 (special_lessons)
+    const spRows=[['특강명','학생명','회차','날짜','출결','과제점수','시험점수','진도','과제','특이사항']];
+    const spClasses=cfg.specialClasses||[];
+    Object.values(specialLessons).forEach(l=>{
+      const s=studs.find(x=>x.id===l.studentId);
+      const sc=spClasses.find(x=>x.id===l.specialId);
+      spRows.push([
+        sc?.name||l.specialId, s?.name||l.studentId, l.sessionNo||'', l.date||'',
+        ATT[l.attendance]||'', l.homeworkScore??'', l.testScore??'',
+        l.progress||'', l.homework||'', l.note||''
+      ]);
+    });
+    spRows.sort((a,b)=>{ if(a[0]!==b[0]) return a[0].localeCompare(b[0],'ko'); if(a[1]!==b[1]) return a[1].localeCompare(b[1],'ko'); return (a[2]||0)-(b[2]||0); });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(spRows), '특강수업기록');
+
+    // 10. 보강 일정 (makeup_days)
+    const mkRows=[['보강날짜','학생명','교시','담당','보강유형','결석일']];
+    Object.values(cfg.makeupDays||{}).forEach(monthList=>{
+      monthList.forEach(entry=>{
+        const students=entry.students||[];
+        students.forEach(es=>{
+          const s=studs.find(x=>x.id===es.id);
+          mkRows.push([
+            entry.date||'', s?.name||es.id, es.period?es.period+'교시':'',
+            es.teacher||'', es.makeupType==='special'?'특강':'정규',
+            es.absentDate||''
+          ]);
+        });
+      });
+    });
+    mkRows.sort((a,b)=>a[0].localeCompare(b[0]));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mkRows), '보강일정');
+
+    // 11. 주간 평가 (weekly_eval_*)
+    const wkRows=[['학생명','연도','월','주차키','성실도','집중도','과제','메모','수정일']];
+    Object.values(allWeeklyEval).forEach(ev=>{
+      // key 형식: studentId_wKey
+      const parts=(ev.key||'').split('_');
+      const sid=parts[0]||'';
+      const s=studs.find(x=>x.id===sid);
+      wkRows.push([
+        s?.name||sid, ev.year||'', ev.month||'', ev.key||'',
+        ev.app??'', ev.focus??'', ev.hw??'', ev.memo||'',
+        (ev.updatedAt||'').slice(0,10)
+      ]);
+    });
+    wkRows.sort((a,b)=>{ if(a[0]!==b[0]) return a[0].localeCompare(b[0],'ko'); return String(a[1]+a[2]).localeCompare(String(b[1]+b[2])); });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(wkRows), '주간평가');
+
+    // 저장 (맥OS NFD 자음모음 분리 방지 → NFC 정규화)
+    const now2=new Date();
+    const dateTag=`${now2.getFullYear()}${String(now2.getMonth()+1).padStart(2,'0')}${String(now2.getDate()).padStart(2,'0')}`;
+    const fileName=`ES수학_전체백업_${dateTag}.xlsx`.normalize('NFC');
+    XLSX.writeFile(wb, fileName);
 
     // 마지막 백업 시각 저장 (main 문서만 업데이트)
-    cfg.lastBackupAt=new Date().toISOString();
+    cfg.lastBackupAt=now2.toISOString();
     const {setDoc: _setDoc2}=fb();
     const {students: _bs, textbooks: _bt, ...mainBackup} = Object.fromEntries(
       Object.entries(cfg).filter(([k])=>!k.startsWith('_'))
     );
     await _setDoc2(configDocRef(), mainBackup);
-    toast('✅ 백업 완료! ES수학_전체백업.xlsx — 원드라이브에 덮어쓰기 하세요');
+    toast(`✅ 백업 완료! ${fileName} (11개 시트) — 원드라이브에 저장하세요`);
     render();
 
   }catch(e){
@@ -5352,6 +5481,10 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
         <div class="field-lbl">지난 시간 과제</div>
         <div class="prev-box" style="user-select:text;cursor:default">📋 ${ph.date?`<span style="font-size:10px;color:var(--text3)">[${ph.date}]</span> `:''}${esc(ph.hw)}</div>
       </div>`:''}
+      <div style="margin-bottom:8px">
+        <div class="field-lbl">목표진도</div>
+        <input type="text" class="sinp-full" value="${esc(l.targetProgress||'')}" placeholder="이번 수업 목표 진도를 입력하세요" onblur="tSave('${s.id}','${dateStr}','${s.classType}','targetProgress',this.value)">
+      </div>
       <div class="score-row" style="margin-bottom:8px">
         <div>
           <div class="field-lbl">과제 점수</div>
