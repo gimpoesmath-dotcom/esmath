@@ -1,4 +1,4 @@
-<!-- v20260611_fix_unit_template_name -->
+<!-- v20260611_fix_unit_hide_condition -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -408,7 +408,7 @@ window._fbReady = true;
 </div>
 
 <script>
-const APP_VERSION = 'v20260611_fix_unit_template_name';
+const APP_VERSION = 'v20260611_fix_unit_hide_condition';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -5443,10 +5443,8 @@ function renderUnitCheckPanels(sid, tbs, dow, dateStr){
       const myTests=textbookTests[sid]||{};
       const attempts=myTests[tbId]||[];
       const tbPassed=attempts.some(function(a){return a.passed;});
-      // 모든 단원이 명시적 완료처리(manualComplete===true)인 경우만 숨김
-      const hasUnits=units.length>0;
-      const allManualComplete=hasUnits && units.every(function(u){return u.manualComplete===true;});
-      if(tbPassed || allManualComplete) return;
+      // 전범위 시험 통과한 경우만 숨김 (단원 완료처리만으로는 숨기지 않음)
+      if(tbPassed) return;
     }
     anyPanel=true;
 
