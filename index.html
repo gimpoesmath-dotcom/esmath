@@ -1,4 +1,4 @@
-<!-- v20260610_fix_makeup_orphan_special_legacy -->
+<!-- v20260611_fix_단원명 노출 수정>
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -408,6 +408,8 @@ window._fbReady = true;
 </div>
 
 <script>
+const APP_VERSION = 'v20260611_fix_unit_template_name';
+console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
 const SUBS=['출결','과제점수','시험점수','오늘진도','오늘과제','보강','특이사항'];
@@ -5555,6 +5557,8 @@ async function unitResetAllStudents(tbId, count){
 계속하시겠어요?`)) return;
 
   let ok=0, fail=0;
+  // 교재 템플릿 단원명 참조 (설정에서 저장된 이름 사용)
+  const templateUnits=textbookUnits['__template___'+tbId]||[];
   for(const s of assigned){
     const key=s.id+'_'+tbId;
     const existing=JSON.parse(JSON.stringify(textbookUnits[key]||[]));
@@ -5562,12 +5566,17 @@ async function unitResetAllStudents(tbId, count){
     existing.forEach(u=>{ if(u.name) existingMap[u.name]=u; });
     const newUnits=[];
     for(let i=1;i<=count;i++){
-      const name=`${i}단원`;
-      // 1) 정확한 이름 일치 → 2) "N단원"으로 시작하는 기존 단원(커스텀 이름) → 3) 인덱스 순서 → 4) 새 빈 단원
-      const byExact=existingMap[name];
-      const byPrefix=!byExact&&existing.find(u=>u.name&&u.name.startsWith(name));
+      const templateName=templateUnits[i-1]?.name||`${i}단원`;
+      const fallbackName=`${i}단원`;
+      // 1) 템플릿 이름 정확 일치 → 2) "N단원" 정확 일치 → 3) 시작 문자열 일치 → 4) 인덱스 순서 → 5) 새 빈 단원
+      const byExact=existingMap[templateName];
+      const byExactFallback=!byExact&&existingMap[fallbackName];
+      const byPrefix=!byExact&&!byExactFallback&&existing.find(u=>u.name&&(u.name.startsWith(templateName)||u.name.startsWith(fallbackName)));
       const byIndex=existing[i-1];
-      newUnits.push(byExact||byPrefix||byIndex||{name,checked:false,score:null,checkedDate:'',addedDate:dk(new Date())});
+      const base=byExact||byExactFallback||byPrefix||byIndex;
+      // 기존 데이터(체크/점수 등) 유지하되 이름은 템플릿명으로 갱신
+      if(base) newUnits.push({...base, name:templateName});
+      else newUnits.push({name:templateName,checked:false,score:null,checkedDate:'',addedDate:dk(new Date())});
     }
     try{
       await saveTbUnits(s.id,tbId,newUnits);
@@ -5590,15 +5599,22 @@ async function unitResetToCount(safeId, count){
   const existingMap={};
   existing.forEach(u=>{ if(u.name) existingMap[u.name]=u; });
 
+  // 교재 템플릿 단원명 참조
+  const templateUnits2=textbookUnits['__template___'+tbId]||[];
+
   // unitCount 기준으로 1~N단원 생성, 기존 데이터 있으면 병합
   const newUnits=[];
   for(let i=1;i<=count;i++){
-    const name=`${i}단원`;
-    // 1) 정확한 이름 일치 → 2) "N단원"으로 시작하는 커스텀 이름 → 3) 인덱스 순서 → 4) 새 빈 단원
-    const byExact=existingMap[name];
-    const byPrefix=!byExact&&existing.find(u=>u.name&&u.name.startsWith(name));
+    const templateName=templateUnits2[i-1]?.name||`${i}단원`;
+    const fallbackName=`${i}단원`;
+    // 1) 템플릿 이름 정확 일치 → 2) "N단원" 정확 일치 → 3) 시작 문자열 일치 → 4) 인덱스 순서 → 5) 새 빈 단원
+    const byExact=existingMap[templateName];
+    const byExactFallback=!byExact&&existingMap[fallbackName];
+    const byPrefix=!byExact&&!byExactFallback&&existing.find(u=>u.name&&(u.name.startsWith(templateName)||u.name.startsWith(fallbackName)));
     const byIndex=existing[i-1];
-    newUnits.push(byExact||byPrefix||byIndex||{name,checked:false,score:null,checkedDate:'',addedDate:dk(new Date())});
+    const base=byExact||byExactFallback||byPrefix||byIndex;
+    if(base) newUnits.push({...base, name:templateName});
+    else newUnits.push({name:templateName,checked:false,score:null,checkedDate:'',addedDate:dk(new Date())});
   }
 
   try{
