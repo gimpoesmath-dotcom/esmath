@@ -6534,7 +6534,12 @@ function getMakeupStudents(entry){
   };
   if(Array.isArray(entry.students) && entry.students.length){
     return entry.students
-      .map(x=>{ const rec=typeof x==='string'?{id:x,period:'',teacher:''}:{id:x.id,period:x.period||'',teacher:x.teacher||''}; return fillTeacher(rec); })
+      .map(x=>{
+        const rec = typeof x==='string'
+          ? {id:x, period:'', teacher:''}
+          : {...x, period:x.period||'', teacher:x.teacher||''};
+        return fillTeacher(rec);
+      })
       .filter(rec=>validIds.has(rec.id)); // 삭제된 학생 제외
   }
   return [];
@@ -7189,8 +7194,7 @@ function rSettings(){
     h+=`<div class="toolbar" style="margin-top:14px"><b>💾 데이터</b></div>
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-green" onclick="exportExcel()">📥 이달 전체 엑셀</button>
-      <button class="btn btn-primary" onclick="exportESReport(1)">📋 1분기 레포트 (1~12월)</button>
-      <button class="btn btn-primary" onclick="exportESReport(2)" style="background:#1558a8;border-color:#1558a8">📋 2분기 레포트 (4~다음해3월)</button>
+      <button class="btn btn-primary" onclick="exportESReport()">📋 분기레포트 (${Math.ceil(st.month/3)}분기)</button>
       <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
         <span style="font-size:11px;color:var(--text3)">마지막 백업: ${lastBackup}</span>
         <button class="btn btn-primary" onclick="backupAllData()">💾 전체 백업</button>
@@ -10716,16 +10720,18 @@ async function delCt(k){
 }
 
 
-/* ── ES 분기 레포트 엑셀 (원본 구조 유지 + 로드맵 시트 추가)
+/* ── ES 분기 레포트 엑셀 (학생 1인당 1시트, 시험/출결 + 전범위테스트 + 교재로드맵 모두 포함)
    현재 보는 달(st.month)에 따라 분기 자동 결정:
-   1분기=1~3월 → 1~3월 / 2분기=4~6월 → 4~6월 / ...
-   버튼에서 reportType(1~4)을 지정하면 해당 분기 강제 선택 ── */
-function exportESReport(reportType){
+   1분기=1~3월 / 2분기=4~6월 / 3분기=7~9월 / 4분기=10~12월
+   - 시험점수/출결/전범위테스트: 해당 분기 3개월(month)에 진행된 내용만 포함
+   - 교재 로드맵: 분기 첫 달부터 12개월(다음해 포함 가능) 표시 ── */
+function exportESReport(){
   const wb = XLSX.utils.book_new();
   const y = st.year;
   const qMap = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]};
-  const qNum = reportType || Math.ceil(st.month/3);
+  const qNum = Math.ceil(st.month/3);
   const months = qMap[qNum];
+  const roadmapStartMonth = months[0];
 
   // 열 구조 (0-indexed):
   // 0~3: A~D  라벨 (4열 병합)
@@ -10743,7 +10749,8 @@ function exportESReport(reportType){
   (cfg.students||[]).forEach(s => {
     const myTests = textbookTests[s.id]||{};
 
-    // 전범위 시험 결과 — 마지막(최신) 결과만
+    // 전범위 시험 결과 — 해당 분기(months)에 응시한 시험이 있는 교재만,
+    // 그 교재의 분기 내 마지막(최신) 응시 결과를 표시
     const testResultLines = [];
     (s.textbooks||[]).forEach(t => {
       const bk = t.tbId?(cfg.textbooks||[]).find(b=>b.id===t.tbId):null;
@@ -10751,15 +10758,20 @@ function exportESReport(reportType){
       const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
       const attempts = myTests[tbId]||[];
       if(!attempts.length) return;
-      // 마지막 attempt(최신 차수)만 표시
-      const lastA = attempts[attempts.length-1];
-      if(!lastA) return;
+      // 해당 분기(y년 months) 내 응시 기록만 추출
+      const qAttempts = attempts.filter(a=>{
+        if(!a.date) return false;
+        const ay = parseInt(a.date.substring(0,4));
+        const am = parseInt(a.date.substring(5,7));
+        return ay===y && months.includes(am);
+      });
+      if(!qAttempts.length) return;
+      // 분기 내 마지막(최신) attempt만 표시
+      const lastA = qAttempts[qAttempts.length-1];
       const scoreStr = lastA.manualComplete?'완료':(lastA.score!=null?lastA.score+'점':'');
       if(!scoreStr) return;
-      const suffix = lastA.attempt>1
-        ? `전범위 서술형 ${lastA.attempt}차 시험 결과`
-        : `전범위 서술형 시험 결과`;
-      const passStr = lastA.passed ? '합격' : '불합격';
+      const suffix = lastA.attempt>1 ? `${lastA.attempt}차시험` : `시험`;
+      const passStr = lastA.passed ? '통과' : '불합격';
       testResultLines.push(`${tbName} ${suffix} : ${scoreStr} ${passStr}`);
     });
 
@@ -10868,7 +10880,7 @@ function exportESReport(reportType){
       rows.push(emptyRow());
     });
 
-    // 전범위 시험결과 (마지막 차수)
+    // 전범위 시험결과 (분기 내 마지막 차수)
     if(testResultLines.length){
       testResultRow = rows.length;
       const tr = emptyRow();
@@ -10878,6 +10890,92 @@ function exportESReport(reportType){
       merges.push({s:{r:testResultRow,c:0}, e:{r:testResultRow,c:3}});
       merges.push({s:{r:testResultRow,c:DATA_START}, e:{r:testResultRow,c:AVG_COL-1}});
     }
+
+    // ── 교재 로드맵 (분기 첫 달부터 12개월, 월만 표시·년도 표시 안 함, 진행구간은 셀 병합) ──
+    const ROADMAP_NAME_END = 3;   // 0~3: 교재명 (4열 병합)
+    const ROADMAP_TYPE_COL = 4;   // 4: 구분(현행/선행)
+    const ROADMAP_M_START  = 5;   // 5~16: 1~12번째 달(분기 첫 달 기준)
+    rows.push(emptyRow()); // 구분용 빈 행
+
+    const rmHdrRow = emptyRow();
+    rmHdrRow[0] = '교재 로드맵';
+    for(let i=0;i<12;i++){
+      const mLabel = ((roadmapStartMonth - 1 + i) % 12) + 1;
+      rmHdrRow[ROADMAP_M_START + i] = mLabel + '월';
+    }
+    const rmHdrRowIdx = rows.length;
+    rows.push(rmHdrRow);
+    merges.push({s:{r:rmHdrRowIdx,c:0}, e:{r:rmHdrRowIdx,c:ROADMAP_NAME_END}});
+    merges.push({s:{r:rmHdrRowIdx,c:ROADMAP_TYPE_COL}, e:{r:rmHdrRowIdx,c:ROADMAP_TYPE_COL}});
+
+    const rmTypeRow = emptyRow();
+    rmTypeRow[0] = '교재명';
+    rmTypeRow[ROADMAP_TYPE_COL] = '구분';
+    const rmTypeRowIdx = rows.length;
+    rows.push(rmTypeRow);
+    merges.push({s:{r:rmTypeRowIdx,c:0}, e:{r:rmTypeRowIdx,c:ROADMAP_NAME_END}});
+
+    const myProgTests = textbookTests[s.id]||{};
+    const books = cfg.textbooks||[];
+    (s.textbooks||[]).forEach(t => {
+      const bk = t.tbId?(books.find(b=>b.id===t.tbId)||null):null;
+      const tbName = bk?bk.name:(t.name||'교재');
+      const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
+      const prog = textbookProgress[tbKey(s.id,tbId)]||{};
+      const startDate = prog.startDate||t.startDate||'';
+      const attempts = myProgTests[tbId]||[];
+      const passAttempt = attempts.find(a=>a.passed);
+      const passDate = passAttempt?passAttempt.date:'';
+      const rowType = t.rowType||'현행';
+
+      const rIdx = rows.length;
+      const row = emptyRow();
+      row[0] = tbName;
+      row[ROADMAP_TYPE_COL] = rowType;
+      rows.push(row);
+      merges.push({s:{r:rIdx,c:0}, e:{r:rIdx,c:ROADMAP_NAME_END}});
+
+      // 분기 첫 달(roadmapStartMonth)을 기준으로 12개월 슬롯의 (년,월) 계산
+      const slots = [];
+      for(let i=0;i<12;i++){
+        let mm = roadmapStartMonth + i;
+        let yy = y;
+        if(mm>12){ mm -= 12; yy += 1; }
+        slots.push({y:yy, m:mm});
+      }
+
+      // 시작일 ~ 합격일(없으면 끝까지) 구간을 활성으로 판정
+      const sY = startDate?parseInt(startDate.substring(0,4)):0;
+      const sM = startDate?parseInt(startDate.substring(5,7)):0;
+      const pY = passDate?parseInt(passDate.substring(0,4)):0;
+      const pM = passDate?parseInt(passDate.substring(5,7)):0;
+
+      const activeFlags = slots.map(slot=>{
+        if(!startDate) return false;
+        const afterStart = (slot.y>sY) || (slot.y===sY && slot.m>=sM);
+        let beforeEnd = true;
+        if(passDate){
+          beforeEnd = (slot.y<pY) || (slot.y===pY && slot.m<=pM);
+        }
+        return afterStart && beforeEnd;
+      });
+
+      // 연속된 활성 구간을 셀 병합으로 표시 (구간 내부에 . 등 표현 없이 구분(rowType)만 표시)
+      let i=0;
+      while(i<12){
+        if(activeFlags[i]){
+          let j=i;
+          while(j+1<12 && activeFlags[j+1]) j++;
+          const c0 = ROADMAP_M_START + i;
+          const c1 = ROADMAP_M_START + j;
+          row[c0] = rowType;
+          if(c1>c0) merges.push({s:{r:rIdx,c:c0}, e:{r:rIdx,c:c1}});
+          i = j+1;
+        } else {
+          i++;
+        }
+      }
+    });
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
     Object.keys(ws).forEach(addr=>{
@@ -10898,13 +10996,6 @@ function exportESReport(reportType){
   });
 
   if(!wb.SheetNames.length){ toast('학생이 없습니다.', true); return; }
-
-  // ── 로드맵 시트 추가 (학생별 개인 시트가 끝난 후, 별도 시트로) ──
-  (cfg.students||[]).forEach(s => {
-    const rmWs = _buildRoadmapSheet(s.id, s);
-    const sheetName = ((s.name||'학생')+'_로드맵').slice(0,31);
-    XLSX.utils.book_append_sheet(wb, rmWs, sheetName);
-  });
 
   XLSX.writeFile(wb, `ES분기레포트_${y}_${qNum}분기.xlsx`, {cellStyles:true});
   toast(`ES ${qNum}분기 레포트 다운로드 완료`);
