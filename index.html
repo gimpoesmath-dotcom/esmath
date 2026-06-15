@@ -1504,8 +1504,11 @@ function diagnoseMakeupData(){
       slotMap.set(slotKey, true);
       // 결석 연결 안 됨 — makeupType에 따라 정규/특강 분기
       // makeupType 없는 구형 항목은 특강 여부를 specialMakeupRequest로 추가 확인
-      let hasAbsentLink=false;
-      if(es.makeupType==='special'){
+      // noAbsentConfirmed: 사용자가 '결석 없이 보강(연결 안 함)'으로 확정한 항목은 진단에서 제외
+      let hasAbsentLink=!!es.noAbsentConfirmed;
+      if(hasAbsentLink){
+        // skip further checks
+      } else if(es.makeupType==='special'){
         // 명시적 특강 항목
         hasAbsentLink=Object.values(specialLessons||{}).some(l=>
           l.studentId===es.id && l.specialMakeupRequest && l.specialMakeupRequest.date===date
@@ -1646,7 +1649,7 @@ function diagnoseMakeupData(){
   if(issues.noAbsent.length){
     // 수정 폼용: 이번달 토요보강일 목록, 선생님 목록, 학생별 결석일 목록
     const satDates=days.map(e=>e.date).sort();
-    const teacherOpts=(cfg.teachers||[]).map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+    const teacherOpts=(cfg.teachers||[]).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fff5e0;border:1px solid #e8c870;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <b style="font-size:13px">🔗 결석 연결 안 됨 (${issues.noAbsent.length}건)</b>
@@ -9978,8 +9981,15 @@ async function editMakeupNoAbsent(sid, makeupDate, editId){
   if(entry){
     let arr=getMakeupStudents(entry);
     const idx=arr.findIndex(x=>x.id===sid);
-    if(idx>=0){ arr[idx]={...arr[idx], period, teacher}; }
-    else { arr.push({id:sid, period, teacher}); }
+    if(absentDate){
+      // 결석일을 연결하는 경우: 정규 보강으로 태깅, 확정 플래그 해제
+      if(idx>=0){ arr[idx]={...arr[idx], period, teacher, makeupType:'regular', noAbsentConfirmed:false}; }
+      else { arr.push({id:sid, period, teacher, makeupType:'regular', noAbsentConfirmed:false}); }
+    } else {
+      // 결석 없이 보강을 확정하는 경우: 진단에서 더 이상 "결석 연결 안 됨"으로 잡히지 않도록 표시
+      if(idx>=0){ arr[idx]={...arr[idx], period, teacher, noAbsentConfirmed:true}; }
+      else { arr.push({id:sid, period, teacher, noAbsentConfirmed:true}); }
+    }
     entry.students=arr;
     delete entry.studentIds;
   }
