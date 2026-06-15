@@ -1459,9 +1459,15 @@ async function purgeOldLogs(){
 let _logSearchKeyword=''; // 학생 이름/선생님 검색
 
 // ── 보강 데이터 진단 ──
-function diagnoseMakeupData(){
+async function diagnoseMakeupData(){
   const container=document.getElementById('mkDiagContainer');
   if(!container) return;
+  // 특강 연결 여부 판단에 specialLessons가 필요한데, 특강 탭을 거치지 않으면
+  // 메모리에 로드되지 않아 "결석 연결 안 됨"으로 잘못 표시될 수 있음 → 진단 전 로드
+  if(!_loaded.specialLessons){
+    container.innerHTML=`<div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">데이터 불러오는 중...</div>`;
+    try{ await loadSpecialLessons(); }catch(e){ console.warn('특강 데이터 로드 실패:', e); }
+  }
   const studs=cfg.students||[];
   const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
   const days=(cfg.makeupDays||{})[monthKey]||[];
@@ -9772,9 +9778,9 @@ async function confAddStuToSat(sid, targetDate){
   let arr=getMakeupStudents(entry);
   const idx=arr.findIndex(x=>x.id===sid);
   if(idx>=0){
-    arr[idx]={id:sid, period, teacher, makeupType: arr[idx].makeupType||'regular'};
+    arr[idx]={id:sid, period, teacher, makeupType: arr[idx].makeupType||'regular', noAbsentConfirmed:true};
   } else {
-    arr.push({id:sid, period, teacher, makeupType:'regular'});
+    arr.push({id:sid, period, teacher, makeupType:'regular', noAbsentConfirmed:true});
   }
   entry.students=arr;
   delete entry.studentIds;
@@ -10124,8 +10130,8 @@ async function confAddSatStudent(){
     }
   }
 
-  // 보강일 학생 배열에 추가
-  arr.push({id:sid, period, teacher, makeupType:'regular'});
+  // 보강일 학생 배열에 추가 (결석일 미연결인 경우 noAbsentConfirmed로 표시)
+  arr.push({id:sid, period, teacher, makeupType:'regular', noAbsentConfirmed: !absentDate});
   entry.students=arr;
   delete entry.studentIds;
 
@@ -10308,7 +10314,7 @@ async function saveSatStuPopover(sid, oldMkDate, oldAbsentDate, specialKey){
   const idx=arr.findIndex(x=>x.id===sid);
   const newRec=isSpecial
     ? {id:sid, period, teacher, makeupType:'special', specialId:specialLessons[specialKey]?.specialId||''}
-    : {id:sid, period, teacher, makeupType:'regular'};
+    : {id:sid, period, teacher, makeupType:'regular', noAbsentConfirmed: !newAbsentDate};
   if(idx>=0){ arr[idx]=newRec; }
   else { arr.push(newRec); }
   newEntry.students=arr;
