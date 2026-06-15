@@ -1469,7 +1469,6 @@ function diagnoseMakeupData(){
 
   // 진단 항목들
   const issues={
-    oldFormat:[],       // studentIds 옛 배열 사용
     noPeriod:[],        // 교시 빈 값
     noTeacher:[],       // 담당 빈 값
     noAbsent:[],        // 보강 등록은 됐는데 결석 lesson에 makeupRequest 없음
@@ -1480,9 +1479,6 @@ function diagnoseMakeupData(){
   // 1) makeupDays 검사
   days.forEach(entry=>{
     const date=entry.date;
-    if(Array.isArray(entry.studentIds) && entry.studentIds.length){
-      issues.oldFormat.push({date, count:entry.studentIds.length, ids:entry.studentIds});
-    }
     const arr=getMakeupStudents(entry);
     const slotMap=new Map(); // 같은 날 + 같은 교시 + 같은 학생 중복 검출
     arr.forEach((es,idx)=>{
@@ -1585,7 +1581,6 @@ function diagnoseMakeupData(){
   // 화면 그리기
   let h='';
   const totalIssues=
-    issues.oldFormat.length +
     issues.noPeriod.length +
     issues.noTeacher.length +
     issues.noAbsent.length +
@@ -1600,20 +1595,6 @@ function diagnoseMakeupData(){
 
   h=`<div style="padding:8px 0">
     <div style="font-weight:700;margin-bottom:8px">${st.year}년 ${st.month}월 보강 데이터 진단 결과: 총 ${totalIssues}건</div>`;
-
-  // 옛 형식
-  if(issues.oldFormat.length){
-    h+=`<div style="margin-bottom:14px;padding:10px;background:#fff5e0;border:1px solid #e8c870;border-radius:var(--r)">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <b style="font-size:13px">⚠️ 옛 형식 데이터 (${issues.oldFormat.length}건)</b>
-        <button class="btn btn-sm btn-primary" onclick="fixOldFormat()">자동 변환</button>
-      </div>
-      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">옛 데이터(studentIds 배열)를 새 형식으로 자동 변환합니다.</div>`;
-    issues.oldFormat.forEach(o=>{
-      h+=`<div style="font-size:12px">📅 ${o.date}: ${o.count}명</div>`;
-    });
-    h+=`</div>`;
-  }
 
   // 중복
   if(issues.duplicate.length){
@@ -1649,7 +1630,7 @@ function diagnoseMakeupData(){
   if(issues.noAbsent.length){
     // 수정 폼용: 이번달 토요보강일 목록, 선생님 목록, 학생별 결석일 목록
     const satDates=days.map(e=>e.date).sort();
-    const teacherOpts=(cfg.teachers||[]).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    const teacherOptsFor=(cur)=>allTeachers().map(t=>`<option value="${esc(t)}" ${t===cur?'selected':''}>${esc(t)}</option>`).join('');
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fff5e0;border:1px solid #e8c870;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <b style="font-size:13px">🔗 결석 연결 안 됨 (${issues.noAbsent.length}건)</b>
@@ -1705,8 +1686,8 @@ function diagnoseMakeupData(){
             </label>
             <label style="font-size:11px">담당
               <select id="${editId}_teacher" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                <option value="">미지정</option>
-                ${teacherOpts}
+                <option value="" ${!o.teacher?'selected':''}>미지정</option>
+                ${teacherOptsFor(o.teacher)}
               </select>
             </label>
             <button class="btn btn-sm btn-primary" style="font-size:11px" onclick="editMakeupNoAbsent('${o.sid}','${o.date}','${editId}')">💾 저장</button>
@@ -1720,7 +1701,7 @@ function diagnoseMakeupData(){
   // 고아 보강 신청 (lesson에만 있음)
   if(issues.orphanRequest.length){
     const satDates2=days.map(e=>e.date).sort();
-    const teacherOpts2=(cfg.teachers||[]).map(t=>`<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('');
+    const teacherOpts2For=(cur)=>allTeachers().map(t=>`<option value="${esc(t)}" ${t===cur?'selected':''}>${esc(t)}</option>`).join('');
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fce6e6;border:1px solid #e8a8a8;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <b style="font-size:13px">🔍 미연결 보강 신청 (${issues.orphanRequest.length}건)</b>
@@ -1758,8 +1739,8 @@ function diagnoseMakeupData(){
             </label>
             <label style="font-size:11px">담당
               <select id="${editId2}_teacher" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                <option value="">미지정</option>
-                ${teacherOpts2}
+                <option value="" ${!o.teacher?'selected':''}>미지정</option>
+                ${teacherOpts2For(o.teacher)}
               </select>
             </label>
             <button class="btn btn-sm btn-primary" style="font-size:11px" onclick="reattachOrphan('${o.sid}','${o.absentDate}','${editId2}')">💾 저장/등록</button>
@@ -1792,29 +1773,6 @@ function diagnoseMakeupData(){
   </div></div>`;
 
   container.innerHTML=h;
-}
-
-// 옛 형식(studentIds) → 신 형식(students) 자동 변환
-async function fixOldFormat(){
-  if(!confirm('옛 형식 데이터를 새 형식으로 자동 변환하시겠어요?\n(studentIds 배열을 students 배열로 변환합니다)')) return;
-  const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
-  const days=(cfg.makeupDays||{})[monthKey]||[];
-  let changed=0;
-  days.forEach(entry=>{
-    if(Array.isArray(entry.studentIds) && entry.studentIds.length){
-      const newArr=getMakeupStudents(entry); // 자동 정규화
-      entry.students=newArr;
-      delete entry.studentIds;
-      changed++;
-    }
-  });
-  if(changed===0){ toast('변환할 데이터가 없습니다'); return; }
-  try{
-    await gasCall('saveConfig',{config:cfg});
-    toast(`${changed}개 보강일 데이터를 새 형식으로 변환했습니다`);
-    diagnoseMakeupData();
-    render();
-  }catch(e){ toast('변환 실패: '+e.message,true); }
 }
 
 // ── 보강 자동 복구: makeupDays 누락 학생 전부 복구 (정규 + 특강 분리 처리) ──
@@ -6522,52 +6480,9 @@ async function loadMakeupDaysFromCollection(){
     // 월별 정렬
     Object.keys(newMd).forEach(k => newMd[k].sort((a,b) => a.date.localeCompare(b.date)));
     cfg.makeupDays = newMd;
-
-    // 구버전 마이그레이션: config/main 또는 config/makeupDays에 데이터가 남아있으면 이전
-    await migrateLegacyMakeupDays();
   } catch(e){
     console.warn('makeup_days 로드 실패:', e);
     if(!cfg.makeupDays) cfg.makeupDays = {};
-  }
-}
-
-/* 구버전 cfg.makeupDays → makeup_days 컬렉션 자동 마이그레이션 */
-async function migrateLegacyMakeupDays(){
-  const {getDoc, setDoc} = fb();
-  // config/makeupDays 문서 확인 (이전 분리 방식)
-  let legacyMd = null;
-  try{
-    const oldSnap = await getDoc(makeupDayDocRef('__legacy__').parent.parent || configDocRef());
-    // config/main에 makeupDays가 있는지 확인
-    const mainSnap = await getDoc(configDocRef());
-    if(mainSnap.exists() && mainSnap.data().makeupDays){
-      legacyMd = mainSnap.data().makeupDays;
-    }
-  } catch(e){}
-
-  if(!legacyMd || typeof legacyMd !== 'object') return;
-  if(Array.isArray(legacyMd)) return; // 너무 구버전은 스킵
-
-  // makeup_days 컬렉션이 이미 비어있지 않으면 마이그레이션 스킵
-  const existingDates = Object.values(cfg.makeupDays).flat().map(e=>e.date);
-  if(existingDates.length > 0) return;
-
-  console.log('구버전 makeupDays 마이그레이션 시작...');
-  const writes = [];
-  Object.values(legacyMd).forEach(monthList => {
-    if(!Array.isArray(monthList)) return;
-    monthList.forEach(entry => {
-      if(!entry || !entry.date) return;
-      writes.push(setDoc(makeupDayDocRef(entry.date), {
-        date: entry.date,
-        students: entry.students || []
-      }));
-    });
-  });
-  if(writes.length > 0){
-    await Promise.all(writes);
-    await loadMakeupDaysFromCollection(); // 다시 로드
-    console.log(`마이그레이션 완료: ${writes.length}개 보강일`);
   }
 }
 
@@ -6590,7 +6505,7 @@ async function deleteMakeupDayDoc(dateStr){
 
 
 function getMakeupDays(){
-  // cfg.makeupDays = { 'YYYY-MM': [{ date, studentIds:[] }] }
+  // cfg.makeupDays = { 'YYYY-MM': [{ date, students:[{id,period,teacher}] }] }
   const key=`${st.year}-${String(st.month).padStart(2,'0')}`;
   return (cfg.makeupDays||{})[key]||[];
 }
@@ -6600,8 +6515,7 @@ function saveMakeupDays(days){
   cfg.makeupDays[key]=days;
 }
 
-/* 보강일 학생 목록 — 새 형식 [{id, period, teacher}]로 정규화
- 기존 형식 entry.studentIds=[...] 호환
+/* 보강일 학생 목록 — [{id, period, teacher}] 형식
  teacher가 비어있으면 학생의 평일/금 담당을 자동 fallback */
 function getMakeupStudents(entry){
   const studs=cfg.students||[];
@@ -6615,11 +6529,6 @@ function getMakeupStudents(entry){
   if(Array.isArray(entry.students) && entry.students.length){
     return entry.students
       .map(x=>{ const rec=typeof x==='string'?{id:x,period:'',teacher:''}:{id:x.id,period:x.period||'',teacher:x.teacher||''}; return fillTeacher(rec); })
-      .filter(rec=>validIds.has(rec.id)); // 삭제된 학생 제외
-  }
-  if(Array.isArray(entry.studentIds)){
-    return entry.studentIds
-      .map(id=>fillTeacher({id, period:'', teacher:''}))
       .filter(rec=>validIds.has(rec.id)); // 삭제된 학생 제외
   }
   return [];
@@ -7262,7 +7171,7 @@ function rSettings(){
     h+=`<div class="toolbar" style="margin-top:14px"><b>🧹 보강 데이터 정리</b>
       <button class="btn btn-sm" onclick="diagnoseMakeupData()">🔍 진단하기</button>
     </div>
-    <div class="notice">보강 데이터 무결성을 검사합니다. 옛 형식 데이터, 교시 미정, 결석 연결이 끊긴 항목 등을 표시하고 정리할 수 있어요.</div>
+    <div class="notice">보강 데이터 무결성을 검사합니다. 교시 미정, 결석 연결이 끊긴 항목 등을 표시하고 정리할 수 있어요.</div>
     <div class="card" id="mkDiagContainer">
       <div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">위 [🔍 진단하기] 버튼을 눌러 현재 상태를 확인하세요</div>
     </div>`;
