@@ -604,11 +604,13 @@ async function showApp(){
     else if(st.tab==='myclass') st.tab='today';
   }
 
-  // ① 필수 데이터만 먼저 로드 (설정 + 이달 수업)
-  setSyncState('syncing','설정 불러오는 중... (1/2)');
-  await loadConfig();
-  setSyncState('syncing','수업 기록 불러오는 중... (2/2)');
-  await loadMonthData();
+  // ① 필수 데이터 병렬 로드 (설정 + 이달 수업 + 보강데이터 동시 시작)
+  setSyncState('syncing','데이터 불러오는 중...');
+  await Promise.all([
+    loadConfig(),
+    loadMonthData(),
+    loadMakeupDaysFromCollection(),   // sessionStorage 캐시 → 빠름, 없으면 서버
+  ]);
   setSyncState('ok','준비 완료');
 
   // ② 화면 먼저 표시
@@ -642,8 +644,7 @@ async function loadConfig(){
     cfg=JSON.parse(JSON.stringify(DEFAULT_CONFIG));
   }
 
-  // makeup_days 컬렉션 로드 (학생별 분리 저장)
-  await loadMakeupDaysFromCollection();
+  // makeup_days 컬렉션 로드는 showApp()에서 lessons와 병렬로 처리됨
   // 모든 반의 sessions를 표준값으로 자동 보정 (원장만)
   // 기준: days 배열의 패턴으로 판단 (사용자 정의 반도 포함)
   //  - [1,3,5]=월수금 12회 / [2,4,5]=화목금 12회
@@ -1462,12 +1463,14 @@ let _logSearchKeyword=''; // 학생 이름/선생님 검색
 async function diagnoseMakeupData(){
   const container=document.getElementById('mkDiagContainer');
   if(!container) return;
-  // 특강 연결 여부 판단에 specialLessons가 필요한데, 특강 탭을 거치지 않으면
-  // 메모리에 로드되지 않아 "결석 연결 안 됨"으로 잘못 표시될 수 있음 → 진단 전 로드
-  if(!_loaded.specialLessons){
-    container.innerHTML=`<div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">데이터 불러오는 중...</div>`;
-    try{ await loadSpecialLessons(); }catch(e){ console.warn('특강 데이터 로드 실패:', e); }
-  }
+  // 진단은 항상 서버 최신 데이터 기준으로 실행 (캐시 무시)
+  container.innerHTML=`<div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">서버에서 최신 데이터 확인 중...</div>`;
+  try{
+    await Promise.all([
+      loadMakeupDaysFromCollection(true),   // forceRefresh: 서버 직접 읽기
+      _loaded.specialLessons ? Promise.resolve() : loadSpecialLessons(),
+    ]);
+  }catch(e){ console.warn('진단 데이터 로드 실패:', e); }
   const studs=cfg.students||[];
   const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
   const days=(cfg.makeupDays||{})[monthKey]||[];
@@ -6470,29 +6473,45 @@ async function schQuickSave(sid, field, val){
   const pop=document.getElementById('schPop'); if(pop) pop.remove();
 }
 
-/* makeup_days 컬렉션 전체 로드 → cfg.makeupDays 캐시 재구성 */
-async function loadMakeupDaysFromCollection(){
+/* makeup_days 컬렉션 전체 로드 → cfg.makeupDays 캐시 재구성
+   forceRefresh=true 이면 sessionStorage 캐시를 무시하고 서버에서 직접 읽음 */
+async function loadMakeupDaysFromCollection(forceRefresh=false){
+  const CACHE_KEY = 'makeup_days_cache';
   const {getDocs, collection} = fb();
+
+  // 캐시 우선 (새로고침 시 빠른 로드)
+  if(!forceRefresh){
+    try{
+      const cached = sessionStorage.getItem(CACHE_KEY);
+      if(cached){
+        cfg.makeupDays = JSON.parse(cached);
+        return;
+      }
+    }catch(e){}
+  }
+
+  // 서버에서 읽기
   try{
     const snap = await getDocs(collection(fbDb(), 'makeup_days'));
     const newMd = {};
     snap.forEach(doc => {
       const data = doc.data();
-      const dateStr = doc.id; // 문서 ID = YYYY-MM-DD
+      const dateStr = doc.id;
       const monthKey = dateStr.slice(0,7);
       if(!newMd[monthKey]) newMd[monthKey] = [];
       newMd[monthKey].push({ date: dateStr, students: data.students || [] });
     });
-    // 월별 정렬
     Object.keys(newMd).forEach(k => newMd[k].sort((a,b) => a.date.localeCompare(b.date)));
     cfg.makeupDays = newMd;
+    // sessionStorage에 캐시 저장
+    try{ sessionStorage.setItem(CACHE_KEY, JSON.stringify(newMd)); }catch(e){}
   } catch(e){
     console.warn('makeup_days 로드 실패:', e);
     if(!cfg.makeupDays) cfg.makeupDays = {};
   }
 }
 
-/* 단일 보강일 문서 저장 (학생 배열 변경 시 해당 날짜만 저장) */
+/* 보강일 문서 저장 후 세션 캐시 무효화 */
 async function saveMakeupDayDoc(dateStr){
   const {setDoc} = fb();
   const entry = getMkEntryByDate(dateStr);
@@ -6501,12 +6520,14 @@ async function saveMakeupDayDoc(dateStr){
     date: dateStr,
     students: entry.students || []
   });
+  try{ sessionStorage.removeItem('makeup_days_cache'); }catch(e){}
 }
 
-/* 보강일 문서 삭제 */
+/* 보강일 문서 삭제 후 세션 캐시 무효화 */
 async function deleteMakeupDayDoc(dateStr){
   const {deleteDoc} = fb();
   await deleteDoc(makeupDayDocRef(dateStr));
+  try{ sessionStorage.removeItem('makeup_days_cache'); }catch(e){}
 }
 
 
@@ -6534,12 +6555,7 @@ function getMakeupStudents(entry){
   };
   if(Array.isArray(entry.students) && entry.students.length){
     return entry.students
-      .map(x=>{
-        const rec = typeof x==='string'
-          ? {id:x, period:'', teacher:''}
-          : {...x, period:x.period||'', teacher:x.teacher||''};
-        return fillTeacher(rec);
-      })
+      .map(x=>{ const rec=typeof x==='string'?{id:x,period:'',teacher:''}:{id:x.id,period:x.period||'',teacher:x.teacher||''}; return fillTeacher(rec); })
       .filter(rec=>validIds.has(rec.id)); // 삭제된 학생 제외
   }
   return [];
@@ -7191,10 +7207,12 @@ function rSettings(){
   // ⑦ 데이터
   {
     const lastBackup = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
+    const curQNum = Math.ceil(st.month/3);
+    const qLabel = {1:'1~3월',2:'4~6월',3:'7~9월',4:'10~12월'}[curQNum];
     h+=`<div class="toolbar" style="margin-top:14px"><b>💾 데이터</b></div>
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-green" onclick="exportExcel()">📥 이달 전체 엑셀</button>
-      <button class="btn btn-primary" onclick="exportESReport()">📋 분기레포트 (${Math.ceil(st.month/3)}분기)</button>
+      <button class="btn btn-primary" onclick="exportESReport()">📋 분기 레포트 (${curQNum}분기 · ${qLabel})</button>
       <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
         <span style="font-size:11px;color:var(--text3)">마지막 백업: ${lastBackup}</span>
         <button class="btn btn-primary" onclick="backupAllData()">💾 전체 백업</button>
@@ -10720,18 +10738,15 @@ async function delCt(k){
 }
 
 
-/* ── ES 분기 레포트 엑셀 (학생 1인당 1시트, 시험/출결 + 전범위테스트 + 교재로드맵 모두 포함)
+/* ── ES 분기 레포트 엑셀 (학생별 시트 1개에 출결/시험/과제/전범위시험/로드맵 모두 포함)
    현재 보는 달(st.month)에 따라 분기 자동 결정:
-   1분기=1~3월 / 2분기=4~6월 / 3분기=7~9월 / 4분기=10~12월
-   - 시험점수/출결/전범위테스트: 해당 분기 3개월(month)에 진행된 내용만 포함
-   - 교재 로드맵: 분기 첫 달부터 12개월(다음해 포함 가능) 표시 ── */
+   1분기=1~3월 / 2분기=4~6월 / 3분기=7~9월 / 4분기=10~12월 ── */
 function exportESReport(){
   const wb = XLSX.utils.book_new();
   const y = st.year;
   const qMap = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]};
   const qNum = Math.ceil(st.month/3);
   const months = qMap[qNum];
-  const roadmapStartMonth = months[0];
 
   // 열 구조 (0-indexed):
   // 0~3: A~D  라벨 (4열 병합)
@@ -10749,8 +10764,8 @@ function exportESReport(){
   (cfg.students||[]).forEach(s => {
     const myTests = textbookTests[s.id]||{};
 
-    // 전범위 시험 결과 — 해당 분기(months)에 응시한 시험이 있는 교재만,
-    // 그 교재의 분기 내 마지막(최신) 응시 결과를 표시
+    // 전범위 시험 결과 — 이번 분기(months) 안에 응시한 시험만, 분기 내 마지막(최신) 결과 기준
+    const qMonthSet = new Set(months.map(m=>`${y}-${String(m).padStart(2,'0')}`));
     const testResultLines = [];
     (s.textbooks||[]).forEach(t => {
       const bk = t.tbId?(cfg.textbooks||[]).find(b=>b.id===t.tbId):null;
@@ -10758,20 +10773,17 @@ function exportESReport(){
       const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
       const attempts = myTests[tbId]||[];
       if(!attempts.length) return;
-      // 해당 분기(y년 months) 내 응시 기록만 추출
-      const qAttempts = attempts.filter(a=>{
-        if(!a.date) return false;
-        const ay = parseInt(a.date.substring(0,4));
-        const am = parseInt(a.date.substring(5,7));
-        return ay===y && months.includes(am);
-      });
-      if(!qAttempts.length) return;
-      // 분기 내 마지막(최신) attempt만 표시
-      const lastA = qAttempts[qAttempts.length-1];
+      // 이번 분기(해당 월) 안에 응시한 attempt만 추출
+      const inQuarter = attempts.filter(a=>a.date && qMonthSet.has(a.date.slice(0,7)));
+      if(!inQuarter.length) return;
+      // 분기 내 마지막(최신) attempt
+      const lastA = inQuarter[inQuarter.length-1];
       const scoreStr = lastA.manualComplete?'완료':(lastA.score!=null?lastA.score+'점':'');
       if(!scoreStr) return;
-      const suffix = lastA.attempt>1 ? `${lastA.attempt}차시험` : `시험`;
-      const passStr = lastA.passed ? '통과' : '불합격';
+      const suffix = lastA.attempt>1
+        ? `전범위 서술형 ${lastA.attempt}차 시험 결과`
+        : `전범위 서술형 시험 결과`;
+      const passStr = lastA.passed ? '합격' : '불합격';
       testResultLines.push(`${tbName} ${suffix} : ${scoreStr} ${passStr}`);
     });
 
@@ -10880,7 +10892,7 @@ function exportESReport(){
       rows.push(emptyRow());
     });
 
-    // 전범위 시험결과 (분기 내 마지막 차수)
+    // 전범위 시험결과 (이번 분기 내 마지막 차수)
     if(testResultLines.length){
       testResultRow = rows.length;
       const tr = emptyRow();
@@ -10889,93 +10901,17 @@ function exportESReport(){
       rows.push(tr);
       merges.push({s:{r:testResultRow,c:0}, e:{r:testResultRow,c:3}});
       merges.push({s:{r:testResultRow,c:DATA_START}, e:{r:testResultRow,c:AVG_COL-1}});
+      rows.push(emptyRow()); // 구분 빈 행
     }
 
-    // ── 교재 로드맵 (분기 첫 달부터 12개월, 월만 표시·년도 표시 안 함, 진행구간은 셀 병합) ──
-    const ROADMAP_NAME_END = 3;   // 0~3: 교재명 (4열 병합)
-    const ROADMAP_TYPE_COL = 4;   // 4: 구분(현행/선행)
-    const ROADMAP_M_START  = 5;   // 5~16: 1~12번째 달(분기 첫 달 기준)
-    rows.push(emptyRow()); // 구분용 빈 행
-
-    const rmHdrRow = emptyRow();
-    rmHdrRow[0] = '교재 로드맵';
-    for(let i=0;i<12;i++){
-      const mLabel = ((roadmapStartMonth - 1 + i) % 12) + 1;
-      rmHdrRow[ROADMAP_M_START + i] = mLabel + '월';
-    }
-    const rmHdrRowIdx = rows.length;
-    rows.push(rmHdrRow);
-    merges.push({s:{r:rmHdrRowIdx,c:0}, e:{r:rmHdrRowIdx,c:ROADMAP_NAME_END}});
-    merges.push({s:{r:rmHdrRowIdx,c:ROADMAP_TYPE_COL}, e:{r:rmHdrRowIdx,c:ROADMAP_TYPE_COL}});
-
-    const rmTypeRow = emptyRow();
-    rmTypeRow[0] = '교재명';
-    rmTypeRow[ROADMAP_TYPE_COL] = '구분';
-    const rmTypeRowIdx = rows.length;
-    rows.push(rmTypeRow);
-    merges.push({s:{r:rmTypeRowIdx,c:0}, e:{r:rmTypeRowIdx,c:ROADMAP_NAME_END}});
-
-    const myProgTests = textbookTests[s.id]||{};
-    const books = cfg.textbooks||[];
-    (s.textbooks||[]).forEach(t => {
-      const bk = t.tbId?(books.find(b=>b.id===t.tbId)||null):null;
-      const tbName = bk?bk.name:(t.name||'교재');
-      const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
-      const prog = textbookProgress[tbKey(s.id,tbId)]||{};
-      const startDate = prog.startDate||t.startDate||'';
-      const attempts = myProgTests[tbId]||[];
-      const passAttempt = attempts.find(a=>a.passed);
-      const passDate = passAttempt?passAttempt.date:'';
-      const rowType = t.rowType||'현행';
-
-      const rIdx = rows.length;
-      const row = emptyRow();
-      row[0] = tbName;
-      row[ROADMAP_TYPE_COL] = rowType;
-      rows.push(row);
-      merges.push({s:{r:rIdx,c:0}, e:{r:rIdx,c:ROADMAP_NAME_END}});
-
-      // 분기 첫 달(roadmapStartMonth)을 기준으로 12개월 슬롯의 (년,월) 계산
-      const slots = [];
-      for(let i=0;i<12;i++){
-        let mm = roadmapStartMonth + i;
-        let yy = y;
-        if(mm>12){ mm -= 12; yy += 1; }
-        slots.push({y:yy, m:mm});
-      }
-
-      // 시작일 ~ 합격일(없으면 끝까지) 구간을 활성으로 판정
-      const sY = startDate?parseInt(startDate.substring(0,4)):0;
-      const sM = startDate?parseInt(startDate.substring(5,7)):0;
-      const pY = passDate?parseInt(passDate.substring(0,4)):0;
-      const pM = passDate?parseInt(passDate.substring(5,7)):0;
-
-      const activeFlags = slots.map(slot=>{
-        if(!startDate) return false;
-        const afterStart = (slot.y>sY) || (slot.y===sY && slot.m>=sM);
-        let beforeEnd = true;
-        if(passDate){
-          beforeEnd = (slot.y<pY) || (slot.y===pY && slot.m<=pM);
-        }
-        return afterStart && beforeEnd;
-      });
-
-      // 연속된 활성 구간을 셀 병합으로 표시 (구간 내부에 . 등 표현 없이 구분(rowType)만 표시)
-      let i=0;
-      while(i<12){
-        if(activeFlags[i]){
-          let j=i;
-          while(j+1<12 && activeFlags[j+1]) j++;
-          const c0 = ROADMAP_M_START + i;
-          const c1 = ROADMAP_M_START + j;
-          row[c0] = rowType;
-          if(c1>c0) merges.push({s:{r:rIdx,c:c0}, e:{r:rIdx,c:c1}});
-          i = j+1;
-        } else {
-          i++;
-        }
-      }
-    });
+    // ── 교재 로드맵 (분기 첫 월 기준 12개월 간트차트, 같은 시트에 추가) ──
+    const rm = _buildQuarterRoadmapRows(s.id, s, y, months[0]);
+    const rmStartRow = rows.length;
+    rm.rows.forEach(r=>rows.push(r));
+    rm.merges.forEach(mg=>merges.push({
+      s:{r:mg.s.r+rmStartRow, c:mg.s.c},
+      e:{r:mg.e.r+rmStartRow, c:mg.e.c}
+    }));
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
     Object.keys(ws).forEach(addr=>{
