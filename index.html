@@ -318,7 +318,7 @@ select,input[type=text],input[type=date],input[type=number]{padding:5px 9px;font
 <!-- Firebase SDK (Firestore only — Storage 미사용) -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js';
-import { initializeAppCheck, ReCaptchaV3Provider } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app-check.js';
+import { initializeAppCheck, ReCaptchaV3Provider, getToken } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app-check.js';
 import { getFirestore, doc, getDoc, setDoc, collection,
          query, where, orderBy, limit, getDocs, addDoc, deleteDoc, serverTimestamp }
   from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js';
@@ -335,7 +335,6 @@ const firebaseConfig = {
   appId: "1:914321018838:web:452cd8d68446b1c6ec1e77"
 };
 
-
 const app = initializeApp(firebaseConfig);
 
 // App Check 초기화 (reCAPTCHA v3)
@@ -343,12 +342,45 @@ const appCheck = initializeAppCheck(app, {
   provider: new ReCaptchaV3Provider('6LetIP0sAAAAAOLYkVNNXK6RP07CnsN8qCT62uoQ'),
   isTokenAutoRefreshEnabled: true
 });
-const db  = getFirestore(app);
+const db = getFirestore(app);
 
 window._fb = { db, doc, getDoc, setDoc, collection,
                query, where, orderBy, limit, getDocs, addDoc, deleteDoc, serverTimestamp };
-window._fbStorage = null; // Storage 미사용 (Spark 플랜 무료 유지)
-window._fbReady = true;
+window._fbStorage = null;
+
+// App Check 토큰이 실제로 발급될 때까지 대기 후 _fbReady 신호
+// 토큰 없이 Firestore 요청하면 block되므로 반드시 준비 후 진행
+(async function waitForAppCheck(){
+  const MAX_WAIT = 15000; // 최대 15초
+  const RETRY_INTERVAL = 1000;
+  let elapsed = 0;
+  while(elapsed < MAX_WAIT){
+    try{
+      await getToken(appCheck, /* forceRefresh= */ false);
+      window._fbReady = true;
+      return;
+    } catch(e){
+      // 토큰 발급 실패 → 1초 후 재시도
+      await new Promise(r => setTimeout(r, RETRY_INTERVAL));
+      elapsed += RETRY_INTERVAL;
+    }
+  }
+  // 15초 내에 토큰 발급 실패 → 안내 표시
+  window._fbReady = false;
+  window._fbCheckFailed = true;
+  const errEl = document.getElementById('loginErr');
+  if(errEl) errEl.textContent = '네트워크 연결을 확인하고 새로고침 해주세요.';
+  // 앱 화면에서도 안내
+  const main = document.getElementById('main');
+  if(main && document.getElementById('app-screen')?.style.display !== 'none'){
+    main.innerHTML = `<div style="text-align:center;padding:40px;color:#c0392b">
+      <div style="font-size:32px;margin-bottom:12px">⚠️</div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:8px">네트워크 연결이 불안정합니다</div>
+      <div style="font-size:13px;color:#666;margin-bottom:20px">인터넷 연결을 확인한 후 새로고침 해주세요.</div>
+      <button onclick="location.reload()" style="padding:10px 24px;background:#1558a8;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;font-family:inherit">🔄 새로고침</button>
+    </div>`;
+  }
+})();
 </script>
 
 <!-- ══ LOGIN ══ -->
@@ -527,10 +559,10 @@ async function doLogin(){
   const username=document.getElementById('loginUser').value.trim();
   if(!username){ document.getElementById('loginErr').textContent='아이디를 입력해주세요'; return; }
   document.getElementById('loginErr').textContent='연결 중...';
-  // Firebase 모듈 준비 대기 (최대 5초)
+  // App Check 토큰 준비 대기 (최대 15초)
   let waited=0;
-  while(!window._fbReady&&waited<5000){ await new Promise(r=>setTimeout(r,100)); waited+=100; }
-  if(!window._fbReady){ document.getElementById('loginErr').textContent='Firebase 연결 실패. 새로고침 해주세요.'; return; }
+  while(!window._fbReady && !window._fbCheckFailed && waited<15000){ await new Promise(r=>setTimeout(r,200)); waited+=200; }
+  if(!window._fbReady){ document.getElementById('loginErr').textContent='네트워크 연결을 확인하고 새로고침 해주세요.'; return; }
 
   // USERS에 등록된 사용자 (원장)
   let u=USERS[username];
@@ -11244,10 +11276,10 @@ function toast(msg,isErr=false){
   if(!saved) return;
   try{
     session=JSON.parse(saved);
-    // Firebase 준비 대기
+    // App Check 토큰 준비 대기 (최대 15초)
     let waited=0;
-    while(!window._fbReady&&waited<5000){ await new Promise(r=>setTimeout(r,100)); waited+=100; }
-    if(!window._fbReady){ return; }
+    while(!window._fbReady && !window._fbCheckFailed && waited<15000){ await new Promise(r=>setTimeout(r,200)); waited+=200; }
+    if(!window._fbReady){ return; } // waitForAppCheck에서 이미 안내 표시
     // 세션 검증: USERS(원장) 또는 cfg.teachers(선생님)에 있는지
     const isPrincipal=Object.values(USERS).find(u=>u.username===session.username);
     if(!isPrincipal){
