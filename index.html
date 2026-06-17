@@ -10829,7 +10829,7 @@ function exportESReport(){
     let testResultRow = -1;
 
     months.forEach(m => {
-      const dates = sessionDatesForMonth(s.classType, y, m);
+      const dates = sessionsForMonthWithCycle(s.classType, y, m).map(s=>s.dateStr);
 
       // ── 헤더행: 월(A~D 병합), 1차~12차(각 2열 병합), 평균 ──
       const hRow = emptyRow();
