@@ -136,19 +136,22 @@ window.handleFile = async function(input){
     const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:'', raw:true});
     if(rows.length < 5) return;
 
-    const row2 = rows[1]; // 회차 헤더
-    const row3 = rows[2]; // 날짜 (공유)
-    const row4 = rows[3]; // 서브헤더
+    // 병합 셀 처리: ws 객체에서 직접 셀 값 읽기
+    const getCellVal = (r, c) => {
+      const addr = XLSX.utils.encode_cell({r, c});
+      const cell = ws[addr];
+      return cell ? cell.v : '';
+    };
 
-    // 2행에서 회차 시작 컬럼 파악
+    // 2행에서 회차 시작 컬럼 파악 (병합셀 직접 읽기)
     const sessions = [];
-    for(let ci=FIXED; ci<row2.length; ci++){
-      const v = String(row2[ci]||'').trim();
+    const wsRange = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+    for(let ci=FIXED; ci<=wsRange.e.c; ci++){
+      const v = String(getCellVal(1, ci)||'').trim(); // row index 1 = 2행
       if(v.includes('회차')){
         const n = parseInt(v);
         if(!isNaN(n)){
-          // 3행에서 날짜 읽기
-          const dateVal = row3[ci];
+          const dateVal = getCellVal(2, ci); // row index 2 = 3행
           const dateStr = parseDate(dateVal);
           sessions.push({sess:n, startCol:ci, dateStr});
         }
