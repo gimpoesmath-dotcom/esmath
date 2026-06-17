@@ -104,7 +104,7 @@ window.handleFile = async function(input){
 
   let students = [];
   try{
-    const snap = await getDoc(doc(db,'config','main'));
+    const snap = await getDoc(doc(db,'config','students'));
     students = snap.exists() ? (snap.data().students||[]) : [];
     log(`✅ 학생 ${students.length}명 로드 완료`, 'ok');
   }catch(e){
