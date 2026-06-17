@@ -1,4 +1,4 @@
-<!-- v20260611_fix_unit_hide_condition -->
+<!-- v20260617_fix_quarterly_report_cycle -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -440,7 +440,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260611_fix_unit_hide_condition';
+const APP_VERSION = 'v20260617_fix_quarterly_report_cycle';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -10776,14 +10776,18 @@ async function delCt(k){
 
 
 /* ── ES 분기 레포트 엑셀 (학생별 시트 1개에 출결/시험/과제/전범위시험/로드맵 모두 포함)
-   현재 보는 달(st.month)에 따라 분기 자동 결정:
-   1분기=1~3월 / 2분기=4~6월 / 3분기=7~9월 / 4분기=10~12월 ── */
+   현재 보는 달(st.month)에 해당하는 사이클 기준으로 앞뒤 포함 3개 사이클을 레포트로 출력.
+   사이클 소속(ownerMonth)이 기준이며, 7월 1일이 6월 사이클에 포함되면 6월 사이클로 인식.
+   출결/점수 미입력 시 공백으로 표시. ── */
 function exportESReport(){
   const wb = XLSX.utils.book_new();
   const y = st.year;
-  const qMap = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]};
   const qNum = Math.ceil(st.month/3);
-  const months = qMap[qNum];
+  // 현재 달 기준 달력 분기 (버튼 라벨용으로만 사용)
+  const months = [1,2,3].map(i => {
+    const base = (qNum-1)*3 + i;
+    return base;
+  });
 
   // 열 구조 (0-indexed):
   // 0~3: A~D  라벨 (4열 병합)
@@ -10801,8 +10805,23 @@ function exportESReport(){
   (cfg.students||[]).forEach(s => {
     const myTests = textbookTests[s.id]||{};
 
-    // 전범위 시험 결과 — 이번 분기(months) 안에 응시한 시험만, 분기 내 마지막(최신) 결과 기준
-    const qMonthSet = new Set(months.map(m=>`${y}-${String(m).padStart(2,'0')}`));
+    // ── 사이클 3개 결정: 현재 달(st.month)의 ownerMonth와 일치하는 사이클 기준 ──
+    // 사이클 기준이므로 7월 1일이 6월 사이클에 포함되면 6월 사이클로 인식됨
+    const allCycles = _getAllCycles(s.classType);
+    const curMonthStr = `${y}-${String(st.month).padStart(2,'0')}`;
+    const curCycleIdx = allCycles.findIndex(c => c.ownerMonth === curMonthStr);
+    // 현재 달 사이클을 중심으로 분기 기준 첫 번째 사이클 계산
+    // 분기 내 첫 사이클 인덱스: 현재 달이 속한 분기(qNum)의 첫 달 ownerMonth와 일치하는 사이클
+    const qFirstMonthStr = `${y}-${String((qNum-1)*3+1).padStart(2,'0')}`;
+    const qFirstCycleIdx = allCycles.findIndex(c => c.ownerMonth === qFirstMonthStr);
+    // 3개 사이클 선택: 분기 첫 사이클부터 3개, 없으면 현재 기준 앞뒤
+    let cycleStartIdx = qFirstCycleIdx >= 0 ? qFirstCycleIdx : Math.max(0, curCycleIdx);
+    const threeCycles = allCycles.slice(cycleStartIdx, cycleStartIdx + 3);
+
+    // 3개 사이클에 포함된 모든 날짜로 전범위 시험 결과 필터링
+    const qDateSet = new Set(threeCycles.flatMap(c => c.dates));
+
+    // 전범위 시험 결과 — 3개 사이클 날짜 안에 응시한 시험만, 마지막(최신) 결과 기준
     const testResultLines = [];
     (s.textbooks||[]).forEach(t => {
       const bk = t.tbId?(cfg.textbooks||[]).find(b=>b.id===t.tbId):null;
@@ -10810,10 +10829,10 @@ function exportESReport(){
       const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
       const attempts = myTests[tbId]||[];
       if(!attempts.length) return;
-      // 이번 분기(해당 월) 안에 응시한 attempt만 추출
-      const inQuarter = attempts.filter(a=>a.date && qMonthSet.has(a.date.slice(0,7)));
+      // 3개 사이클 날짜 안에 응시한 attempt만 추출
+      const inQuarter = attempts.filter(a=>a.date && qDateSet.has(a.date));
       if(!inQuarter.length) return;
-      // 분기 내 마지막(최신) attempt
+      // 마지막(최신) attempt
       const lastA = inQuarter[inQuarter.length-1];
       const scoreStr = lastA.manualComplete?'완료':(lastA.score!=null?lastA.score+'점':'');
       if(!scoreStr) return;
@@ -10828,12 +10847,20 @@ function exportESReport(){
     const merges = [];
     let testResultRow = -1;
 
-    months.forEach(m => {
-      const dates = sessionsForMonthWithCycle(s.classType, y, m).map(s=>s.dateStr);
+    // 3개 사이클 각각을 순회 (달력 월 기준이 아닌 사이클 기준)
+    threeCycles.forEach(cycle => {
+      const dates = cycle.dates; // 사이클의 실제 날짜 배열 (ownerMonth 기준)
+      const ownerM = cycle.ownerMonth; // 'YYYY-MM'
+      const mLabel = parseInt(ownerM.slice(5,7)); // 표시용 월 숫자
+      // 날짜 범위 표시: 사이클 첫날~끝날 월이 다르면 'X월~Y월', 같으면 'X월'
+      const firstM = dates.length ? parseInt(dates[0].slice(5,7)) : mLabel;
+      const lastM  = dates.length ? parseInt(dates[dates.length-1].slice(5,7)) : mLabel;
+      const mDisplay = firstM !== lastM ? `${firstM}월~${lastM}월(${mLabel}월 사이클)` : `${mLabel}월`;
 
-      // ── 헤더행: 월(A~D 병합), 1차~12차(각 2열 병합), 평균 ──
+      // ── 헤더행: 사이클 표시(A~D 병합), 1차~N차(각 2열 병합), 평균 ──
       const hRow = emptyRow();
-      hRow[0] = String(m)+'월';
+      hRow[0] = mDisplay;
+      const sessionCount = dates.length; // 실제 사이클의 회차 수 (8 or 12)
       for(let i=0;i<MAX_SESS;i++){
         hRow[DATA_START + i*DATA_STEP] = `${i+1}차`;
       }
@@ -10848,14 +10875,25 @@ function exportESReport(){
       merges.push({s:{r:hRowIdx,c:AVG_COL}, e:{r:hRowIdx,c:AVG_COL+3}});
 
       // ── 출결행 ──
+      // 미입력(수업 기록 없음)은 공백, 출석='O', 결석='X', 지각='△'
       const attRow = emptyRow();
       attRow[0] = '출결';
       for(let i=0;i<MAX_SESS;i++){
         const d = dates[i];
         if(d){
-          const l = (mdb.lessons||{})[s.id+'_'+d]||{};
-          attRow[DATA_START + i*DATA_STEP] = l.attendance==='absent'?'X':'O';
+          const l = (mdb.lessons||{})[s.id+'_'+d];
+          if(!l || !l.attendance){
+            // 수업 기록 없거나 출결 미입력 → 공백
+            attRow[DATA_START + i*DATA_STEP] = '';
+          } else if(l.attendance==='absent'){
+            attRow[DATA_START + i*DATA_STEP] = 'X';
+          } else if(l.attendance==='late'){
+            attRow[DATA_START + i*DATA_STEP] = '△';
+          } else {
+            attRow[DATA_START + i*DATA_STEP] = 'O';
+          }
         }
+        // d가 없으면(회차 없음) 공백 유지
       }
       const attRowIdx = rows.length;
       rows.push(attRow);
@@ -10867,22 +10905,25 @@ function exportESReport(){
       merges.push({s:{r:attRowIdx,c:AVG_COL}, e:{r:attRowIdx,c:AVG_COL+3}});
 
       // ── 복습테스트행 ──
+      // 결석='X', 미입력(점수 없음)=공백, 입력된 점수=값
       const testRow = emptyRow();
       testRow[0] = '복습 테스트';
       const testScores = [];
       for(let i=0;i<MAX_SESS;i++){
         const d = dates[i];
         if(d){
-          const l = (mdb.lessons||{})[s.id+'_'+d]||{};
-          if(l.attendance==='absent'){ testRow[DATA_START+i*DATA_STEP]='X'; continue; }
+          const l = (mdb.lessons||{})[s.id+'_'+d];
+          if(l && l.attendance==='absent'){ testRow[DATA_START+i*DATA_STEP]='X'; continue; }
+          if(!l){ testRow[DATA_START+i*DATA_STEP]=''; continue; } // 기록 없음 → 공백
           const ts = l.testScore;
-          if(!ts && ts!==0){ testRow[DATA_START+i*DATA_STEP]='X'; continue; }
+          if(ts===undefined || ts===null || ts===''){ testRow[DATA_START+i*DATA_STEP]=''; continue; } // 미입력 → 공백
           const tsStr = String(ts);
           const hasStar = tsStr.includes('*') || l.testIsFullRange;
           const val = hasStar ? (tsStr.includes('*')?tsStr:tsStr+'*') : tsStr;
           testRow[DATA_START+i*DATA_STEP] = val;
           if(!hasStar){ const n=parseFloat(tsStr); if(!isNaN(n)) testScores.push(n); }
         }
+        // d 없으면 공백 유지
       }
       const testRowIdx = rows.length;
       const testAvg = testScores.length
@@ -10898,19 +10939,22 @@ function exportESReport(){
       merges.push({s:{r:testRowIdx,c:AVG_COL}, e:{r:testRowIdx,c:AVG_COL+3}});
 
       // ── 과제행 ──
+      // 결석='X', 미입력=공백, 입력된 점수=값
       const hwRow = emptyRow();
       hwRow[0] = '과제';
       const hwScores = [];
       for(let i=0;i<MAX_SESS;i++){
         const d = dates[i];
         if(d){
-          const l = (mdb.lessons||{})[s.id+'_'+d]||{};
-          if(l.attendance==='absent'){ hwRow[DATA_START+i*DATA_STEP]='X'; continue; }
+          const l = (mdb.lessons||{})[s.id+'_'+d];
+          if(l && l.attendance==='absent'){ hwRow[DATA_START+i*DATA_STEP]='X'; continue; }
+          if(!l){ hwRow[DATA_START+i*DATA_STEP]=''; continue; } // 기록 없음 → 공백
           const hw = l.homeworkScore;
-          if(!hw && hw!==0){ continue; }
+          if(hw===undefined || hw===null || hw===''){ hwRow[DATA_START+i*DATA_STEP]=''; continue; } // 미입력 → 공백
           hwRow[DATA_START+i*DATA_STEP] = String(hw);
           const n=parseFloat(hw); if(!isNaN(n)) hwScores.push(n);
         }
+        // d 없으면 공백 유지
       }
       const hwRowIdx = rows.length;
       const hwAvg = hwScores.length
@@ -10925,7 +10969,7 @@ function exportESReport(){
       }
       merges.push({s:{r:hwRowIdx,c:AVG_COL}, e:{r:hwRowIdx,c:AVG_COL+3}});
 
-      // 월 구분 빈 행
+      // 사이클 구분 빈 행
       rows.push(emptyRow());
     });
 
@@ -10945,7 +10989,10 @@ function exportESReport(){
     const ROADMAP_NAME_END = 3;   // 0~3: 교재명 (4열 병합)
     const ROADMAP_TYPE_COL = 4;   // 4: 구분(현행/선행)
     const ROADMAP_M_START  = 5;   // 5~16: 1~12번째 달(분기 첫 달 기준)
-    const roadmapStartMonth = months[0];
+    // 로드맵 시작월: 3개 사이클 중 첫 사이클의 ownerMonth 기준
+    const roadmapStartMonth = threeCycles.length > 0
+      ? parseInt(threeCycles[0].ownerMonth.slice(5,7))
+      : months[0];
     rows.push(emptyRow()); // 구분용 빈 행
 
     const rmHdrRow = emptyRow();
