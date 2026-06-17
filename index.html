@@ -10887,8 +10887,6 @@ function exportESReport(){
             attRow[DATA_START + i*DATA_STEP] = '';
           } else if(l.attendance==='absent'){
             attRow[DATA_START + i*DATA_STEP] = 'X';
-          } else if(l.attendance==='late'){
-            attRow[DATA_START + i*DATA_STEP] = '△';
           } else {
             attRow[DATA_START + i*DATA_STEP] = 'O';
           }
@@ -10914,9 +10912,9 @@ function exportESReport(){
         if(d){
           const l = (mdb.lessons||{})[s.id+'_'+d];
           if(l && l.attendance==='absent'){ testRow[DATA_START+i*DATA_STEP]='X'; continue; }
-          if(!l){ testRow[DATA_START+i*DATA_STEP]=''; continue; } // 기록 없음 → 공백
+          if(!l){ testRow[DATA_START+i*DATA_STEP]='X'; continue; } // 기록 없음 → X
           const ts = l.testScore;
-          if(ts===undefined || ts===null || ts===''){ testRow[DATA_START+i*DATA_STEP]=''; continue; } // 미입력 → 공백
+          if(ts===undefined || ts===null || ts===''){ testRow[DATA_START+i*DATA_STEP]='X'; continue; } // 미입력 → X
           const tsStr = String(ts);
           const hasStar = tsStr.includes('*') || l.testIsFullRange;
           const val = hasStar ? (tsStr.includes('*')?tsStr:tsStr+'*') : tsStr;
@@ -10948,9 +10946,9 @@ function exportESReport(){
         if(d){
           const l = (mdb.lessons||{})[s.id+'_'+d];
           if(l && l.attendance==='absent'){ hwRow[DATA_START+i*DATA_STEP]='X'; continue; }
-          if(!l){ hwRow[DATA_START+i*DATA_STEP]=''; continue; } // 기록 없음 → 공백
+          if(!l){ hwRow[DATA_START+i*DATA_STEP]='X'; continue; } // 기록 없음 → X
           const hw = l.homeworkScore;
-          if(hw===undefined || hw===null || hw===''){ hwRow[DATA_START+i*DATA_STEP]=''; continue; } // 미입력 → 공백
+          if(hw===undefined || hw===null || hw===''){ hwRow[DATA_START+i*DATA_STEP]='X'; continue; } // 미입력 → X
           hwRow[DATA_START+i*DATA_STEP] = String(hw);
           const n=parseFloat(hw); if(!isNaN(n)) hwScores.push(n);
         }
