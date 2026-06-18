@@ -1,4 +1,4 @@
-<!-- v20260618_excel-->
+<!-- v20260618_avg_ac-af -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -4553,9 +4553,8 @@ function rPoints(){
     h += `</div>`;
     h += `</div>`; // 학교 성적 포인트 wrapper 닫기
 
-    <!-- 이달 수상자 현황 — 전체 표시 (인쇄용) -->
-    <div style="margin:16px 0 8px;font-size:13px;font-weight:700;color:var(--text)">🏆 ${settleYl} 수상 현황</div>
-    `;
+    // 이달 수상자 현황 — 전체 표시 (인쇄용)
+    h += `<div style="margin:16px 0 8px;font-size:13px;font-weight:700;color:var(--text)">🏆 ${settleYl} 수상 현황</div>`;
 
     // 수상 현황 계산
     const awardDefs2 = [
