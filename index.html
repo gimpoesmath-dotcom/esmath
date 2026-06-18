@@ -10855,7 +10855,13 @@ function exportESReport(){
     const threeCycles = allCycles.slice(cycleStartIdx, cycleStartIdx + 3);
     const qDateSet = new Set(threeCycles.flatMap(c => c.dates));
 
-    // ── 전범위 시험 결과 ──
+    // ── 분기 날짜 범위 계산 (사이클 첫날 ~ 마지막날, 토요보강 포함) ──
+    const allCycleDates = threeCycles.flatMap(c => c.dates).sort();
+    const qStartDate = allCycleDates.length ? allCycleDates[0] : `${y}-${String(months[0]).padStart(2,'0')}-01`;
+    const qEndDate   = allCycleDates.length ? allCycleDates[allCycleDates.length-1]
+                                            : `${y}-${String(months[2]).padStart(2,'0')}-31`;
+
+    // ── 전범위 시험 결과 — 분기 날짜 범위 안에 응시한 모든 시험 (토요보강 포함) ──
     const testResultLines = [];
     (s.textbooks||[]).forEach(t => {
       const bk = t.tbId?(cfg.textbooks||[]).find(b=>b.id===t.tbId):null;
@@ -10863,7 +10869,8 @@ function exportESReport(){
       const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
       const attempts = myTests[tbId]||[];
       if(!attempts.length) return;
-      const inQ = attempts.filter(a=>a.date && qDateSet.has(a.date));
+      // 날짜 범위로 필터 (사이클 외 토요보강도 포함)
+      const inQ = attempts.filter(a=>a.date && a.date >= qStartDate && a.date <= qEndDate);
       if(!inQ.length) return;
       const lastA = inQ[inQ.length-1];
       const scoreStr = lastA.manualComplete?'완료':(lastA.score!=null?lastA.score+'점':'');
