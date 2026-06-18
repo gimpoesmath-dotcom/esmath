@@ -4553,61 +4553,60 @@ function rPoints(){
     h += `</div>`;
     h += `</div>`; // 학교 성적 포인트 wrapper 닫기
 
-    // 이달 수상자 현황 — 전체 표시 (인쇄용)
-    h += `<div style="margin:16px 0 8px;font-size:13px;font-weight:700;color:var(--text)">🏆 ${settleYl} 수상 현황</div>`;
+    // 이달 수상자 현황 — 새 탭으로 열기 버튼
+    h += `<div style="margin:20px 0 6px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <span style="font-size:13px;font-weight:700;color:var(--text)">🏆 ${settleYl} 수상 현황</span>
+      <button class="btn btn-sm btn-primary" onclick="openAwardSummaryTab(${settleYear},${settleMonth})">📋 전체 수상현황 탭으로 열기</button>
+    </div>`;
 
-    // 수상 현황 계산
+    // 수상 현황 계산 — 학원생활 + 학교생활 + 성장상 모두 포함
     const awardDefs2 = [
-      {id:'perfect', label:'🏅 PERFECT 출석상', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
-      {id:'steady',  label:'⭐ STEADY 출석상',  color:'#1558a8', bg:'#e5effc', border:'#90b8e8'},
-      {id:'daily',   label:'📊 DAILY 챌린지상', color:'#7a4e00', bg:'#fdf0d8', border:'#e0c060'},
-      {id:'master',  label:'👑 MASTER 인증상',  color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'},
+      // 학원생활
+      {id:'PERFECT',       label:'🏅 PERFECT 출석상',         color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
+      {id:'STEADY',        label:'⭐ STEADY 출석상',           color:'#1558a8', bg:'#e5effc', border:'#90b8e8'},
+      {id:'DAILY',         label:'📊 DAILY 챌린지상',          color:'#7a4e00', bg:'#fdf0d8', border:'#e0c060'},
+      {id:'MASTER_HIGH',   label:'👑 MASTER 인증상 High',      color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'},
+      {id:'MASTER_LOW',    label:'👑 MASTER 인증상 Low',       color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'},
+      // 학교생활
+      {id:'TOP_HONOR',       label:'🏆 Top Honor (100점)',       color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'},
+      {id:'HIGH_HONOR_MID',  label:'⭐ High Honor 중등 (90점↑)', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'},
+      {id:'HIGH_HONOR_HIGH', label:'⭐ High Honor 고등 (90점↑)', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'},
+      // 성장상
+      {id:'GROWTH_30', label:'📈 Growth +30', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
+      {id:'GROWTH_20', label:'📈 Growth +20', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
+      {id:'GROWTH_10', label:'📈 Growth +10', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
     ];
-    const awardCount = {perfect:0, steady:0, daily:0, master:0};
-    const awardNames = {perfect:[], steady:[], daily:[], master:[]};
+    const awardWinners = {};
+    awardDefs2.forEach(d=>{ awardWinners[d.id]=[]; });
 
     filtered.forEach(s=>{
-      const hist = pointsData[s.id]?.history||[];
-      const hasPerf  = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='PERFECT');
-      const hasSteady= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='STEADY');
-      const hasDaily = hist.some(h=>h.year===settleYear&&h.month===settleMonth&&h.type==='DAILY');
-      const hasMaster= hist.some(h=>h.year===settleYear&&h.month===settleMonth&&(h.type==='MASTER_HIGH'||h.type==='MASTER_LOW'));
-      if(hasPerf)  { awardCount.perfect++; awardNames.perfect.push(s.name); }
-      if(hasSteady){ awardCount.steady++;  awardNames.steady.push(s.name);  }
-      if(hasDaily) { awardCount.daily++;   awardNames.daily.push(s.name);   }
-      if(hasMaster){ awardCount.master++;  awardNames.master.push(s.name);  }
+      const hist = (pointsData[s.id]?.history||[]).filter(h=>h.year===settleYear&&h.month===settleMonth);
+      awardDefs2.forEach(def=>{
+        const won = hist.some(h=>
+          h.type===def.id ||
+          (h.settleId && h.settleId.startsWith(def.id+'__'))
+        );
+        if(won) awardWinners[def.id].push(s);
+      });
     });
 
-    // 수상 현황 카드 — 항상 전체 표시
-    h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">`;
-    awardDefs2.forEach(def=>{
-      const cnt   = awardCount[def.id];
-      const names = awardNames[def.id];
-      h += `<div style="padding:10px 12px;border-radius:var(--rl);border:1px solid ${def.border};background:${def.bg}">
-        <div style="font-size:12px;font-weight:700;color:${def.color};margin-bottom:4px">${def.label}</div>
-        <div style="font-size:20px;font-weight:800;color:${def.color};margin-bottom:4px">${cnt}명</div>
-        ${names.length?`<div style="font-size:10px;color:${def.color};opacity:.8">${names.map(n=>esc(n)).join(', ')}</div>`:'<div style="font-size:10px;color:var(--text3)">해당 없음</div>'}
-      </div>`;
-    });
-    h += `</div>`;
-
-    // 수상별 상세 명단 (인쇄용 탭처럼 전체 표시)
-    awardDefs2.forEach(def=>{
-      const list = awardNames[def.id];
-      if(!list.length) return;
-      h += `<div style="margin-bottom:14px">
-        <div style="font-size:12px;font-weight:700;color:${def.color};padding:8px 12px;background:${def.bg};border:1px solid ${def.border};border-radius:var(--rl) var(--rl) 0 0">${def.label} 수상자 (${list.length}명)</div>
-        <div style="border:1px solid ${def.border};border-top:none;border-radius:0 0 var(--rl) var(--rl);overflow:hidden">`;
-      filtered.filter(s=>awardNames[def.id].includes(s.name)).forEach((s,i)=>{
-        const ct=CT()[s.classType];
-        h += `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:${i%2===0?'#fff':'#fafaf9'}">
-          <b style="font-size:13px;min-width:60px">${esc(s.name)}</b>
-          ${s.grade?gradeBadge(s.grade):''}
-          ${ct?`<span class="badge ${ct.badge||'b-mwf'}" style="font-size:10px">${ct.label}</span>`:''}
+    // 요약 카드 (수상자 있는 것만)
+    const hasAny2 = awardDefs2.some(d=>awardWinners[d.id].length>0);
+    if(!hasAny2){
+      h += `<div style="padding:14px;text-align:center;color:var(--text3);font-size:12px;border:1px solid var(--border);border-radius:var(--r)">이번 달 수상자가 없습니다</div>`;
+    } else {
+      h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px;margin-bottom:14px">`;
+      awardDefs2.forEach(def=>{
+        const list = awardWinners[def.id];
+        if(!list.length) return;
+        h += `<div style="padding:8px 10px;border-radius:var(--r);border:1px solid ${def.border};background:${def.bg}">
+          <div style="font-size:11px;font-weight:700;color:${def.color};margin-bottom:3px">${def.label}</div>
+          <div style="font-size:18px;font-weight:800;color:${def.color};margin-bottom:3px">${list.length}명</div>
+          <div style="font-size:10px;color:${def.color};opacity:.8">${list.map(s=>esc(s.name)).join(', ')}</div>
         </div>`;
       });
-      h += `</div></div>`;
-    });
+      h += `</div>`;
+    }
   }
 
   // ══════════════════════════════════════
@@ -4745,6 +4744,125 @@ function ptBalSearchFilter(val){
   // X 버튼 토글 (render 없이 직접)
   const xBtn = document.getElementById('ptBalClearBtn');
   if(xBtn) xBtn.style.display = kw ? '' : 'none';
+}
+
+// 수상 현황 새 탭으로 열기 (포인트 탭 > 기타포인트 > 수상현황 버튼)
+function openAwardSummaryTab(year, month){
+  const studs = cfg.students||[];
+  const filterClass = st.ptFilterClass||'all';
+  const filtered = studs.filter(s=> filterClass==='all' || s.classType===filterClass);
+  const yl = `${year}년 ${month}월`;
+
+  const AWARD_GROUPS = [
+    {
+      label: '학원생활',
+      defs: [
+        {id:'PERFECT',     label:'🏅 PERFECT 출석상',         color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
+        {id:'STEADY',      label:'⭐ STEADY 출석상',           color:'#1558a8', bg:'#e5effc', border:'#90b8e8'},
+        {id:'DAILY',       label:'📊 DAILY 챌린지상',          color:'#7a4e00', bg:'#fdf0d8', border:'#e0c060'},
+        {id:'MASTER_HIGH', label:'👑 MASTER 인증상 High',      color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'},
+        {id:'MASTER_LOW',  label:'👑 MASTER 인증상 Low',       color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'},
+      ]
+    },
+    {
+      label: '학교생활',
+      defs: [
+        {id:'TOP_HONOR',       label:'🏆 Top Honor (100점)',       color:'#5a2080', bg:'#f3e8fc', border:'#c090e0'},
+        {id:'HIGH_HONOR_MID',  label:'⭐ High Honor 중등 (90점↑)', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'},
+        {id:'HIGH_HONOR_HIGH', label:'⭐ High Honor 고등 (90점↑)', color:'#1558a8', bg:'#e5effc', border:'#90b8e8'},
+      ]
+    },
+    {
+      label: '성장상',
+      defs: [
+        {id:'GROWTH_30', label:'📈 Growth +30', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
+        {id:'GROWTH_20', label:'📈 Growth +20', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
+        {id:'GROWTH_10', label:'📈 Growth +10', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
+      ]
+    },
+  ];
+  const allDefs = AWARD_GROUPS.flatMap(g=>g.defs);
+
+  // 수상자 계산
+  const winners = {};
+  allDefs.forEach(d=>{ winners[d.id]=[]; });
+  filtered.forEach(s=>{
+    const hist=(pointsData[s.id]?.history||[]).filter(h=>h.year===year&&h.month===month);
+    allDefs.forEach(def=>{
+      const won=hist.some(h=>h.type===def.id||(h.settleId&&h.settleId.startsWith(def.id+'__')));
+      if(won) winners[def.id].push(s);
+    });
+  });
+
+  // 요약 카드 HTML
+  const summaryCards = allDefs
+    .filter(d=>winners[d.id].length>0)
+    .map(def=>`
+      <div style="padding:12px 14px;border-radius:10px;border:1px solid ${def.border};background:${def.bg}">
+        <div style="font-size:13px;font-weight:700;color:${def.color};margin-bottom:4px">${def.label}</div>
+        <div style="font-size:24px;font-weight:800;color:${def.color};margin-bottom:4px">${winners[def.id].length}명</div>
+        <div style="font-size:11px;color:${def.color};opacity:.85">${winners[def.id].map(s=>s.name).join(', ')}</div>
+      </div>`).join('');
+
+  // 그룹별 상세 명단 HTML
+  let detailHtml = '';
+  AWARD_GROUPS.forEach(grp=>{
+    const grpDefs = grp.defs.filter(d=>winners[d.id].length>0);
+    if(!grpDefs.length) return;
+    detailHtml += `<h2>${grp.label}</h2>`;
+    grpDefs.forEach(def=>{
+      const list=winners[def.id];
+      detailHtml += `
+        <div style="margin-bottom:16px">
+          <div style="font-size:13px;font-weight:700;color:${def.color};padding:9px 14px;background:${def.bg};border:1px solid ${def.border};border-radius:8px 8px 0 0">${def.label} 수상자 (${list.length}명)</div>
+          <div style="border:1px solid ${def.border};border-top:none;border-radius:0 0 8px 8px;overflow:hidden">
+            ${list.map((s,i)=>{
+              const ct=CT()[s.classType];
+              const ctLabel=ct?`<span style="font-size:10px;padding:1px 6px;border-radius:20px;background:#eef0f3;color:#3a4555;margin-left:4px">${ct.label}</span>`:'';
+              return `<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid #e8e8e4;background:${i%2===0?'#fff':'#fafaf9'}">
+                <b style="font-size:13px;min-width:70px">${s.name}</b>
+                ${s.grade?`<span style="font-size:11px;color:#666">${s.grade}</span>`:''}
+                ${ctLabel}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+    });
+  });
+
+  const hasAny = allDefs.some(d=>winners[d.id].length>0);
+
+  const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>ES수학 수상 현황 — ${yl}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:12px;color:#1a1a1a;padding:20px;background:#f6f6f4}
+  h1{font-size:20px;font-weight:800;text-align:center;margin-bottom:20px}
+  h2{font-size:14px;font-weight:700;margin:20px 0 10px;padding-bottom:5px;border-bottom:2px solid #1558a8;color:#1a3a6a}
+  .summary{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:24px}
+  .no-print{display:flex;justify-content:center;gap:10px;margin-bottom:18px}
+  @media print{.no-print{display:none}body{background:#fff;padding:10px}@page{margin:10mm}}
+</style>
+</head>
+<body>
+  <h1>🏆 ES수학 ${yl} 수상 현황</h1>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:7px 20px;background:#1a1a1a;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit">🖨️ 인쇄</button>
+    <button onclick="window.close()" style="padding:7px 20px;background:#eee;color:#333;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit">✕ 닫기</button>
+  </div>
+  ${hasAny
+    ? `<div class="summary">${summaryCards}</div>${detailHtml}`
+    : `<div style="text-align:center;padding:40px;color:#aaa;font-size:14px">이번 달 수상자가 없습니다</div>`
+  }
+</body>
+</html>`;
+
+  const w = window.open('','_blank','width=900,height=750');
+  w.document.write(html);
+  w.document.close();
 }
 
 // 포인트 인쇄용 페이지 (해당월 체크박스 형식)
