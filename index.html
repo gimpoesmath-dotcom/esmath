@@ -1,4 +1,4 @@
-<!-- v20260618_avg_ac-af -->
+<!-- v20260618_excel-->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -4553,23 +4553,11 @@ function rPoints(){
     h += `</div>`;
     h += `</div>`; // 학교 성적 포인트 wrapper 닫기
 
-    // 성적 보상 수동 적립 안내
-    h += `<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">✏️ 성적 보상 수동 적립</div>
-    <div style="padding:12px 14px;border:1px solid var(--border);border-radius:var(--rl);background:var(--bg);margin-bottom:8px">
-      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">자동 목록 외 추가 적립이 필요한 경우 직접 입력하세요. <b>성적표 인증된 학생만 지급</b>.</div>
-      ${isPrin?`<button class="btn btn-primary btn-sm" onclick="openM('addManualPoint')">✏️ 수동 적립</button>`:''}
-      <div style="font-size:11px;color:var(--text3);margin-top:6px">💡 성적 기록은 학생 관리 → 상세 탭에서 확인 및 입력할 수 있습니다.</div>
-    </div>
-
-    <!-- 이달 수상자 현황 요약 -->
-    <div style="margin:16px 0 8px;display:flex;align-items:center;gap:8px">
-      <button onclick="st.ptAwardOpen=!st.ptAwardOpen;render()" style="display:flex;align-items:center;gap:6px;padding:6px 14px;font-size:12px;font-weight:700;border:1px solid var(--border2);border-radius:var(--r);background:${st.ptAwardOpen?'var(--text)':'var(--bg)'};color:${st.ptAwardOpen?'#fff':'var(--text2)'};cursor:pointer;font-family:inherit">
-        🏆 ${settleYl} 수상 현황 요약 ${st.ptAwardOpen?'▲':'▼'}
-      </button>
-    </div>
+    <!-- 이달 수상자 현황 — 전체 표시 (인쇄용) -->
+    <div style="margin:16px 0 8px;font-size:13px;font-weight:700;color:var(--text)">🏆 ${settleYl} 수상 현황</div>
     `;
 
-    // 수상 현황 계산 (토글 여부와 무관하게 항상 계산)
+    // 수상 현황 계산
     const awardDefs2 = [
       {id:'perfect', label:'🏅 PERFECT 출석상', color:'#1e6e3a', bg:'#e2f2e9', border:'#80c090'},
       {id:'steady',  label:'⭐ STEADY 출석상',  color:'#1558a8', bg:'#e5effc', border:'#90b8e8'},
@@ -4591,20 +4579,36 @@ function rPoints(){
       if(hasMaster){ awardCount.master++;  awardNames.master.push(s.name);  }
     });
 
-    // 버튼 클릭 시에만 수상 현황 카드 표시
-    if(st.ptAwardOpen){
-      h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">`;
-      awardDefs2.forEach(def=>{
-        const cnt   = awardCount[def.id];
-        const names = awardNames[def.id];
-        h += `<div style="padding:10px 12px;border-radius:var(--rl);border:1px solid ${def.border};background:${def.bg}">
-          <div style="font-size:12px;font-weight:700;color:${def.color};margin-bottom:4px">${def.label}</div>
-          <div style="font-size:20px;font-weight:800;color:${def.color};margin-bottom:4px">${cnt}명</div>
-          ${names.length?`<div style="font-size:10px;color:${def.color};opacity:.8">${names.map(n=>esc(n)).join(', ')}</div>`:'<div style="font-size:10px;color:var(--text3)">해당 없음</div>'}
+    // 수상 현황 카드 — 항상 전체 표시
+    h += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">`;
+    awardDefs2.forEach(def=>{
+      const cnt   = awardCount[def.id];
+      const names = awardNames[def.id];
+      h += `<div style="padding:10px 12px;border-radius:var(--rl);border:1px solid ${def.border};background:${def.bg}">
+        <div style="font-size:12px;font-weight:700;color:${def.color};margin-bottom:4px">${def.label}</div>
+        <div style="font-size:20px;font-weight:800;color:${def.color};margin-bottom:4px">${cnt}명</div>
+        ${names.length?`<div style="font-size:10px;color:${def.color};opacity:.8">${names.map(n=>esc(n)).join(', ')}</div>`:'<div style="font-size:10px;color:var(--text3)">해당 없음</div>'}
+      </div>`;
+    });
+    h += `</div>`;
+
+    // 수상별 상세 명단 (인쇄용 탭처럼 전체 표시)
+    awardDefs2.forEach(def=>{
+      const list = awardNames[def.id];
+      if(!list.length) return;
+      h += `<div style="margin-bottom:14px">
+        <div style="font-size:12px;font-weight:700;color:${def.color};padding:8px 12px;background:${def.bg};border:1px solid ${def.border};border-radius:var(--rl) var(--rl) 0 0">${def.label} 수상자 (${list.length}명)</div>
+        <div style="border:1px solid ${def.border};border-top:none;border-radius:0 0 var(--rl) var(--rl);overflow:hidden">`;
+      filtered.filter(s=>awardNames[def.id].includes(s.name)).forEach((s,i)=>{
+        const ct=CT()[s.classType];
+        h += `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:${i%2===0?'#fff':'#fafaf9'}">
+          <b style="font-size:13px;min-width:60px">${esc(s.name)}</b>
+          ${s.grade?gradeBadge(s.grade):''}
+          ${ct?`<span class="badge ${ct.badge||'b-mwf'}" style="font-size:10px">${ct.label}</span>`:''}
         </div>`;
       });
-      h += `</div>`;
-    }
+      h += `</div></div>`;
+    });
   }
 
   // ══════════════════════════════════════
@@ -9513,6 +9517,14 @@ async function removeStuTextbook(sid, tbId){
   const s=cfg.students.find(x=>x.id===sid); if(!s) return;
   if(!s.textbooks){ toast('교재를 찾을 수 없습니다.', true); return; }
   if(!confirm('교재 배정을 제거합니다. 계속하시겠어요?')) return;
+
+  // 방안 3: 시험 기록 삭제 여부 확인
+  const hasTests = textbookTests[sid] && textbookTests[sid][String(tbId)] && textbookTests[sid][String(tbId)].length > 0;
+  let deleteTests = false;
+  if(hasTests){
+    deleteTests = confirm('이 교재의 시험 기록도 함께 삭제하시겠어요?\n\n확인 → 시험 기록 삭제\n취소 → cfg만 삭제 (시험 기록 보존)');
+  }
+
   // tbId 기준으로 삭제 (인덱스 불일치 방지)
   const before = s.textbooks.length;
   s.textbooks = s.textbooks.filter(t=>{
@@ -9520,11 +9532,26 @@ async function removeStuTextbook(sid, tbId){
     return id !== String(tbId);
   });
   if(s.textbooks.length === before){ toast('삭제할 교재를 찾을 수 없습니다.', true); return; }
+
   try{
+    // 시험 기록 삭제 선택 시 textbook_tests에서 해당 항목 삭제
+    if(deleteTests){
+      const {getDocs,deleteDoc,query,where}=fb();
+      const col=collection(fbDb(),'textbook_tests');
+      const q=query(col,where('studentId','==',sid),where('textbookId','==',String(tbId)));
+      const snap=await getDocs(q);
+      for(const d of snap.docs) await deleteDoc(d.ref);
+      // 로컬 캐시도 정리
+      if(textbookTests[sid]) delete textbookTests[sid][String(tbId)];
+    } else if(hasTests){
+      // 기록 보존 시 orphaned 기록 안내
+      toast(`시험 기록은 보존됩니다. 나중에 같은 교재 재배정 시 자동 연결됩니다.`);
+    }
+
     await gasCall('saveConfig',{config:cfg});
     closeM();
     render();
-    toast('교재가 제거됐습니다.');
+    toast(deleteTests ? '교재 및 시험 기록이 삭제됐습니다.' : '교재가 제거됐습니다.');
   }catch(e){
     toast('저장 실패: '+e.message, true);
   }
@@ -11095,17 +11122,26 @@ function exportESReport(){
     const rSp3 = R(); addRow(er()); setStRange(rSp3,0,TOTAL_COLS-1,cs(C.white));
 
     // ══ 현재 진도 ══
-    // 헤더: 현재진도 + 월 12칸 + 진도속도
+    // 열 구조: col0~3=현재진도라벨(4열병합), col4~5=4월(2열병합), col6~7=5월 ... col26~27=3월(2열병합), col28~31=진도속도(4열병합)
+    // 즉 12개월 × 2열 = col4~27, 진도속도 = col28~31
+    const PD_MONTH_START = 4;   // 월 시작 열
+    const PD_MONTH_STEP  = 2;   // 월당 열 수
+    const PD_SPEED_COL   = 28;  // 진도속도 시작 열 (col28~31)
+
     const pdHdrRow = er();
     pdHdrRow[0]='현재진도';
     for(let i=0;i<12;i++){
       const ml=((roadmapStartMonth-1+i)%12)+1;
-      pdHdrRow[4+i]=ml+'월';
+      pdHdrRow[PD_MONTH_START + i*PD_MONTH_STEP] = ml+'월';
     }
-    pdHdrRow[16]='진도속도 :';
+    pdHdrRow[PD_SPEED_COL]='진도속도 :';
     const rPdHdr = R(); addRow(pdHdrRow);
     addMerge(rPdHdr,0,3);
-    addMerge(rPdHdr,16,TOTAL_COLS-1);
+    for(let i=0;i<12;i++){
+      const c=PD_MONTH_START+i*PD_MONTH_STEP;
+      addMerge(rPdHdr,c,c+PD_MONTH_STEP-1);
+    }
+    addMerge(rPdHdr,PD_SPEED_COL,TOTAL_COLS-1);
     setStRange(rPdHdr,0,TOTAL_COLS-1, cs(C.lblue,C.black,true,9));
     setSt(rPdHdr,0, cs(C.dgray,C.black,true,9));
 
@@ -11115,6 +11151,12 @@ function exportESReport(){
       pdRow[0]='현재  진도'; pdRow[1]=label;
       const rPd = R(); addRow(pdRow);
       addMerge(rPd,0,0); addMerge(rPd,1,3);
+      // 월별 각 2열 병합
+      for(let i=0;i<12;i++){
+        const c=PD_MONTH_START+i*PD_MONTH_STEP;
+        addMerge(rPd,c,c+PD_MONTH_STEP-1);
+      }
+      addMerge(rPd,PD_SPEED_COL,TOTAL_COLS-1);
       const bg=li%2===0?C.lyellow:C.white;
       setStRange(rPd,0,TOTAL_COLS-1, cs(bg,C.black,false,9));
       setSt(rPd,0, cs(C.dgray,C.black,true,9));
