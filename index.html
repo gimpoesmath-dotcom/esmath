@@ -1,4 +1,4 @@
-<!-- v20260617_fix_quarterly_report_cycle -->
+<!-- v20260618_styled_quarterly_report -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -440,7 +440,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260617_fix_quarterly_report_cycle';
+const APP_VERSION = 'v20260618_styled_quarterly_report';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -10783,45 +10783,79 @@ function exportESReport(){
   const wb = XLSX.utils.book_new();
   const y = st.year;
   const qNum = Math.ceil(st.month/3);
-  // 현재 달 기준 달력 분기 (버튼 라벨용으로만 사용)
-  const months = [1,2,3].map(i => {
-    const base = (qNum-1)*3 + i;
-    return base;
-  });
+  const months = [1,2,3].map(i => (qNum-1)*3 + i);
 
-  // 열 구조 (0-indexed):
-  // 0~3: A~D  라벨 (4열 병합)
-  // 4,5: E,F  → 1차 (EF 병합)
-  // 6,7: G,H  → 2차 (GH 병합) ...
-  // 평균: col 28 (AC열)
+  // ── 색상 팔레트 ──
+  const C = {
+    pink:    'FFD966A0', // 진한 핑크 (헤더)
+    teal:    'FF1E7A5E', // 진초록 (사이클 헤더)
+    yellow:  'FFFFFF00', // 노란색 (*점수)
+    lblue:   'FFD9E8F5', // 연한 파랑 (로드맵 헤더)
+    lgreen:  'FFE2F2E9', // 연한 초록 (추천로드맵 행)
+    lyellow: 'FFFFF3CD', // 연한 노랑 (현재진도 행)
+    gray:    'FFF2F2F2', // 연회색 (짝수 데이터행)
+    dgray:   'FFD9D9D9', // 중간회색 (라벨열)
+    white:   'FFFFFFFF',
+    black:   'FF000000',
+    titleBg: 'FF1A1A2E', // 제목행 배경 (짙은 남색)
+    infoBg:  'FFF0F4FF', // 학생정보 배경
+    logoGreen: 'FF2ECC71',
+  };
+
+  function cs(bgHex, fontHex, bold, sz, wrapText, hAlign, vAlign){
+    return {
+      fill: bgHex ? {patternType:'solid', fgColor:{rgb:bgHex.slice(2)}} : undefined,
+      font: {name:'맑은 고딕', sz:sz||9, bold:!!bold, color:{rgb:(fontHex||C.black).slice(2)}},
+      alignment:{horizontal:hAlign||'center', vertical:vAlign||'center', wrapText:!!wrapText},
+      border:{
+        top:{style:'thin',color:{rgb:'FFB0B0B0'}},
+        bottom:{style:'thin',color:{rgb:'FFB0B0B0'}},
+        left:{style:'thin',color:{rgb:'FFB0B0B0'}},
+        right:{style:'thin',color:{rgb:'FFB0B0B0'}},
+      }
+    };
+  }
+
+  // ── 열 구조 ──
+  // 전체 30열 (A=0 ~ AD=29)
+  // col 0: 라벨 (넓게)
+  // col 1~2: 빈 병합용
+  // col 3: 구분/값
+  // col 4~27: 1차~12차 (각 2열 병합, DATA_START=4, DATA_STEP=2)
+  // col 28~29: 평균 (2열 병합)
   const DATA_START = 4;
   const DATA_STEP  = 2;
   const MAX_SESS   = 12;
   const AVG_COL    = 28;
-  const TOTAL_COLS = 32;
+  const TOTAL_COLS = 30;
+  const LABEL_END  = 3;  // 0~3 병합
 
-  function emptyRow(){ return new Array(TOTAL_COLS).fill(''); }
+  function er(){ return new Array(TOTAL_COLS).fill(''); }
+
+  // 셀 스타일 주입 헬퍼
+  function applyStyle(ws, r, c, style){
+    const addr = XLSX.utils.encode_cell({r,c});
+    if(!ws[addr]) ws[addr] = {v:'', t:'s'};
+    ws[addr].s = style;
+  }
+  function applyRangeStyle(ws, r, cStart, cEnd, style){
+    for(let c=cStart;c<=cEnd;c++) applyStyle(ws, r, c, style);
+  }
 
   (cfg.students||[]).forEach(s => {
     const myTests = textbookTests[s.id]||{};
 
-    // ── 사이클 3개 결정: 현재 달(st.month)의 ownerMonth와 일치하는 사이클 기준 ──
-    // 사이클 기준이므로 7월 1일이 6월 사이클에 포함되면 6월 사이클로 인식됨
+    // ── 사이클 3개 결정 ──
     const allCycles = _getAllCycles(s.classType);
     const curMonthStr = `${y}-${String(st.month).padStart(2,'0')}`;
-    const curCycleIdx = allCycles.findIndex(c => c.ownerMonth === curMonthStr);
-    // 현재 달 사이클을 중심으로 분기 기준 첫 번째 사이클 계산
-    // 분기 내 첫 사이클 인덱스: 현재 달이 속한 분기(qNum)의 첫 달 ownerMonth와 일치하는 사이클
     const qFirstMonthStr = `${y}-${String((qNum-1)*3+1).padStart(2,'0')}`;
     const qFirstCycleIdx = allCycles.findIndex(c => c.ownerMonth === qFirstMonthStr);
-    // 3개 사이클 선택: 분기 첫 사이클부터 3개, 없으면 현재 기준 앞뒤
+    const curCycleIdx = allCycles.findIndex(c => c.ownerMonth === curMonthStr);
     let cycleStartIdx = qFirstCycleIdx >= 0 ? qFirstCycleIdx : Math.max(0, curCycleIdx);
     const threeCycles = allCycles.slice(cycleStartIdx, cycleStartIdx + 3);
-
-    // 3개 사이클에 포함된 모든 날짜로 전범위 시험 결과 필터링
     const qDateSet = new Set(threeCycles.flatMap(c => c.dates));
 
-    // 전범위 시험 결과 — 3개 사이클 날짜 안에 응시한 시험만, 마지막(최신) 결과 기준
+    // ── 전범위 시험 결과 ──
     const testResultLines = [];
     (s.textbooks||[]).forEach(t => {
       const bk = t.tbId?(cfg.textbooks||[]).find(b=>b.id===t.tbId):null;
@@ -10829,269 +10863,408 @@ function exportESReport(){
       const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
       const attempts = myTests[tbId]||[];
       if(!attempts.length) return;
-      // 3개 사이클 날짜 안에 응시한 attempt만 추출
-      const inQuarter = attempts.filter(a=>a.date && qDateSet.has(a.date));
-      if(!inQuarter.length) return;
-      // 마지막(최신) attempt
-      const lastA = inQuarter[inQuarter.length-1];
+      const inQ = attempts.filter(a=>a.date && qDateSet.has(a.date));
+      if(!inQ.length) return;
+      const lastA = inQ[inQ.length-1];
       const scoreStr = lastA.manualComplete?'완료':(lastA.score!=null?lastA.score+'점':'');
       if(!scoreStr) return;
-      const suffix = lastA.attempt>1
-        ? `전범위 서술형 ${lastA.attempt}차 시험 결과`
-        : `전범위 서술형 시험 결과`;
-      const passStr = lastA.passed ? '합격' : '불합격';
-      testResultLines.push(`${tbName} ${suffix} : ${scoreStr} ${passStr}`);
+      const suffix = lastA.attempt>1?`전범위 서술형 ${lastA.attempt}차 시험 결과`:`전범위 서술형 시험 결과`;
+      testResultLines.push(`${tbName} ${suffix} : ${scoreStr} ${lastA.passed?'합격':'불합격'}`);
     });
+
+    // ── 로드맵 시작월 ──
+    const roadmapStartMonth = threeCycles.length > 0
+      ? parseInt(threeCycles[0].ownerMonth.slice(5,7))
+      : months[0];
+
+    // ── 학습기간 표시 ──
+    const qLabel = `${y}년 ${months[0].toString().padStart(2,'0')} ~ ${months[2].toString().padStart(2,'0')}월`;
 
     const rows = [];
     const merges = [];
-    let testResultRow = -1;
+    const cellStyles = {}; // {r_c: style}
+    const starCells = []; // * 표시 셀 위치 {r,c}
 
-    // 3개 사이클 각각을 순회 (달력 월 기준이 아닌 사이클 기준)
-    threeCycles.forEach(cycle => {
-      const dates = cycle.dates; // 사이클의 실제 날짜 배열 (ownerMonth 기준)
-      const ownerM = cycle.ownerMonth; // 'YYYY-MM'
-      const mLabel = parseInt(ownerM.slice(5,7)); // 표시용 월 숫자
-      // 날짜 범위 표시: 사이클 첫날~끝날 월이 다르면 'X월~Y월', 같으면 'X월'
+    function R(){ return rows.length; }
+    function addRow(data){ rows.push(data); }
+    function addMerge(r,c1,c2){ merges.push({s:{r,c:c1},e:{r,c:c2}}); }
+    function setSt(r,c,style){ cellStyles[r+'_'+c]=style; }
+    function setStRange(r,c1,c2,style){ for(let c=c1;c<=c2;c++) setSt(r,c,style); }
+
+    // ══ 행 1: 로고 + 제목 ══
+    const titleRow = er();
+    titleRow[0] = 'ES수학학원';
+    titleRow[3] = `${y}년 ${qNum}분기(${months[0].toString().padStart(2,'0')}~${months[2].toString().padStart(2,'0')}월) ES수학학원 레포트`;
+    const r0 = R(); addRow(titleRow);
+    addMerge(r0,0,2);
+    addMerge(r0,3,TOTAL_COLS-1);
+    setStRange(r0,0,TOTAL_COLS-1, cs(C.titleBg,'FFFFFFFF',true,14,false,'center'));
+    setSt(r0,0, cs(C.logoGreen,'FFFFFFFF',true,16,false,'center'));
+
+    // ══ 행 2: 빈 행 (간격) ══
+    const r1 = R(); addRow(er());
+    setStRange(r1,0,TOTAL_COLS-1, cs(C.white));
+
+    // ══ 행 3: 학생 정보 ══
+    const infoRow = er();
+    infoRow[0]  = '이름';
+    infoRow[1]  = s.name||'';
+    infoRow[3]  = '학교';
+    infoRow[5]  = '';           // 직접 입력
+    infoRow[8]  = '학년';
+    infoRow[10] = '';           // 직접 입력
+    infoRow[13] = '학습  기간';
+    infoRow[15] = qLabel;
+    const r2 = R(); addRow(infoRow);
+    addMerge(r2,1,2); addMerge(r2,5,7); addMerge(r2,10,12); addMerge(r2,15,TOTAL_COLS-1);
+    setStRange(r2,0,TOTAL_COLS-1, cs(C.infoBg,C.black,false,10,false,'center'));
+    setSt(r2,0,  cs(C.dgray,C.black,true,10)); setSt(r2,3,  cs(C.dgray,C.black,true,10));
+    setSt(r2,8,  cs(C.dgray,C.black,true,10)); setSt(r2,13, cs(C.dgray,C.black,true,10));
+    setSt(r2,15, cs(C.infoBg,C.black,false,10,false,'left'));
+
+    // ══ 행 4: 빈 행 ══
+    const r3 = R(); addRow(er());
+    setStRange(r3,0,TOTAL_COLS-1, cs(C.white));
+
+    // ══ 행 5: "2026년 학습 개별 맞춤 로드맵" 타이틀 ══
+    const lrmTitleRow = er();
+    lrmTitleRow[0] = `${y}년 학습 개별 맞춤 로드맵`;
+    const r4 = R(); addRow(lrmTitleRow);
+    addMerge(r4,0,TOTAL_COLS-1);
+    setStRange(r4,0,TOTAL_COLS-1, cs(C.pink,'FFFFFFFF',true,13,false,'center'));
+
+    // ══ 행 6: 빈 행 ══
+    const r5 = R(); addRow(er());
+    setStRange(r5,0,TOTAL_COLS-1, cs(C.white));
+
+    // ══ 사이클 3개: 출결/복습테스트/과제 ══
+    threeCycles.forEach((cycle, ci) => {
+      const dates = cycle.dates;
+      const ownerM = cycle.ownerMonth;
+      const mLabel = parseInt(ownerM.slice(5,7));
       const firstM = dates.length ? parseInt(dates[0].slice(5,7)) : mLabel;
       const lastM  = dates.length ? parseInt(dates[dates.length-1].slice(5,7)) : mLabel;
       const mDisplay = firstM !== lastM ? `${firstM}월~${lastM}월(${mLabel}월 사이클)` : `${mLabel}월`;
 
-      // ── 헤더행: 사이클 표시(A~D 병합), 1차~N차(각 2열 병합), 평균 ──
-      const hRow = emptyRow();
+      // 헤더행 (사이클명 + 차수)
+      const hRow = er();
       hRow[0] = mDisplay;
-      const sessionCount = dates.length; // 실제 사이클의 회차 수 (8 or 12)
-      for(let i=0;i<MAX_SESS;i++){
-        hRow[DATA_START + i*DATA_STEP] = `${i+1}차`;
-      }
+      for(let i=0;i<MAX_SESS;i++) hRow[DATA_START+i*DATA_STEP] = `${i+1}차`;
       hRow[AVG_COL] = '평균';
-      const hRowIdx = rows.length;
-      rows.push(hRow);
-      merges.push({s:{r:hRowIdx,c:0}, e:{r:hRowIdx,c:3}});
-      for(let i=0;i<MAX_SESS;i++){
-        const c = DATA_START + i*DATA_STEP;
-        merges.push({s:{r:hRowIdx,c:c}, e:{r:hRowIdx,c:c+1}});
-      }
-      merges.push({s:{r:hRowIdx,c:AVG_COL}, e:{r:hRowIdx,c:AVG_COL+3}});
+      const rH = R(); addRow(hRow);
+      addMerge(rH,0,LABEL_END);
+      for(let i=0;i<MAX_SESS;i++){ const c=DATA_START+i*DATA_STEP; addMerge(rH,c,c+1); }
+      addMerge(rH,AVG_COL,TOTAL_COLS-1);
+      setStRange(rH,0,TOTAL_COLS-1, cs(C.teal,'FFFFFFFF',true,10));
+      setSt(rH,0, cs(C.teal,'FFFFFFFF',true,11));
 
-      // ── 출결행 ──
-      // 미입력(수업 기록 없음)은 공백, 출석='O', 결석='X', 지각='△'
-      const attRow = emptyRow();
-      attRow[0] = '출결';
+      // 출결행
+      const attRow = er(); attRow[0]='출결';
       for(let i=0;i<MAX_SESS;i++){
-        const d = dates[i];
-        if(d){
-          const l = (mdb.lessons||{})[s.id+'_'+d];
-          if(!l || !l.attendance){
-            // 수업 기록 없거나 출결 미입력 → 공백
-            attRow[DATA_START + i*DATA_STEP] = '';
-          } else if(l.attendance==='absent'){
-            attRow[DATA_START + i*DATA_STEP] = 'X';
-          } else {
-            attRow[DATA_START + i*DATA_STEP] = 'O';
-          }
-        }
-        // d가 없으면(회차 없음) 공백 유지
+        const d=dates[i];
+        if(!d) continue;
+        const l=(mdb.lessons||{})[s.id+'_'+d];
+        if(!l||!l.attendance) attRow[DATA_START+i*DATA_STEP]='';
+        else if(l.attendance==='absent') attRow[DATA_START+i*DATA_STEP]='X';
+        else attRow[DATA_START+i*DATA_STEP]='O';
       }
-      const attRowIdx = rows.length;
-      rows.push(attRow);
-      merges.push({s:{r:attRowIdx,c:0}, e:{r:attRowIdx,c:3}});
-      for(let i=0;i<MAX_SESS;i++){
-        const c = DATA_START + i*DATA_STEP;
-        merges.push({s:{r:attRowIdx,c:c}, e:{r:attRowIdx,c:c+1}});
-      }
-      merges.push({s:{r:attRowIdx,c:AVG_COL}, e:{r:attRowIdx,c:AVG_COL+3}});
+      const rA = R(); addRow(attRow);
+      addMerge(rA,0,LABEL_END);
+      for(let i=0;i<MAX_SESS;i++){ const c=DATA_START+i*DATA_STEP; addMerge(rA,c,c+1); }
+      addMerge(rA,AVG_COL,TOTAL_COLS-1);
+      setStRange(rA,0,TOTAL_COLS-1, cs(C.white,C.black,false,9));
+      setSt(rA,0, cs(C.dgray,C.black,true,9));
 
-      // ── 복습테스트행 ──
-      // 결석='X', 미입력(점수 없음)=공백, 입력된 점수=값
-      const testRow = emptyRow();
-      testRow[0] = '복습 테스트';
-      const testScores = [];
+      // 복습테스트행
+      const testRow = er(); testRow[0]='복습 테스트';
+      const testScores=[];
+      const starTestCols=[];
       for(let i=0;i<MAX_SESS;i++){
-        const d = dates[i];
-        if(d){
-          const l = (mdb.lessons||{})[s.id+'_'+d];
-          if(l && l.attendance==='absent'){ testRow[DATA_START+i*DATA_STEP]='X'; continue; }
-          if(!l){ testRow[DATA_START+i*DATA_STEP]='X'; continue; } // 기록 없음 → X
-          const ts = l.testScore;
-          if(ts===undefined || ts===null || ts===''){ testRow[DATA_START+i*DATA_STEP]='X'; continue; } // 미입력 → X
-          const tsStr = String(ts);
-          const hasStar = tsStr.includes('*') || l.testIsFullRange;
-          const val = hasStar ? (tsStr.includes('*')?tsStr:tsStr+'*') : tsStr;
-          testRow[DATA_START+i*DATA_STEP] = val;
-          if(!hasStar){ const n=parseFloat(tsStr); if(!isNaN(n)) testScores.push(n); }
-        }
-        // d 없으면 공백 유지
+        const d=dates[i]; const col=DATA_START+i*DATA_STEP;
+        if(!d){ testRow[col]=''; continue; }
+        const l=(mdb.lessons||{})[s.id+'_'+d];
+        if(l&&l.attendance==='absent'){ testRow[col]='X'; continue; }
+        if(!l){ testRow[col]='X'; continue; }
+        const ts=l.testScore;
+        if(ts===undefined||ts===null||ts===''){ testRow[col]='X'; continue; }
+        const tsStr=String(ts);
+        const hasStar=tsStr.includes('*')||l.testIsFullRange;
+        const val=hasStar?(tsStr.includes('*')?tsStr:tsStr+'*'):tsStr;
+        testRow[col]=val;
+        if(hasStar) starTestCols.push(col);
+        else{ const n=parseFloat(tsStr); if(!isNaN(n)) testScores.push(n); }
       }
-      const testRowIdx = rows.length;
-      const testAvg = testScores.length
-        ? Math.ceil(testScores.reduce((a,b)=>a+b,0)/testScores.length * 100) / 100
-        : '';
-      testRow[AVG_COL] = testAvg;
-      rows.push(testRow);
-      merges.push({s:{r:testRowIdx,c:0}, e:{r:testRowIdx,c:3}});
-      for(let i=0;i<MAX_SESS;i++){
-        const c = DATA_START + i*DATA_STEP;
-        merges.push({s:{r:testRowIdx,c:c}, e:{r:testRowIdx,c:c+1}});
-      }
-      merges.push({s:{r:testRowIdx,c:AVG_COL}, e:{r:testRowIdx,c:AVG_COL+3}});
+      const testAvg=testScores.length?Math.ceil(testScores.reduce((a,b)=>a+b,0)/testScores.length*100)/100:'';
+      testRow[AVG_COL]=testAvg;
+      const rT = R(); addRow(testRow);
+      addMerge(rT,0,LABEL_END);
+      for(let i=0;i<MAX_SESS;i++){ const c=DATA_START+i*DATA_STEP; addMerge(rT,c,c+1); }
+      addMerge(rT,AVG_COL,TOTAL_COLS-1);
+      setStRange(rT,0,TOTAL_COLS-1, cs(C.gray,C.black,false,9));
+      setSt(rT,0, cs(C.dgray,C.black,true,9));
+      starTestCols.forEach(c=>{ starCells.push({r:rT,c}); starCells.push({r:rT,c:c+1}); });
 
-      // ── 과제행 ──
-      // 결석='X', 미입력=공백, 입력된 점수=값
-      const hwRow = emptyRow();
-      hwRow[0] = '과제';
-      const hwScores = [];
+      // 과제행
+      const hwRow = er(); hwRow[0]='과제';
+      const hwScores=[];
       for(let i=0;i<MAX_SESS;i++){
-        const d = dates[i];
-        if(d){
-          const l = (mdb.lessons||{})[s.id+'_'+d];
-          if(l && l.attendance==='absent'){ hwRow[DATA_START+i*DATA_STEP]='X'; continue; }
-          if(!l){ hwRow[DATA_START+i*DATA_STEP]='X'; continue; } // 기록 없음 → X
-          const hw = l.homeworkScore;
-          if(hw===undefined || hw===null || hw===''){ hwRow[DATA_START+i*DATA_STEP]='X'; continue; } // 미입력 → X
-          hwRow[DATA_START+i*DATA_STEP] = String(hw);
-          const n=parseFloat(hw); if(!isNaN(n)) hwScores.push(n);
-        }
-        // d 없으면 공백 유지
+        const d=dates[i]; const col=DATA_START+i*DATA_STEP;
+        if(!d){ hwRow[col]=''; continue; }
+        const l=(mdb.lessons||{})[s.id+'_'+d];
+        if(l&&l.attendance==='absent'){ hwRow[col]='X'; continue; }
+        if(!l){ hwRow[col]='X'; continue; }
+        const hw=l.homeworkScore;
+        if(hw===undefined||hw===null||hw===''){ hwRow[col]='X'; continue; }
+        hwRow[col]=String(hw);
+        const n=parseFloat(hw); if(!isNaN(n)) hwScores.push(n);
       }
-      const hwRowIdx = rows.length;
-      const hwAvg = hwScores.length
-        ? Math.ceil(hwScores.reduce((a,b)=>a+b,0)/hwScores.length * 100) / 100
-        : '';
-      hwRow[AVG_COL] = hwAvg;
-      rows.push(hwRow);
-      merges.push({s:{r:hwRowIdx,c:0}, e:{r:hwRowIdx,c:3}});
-      for(let i=0;i<MAX_SESS;i++){
-        const c = DATA_START + i*DATA_STEP;
-        merges.push({s:{r:hwRowIdx,c:c}, e:{r:hwRowIdx,c:c+1}});
-      }
-      merges.push({s:{r:hwRowIdx,c:AVG_COL}, e:{r:hwRowIdx,c:AVG_COL+3}});
+      const hwAvg=hwScores.length?Math.ceil(hwScores.reduce((a,b)=>a+b,0)/hwScores.length*100)/100:'';
+      hwRow[AVG_COL]=hwAvg;
+      const rHw = R(); addRow(hwRow);
+      addMerge(rHw,0,LABEL_END);
+      for(let i=0;i<MAX_SESS;i++){ const c=DATA_START+i*DATA_STEP; addMerge(rHw,c,c+1); }
+      addMerge(rHw,AVG_COL,TOTAL_COLS-1);
+      setStRange(rHw,0,TOTAL_COLS-1, cs(C.white,C.black,false,9));
+      setSt(rHw,0, cs(C.dgray,C.black,true,9));
 
-      // 사이클 구분 빈 행
-      rows.push(emptyRow());
+      // 구분 빈행
+      const rSp = R(); addRow(er());
+      setStRange(rSp,0,TOTAL_COLS-1, cs(C.white));
     });
 
-    // 전범위 시험결과 (이번 분기 내 마지막 차수)
+    // ══ 전범위 시험 결과 ══
     if(testResultLines.length){
-      testResultRow = rows.length;
-      const tr = emptyRow();
-      tr[0] = '전범위\n시험결과';
-      tr[DATA_START] = testResultLines.join('\n');
-      rows.push(tr);
-      merges.push({s:{r:testResultRow,c:0}, e:{r:testResultRow,c:3}});
-      merges.push({s:{r:testResultRow,c:DATA_START}, e:{r:testResultRow,c:AVG_COL-1}});
-      rows.push(emptyRow()); // 구분 빈 행
+      const trRow = er();
+      trRow[0]='전범위\n시험결과'; trRow[DATA_START]=testResultLines.join('\n');
+      const rTR = R(); addRow(trRow);
+      addMerge(rTR,0,LABEL_END); addMerge(rTR,DATA_START,TOTAL_COLS-1);
+      setStRange(rTR,0,TOTAL_COLS-1, cs(C.lyellow,C.black,false,9,true,'left'));
+      setSt(rTR,0, cs(C.dgray,C.black,true,9,true,'center'));
+      const rTRsp = R(); addRow(er());
+      setStRange(rTRsp,0,TOTAL_COLS-1, cs(C.white));
     }
 
-    // ── 교재 로드맵 (분기 첫 달부터 12개월, 월만 표시·년도 표시 안 함, 진행구간은 셀 병합) ──
-    const ROADMAP_NAME_END = 3;   // 0~3: 교재명 (4열 병합)
-    const ROADMAP_TYPE_COL = 4;   // 4: 구분(현행/선행)
-    const ROADMAP_M_START  = 5;   // 5~16: 1~12번째 달(분기 첫 달 기준)
-    // 로드맵 시작월: 3개 사이클 중 첫 사이클의 ownerMonth 기준
-    const roadmapStartMonth = threeCycles.length > 0
-      ? parseInt(threeCycles[0].ownerMonth.slice(5,7))
-      : months[0];
-    rows.push(emptyRow()); // 구분용 빈 행
+    // ══ ※ 안내문구 ══
+    const noteRow = er();
+    noteRow[0]='※ 금요일 수업은 테스트가 없습니다.';
+    const rNote = R(); addRow(noteRow);
+    addMerge(rNote,0,TOTAL_COLS-1);
+    setStRange(rNote,0,TOTAL_COLS-1, cs(C.white,'FF888888',false,8,false,'left'));
 
-    const rmHdrRow = emptyRow();
-    rmHdrRow[0] = '교재 로드맵';
+    // 빈행
+    const rSp2 = R(); addRow(er()); setStRange(rSp2,0,TOTAL_COLS-1,cs(C.white));
+
+    // ══ 추천 로드맵 섹션 ══
+    // 타이틀
+    const rmSecRow = er(); rmSecRow[0]='추천로드맵';
+    const rRmSec = R(); addRow(rmSecRow);
+    addMerge(rRmSec,0,TOTAL_COLS-1);
+    setStRange(rRmSec,0,TOTAL_COLS-1, cs(C.pink,'FFFFFFFF',true,11,false,'center'));
+
+    // 추천 진도 라벨
+    const recLblRow = er(); recLblRow[0]='추천  진도';
+    const rRecLbl = R(); addRow(recLblRow);
+    addMerge(rRecLbl,0,2);
+    setStRange(rRecLbl,0,TOTAL_COLS-1, cs(C.lgreen,C.black,false,9));
+    setSt(rRecLbl,0, cs(C.dgray,C.black,true,9));
+
+    // 추천 진도 3줄
+    const recLines=[
+      ['중1',      '개념·풀이 습관을 확실히 잡으며 중등 수학의 기초를 다지는 단계'],
+      ['중2',      '중1 겨울방학부터 공부량과 속도를 본격적으로 높이며, 중2까지 중3 과정을 완성해 나가는 시기'],
+      ['고등  진입','[고등 진입 권장 시기] 중2 여름방학 ~ 중3 여름방학\n고등수학에서 안정적인 등급 확보를 위해, 해당 시기까지 고등과정에 진입하는 것을 목표로 함'],
+    ];
+    recLines.forEach((line,li)=>{
+      const rl = er(); rl[0]=''; rl[1]=line[0]; rl[3]=line[1];
+      const rRl = R(); addRow(rl);
+      addMerge(rRl,3,TOTAL_COLS-1);
+      const bg = li%2===0?C.lgreen:C.white;
+      setStRange(rRl,0,TOTAL_COLS-1, cs(bg,C.black,false,9,true,'left'));
+      setSt(rRl,1, cs(bg,C.black,true,9));
+      setSt(rRl,3, cs(bg,C.black,false,9,true,'left'));
+    });
+
+    // 빈행
+    const rSp3 = R(); addRow(er()); setStRange(rSp3,0,TOTAL_COLS-1,cs(C.white));
+
+    // ══ 현재 진도 ══
+    // 헤더: 현재진도 + 월 12칸 + 진도속도
+    const pdHdrRow = er();
+    pdHdrRow[0]='현재진도';
     for(let i=0;i<12;i++){
-      const mLabel = ((roadmapStartMonth - 1 + i) % 12) + 1;
-      rmHdrRow[ROADMAP_M_START + i] = mLabel + '월';
+      const ml=((roadmapStartMonth-1+i)%12)+1;
+      pdHdrRow[4+i]=ml+'월';
     }
-    const rmHdrRowIdx = rows.length;
-    rows.push(rmHdrRow);
-    merges.push({s:{r:rmHdrRowIdx,c:0}, e:{r:rmHdrRowIdx,c:ROADMAP_NAME_END}});
-    merges.push({s:{r:rmHdrRowIdx,c:ROADMAP_TYPE_COL}, e:{r:rmHdrRowIdx,c:ROADMAP_TYPE_COL}});
+    pdHdrRow[16]='진도속도 :';
+    const rPdHdr = R(); addRow(pdHdrRow);
+    addMerge(rPdHdr,0,3);
+    addMerge(rPdHdr,16,TOTAL_COLS-1);
+    setStRange(rPdHdr,0,TOTAL_COLS-1, cs(C.lblue,C.black,true,9));
+    setSt(rPdHdr,0, cs(C.dgray,C.black,true,9));
 
-    const rmTypeRow = emptyRow();
-    rmTypeRow[0] = '교재명';
-    rmTypeRow[ROADMAP_TYPE_COL] = '구분';
-    const rmTypeRowIdx = rows.length;
-    rows.push(rmTypeRow);
-    merges.push({s:{r:rmTypeRowIdx,c:0}, e:{r:rmTypeRowIdx,c:ROADMAP_NAME_END}});
+    // 현행/선행 2행 (빈칸 — 직접 입력)
+    ['현행','선행'].forEach((label,li)=>{
+      const pdRow = er();
+      pdRow[0]='현재  진도'; pdRow[1]=label;
+      const rPd = R(); addRow(pdRow);
+      addMerge(rPd,0,0); addMerge(rPd,1,3);
+      const bg=li%2===0?C.lyellow:C.white;
+      setStRange(rPd,0,TOTAL_COLS-1, cs(bg,C.black,false,9));
+      setSt(rPd,0, cs(C.dgray,C.black,true,9));
+      setSt(rPd,1, cs(bg,C.black,false,9));
+    });
 
-    const myProgTests = textbookTests[s.id]||{};
+    // 진도 코멘트 (빈칸)
+    const pdCmtRow = er(); pdCmtRow[0]='진도  코멘트';
+    const rPdCmt = R(); addRow(pdCmtRow);
+    addMerge(rPdCmt,0,3); addMerge(rPdCmt,4,TOTAL_COLS-1);
+    setStRange(rPdCmt,0,TOTAL_COLS-1, cs(C.white,C.black,false,9,true,'left'));
+    setSt(rPdCmt,0, cs(C.dgray,C.black,true,9,'center'));
+
+    // 빈행
+    const rSp4 = R(); addRow(er()); setStRange(rSp4,0,TOTAL_COLS-1,cs(C.white));
+
+    // ══ 교재 로드맵 바 ══
+    const rmBarHdrRow = er();
+    rmBarHdrRow[0]='교재 로드맵';
+    for(let i=0;i<12;i++){
+      const ml=((roadmapStartMonth-1+i)%12)+1;
+      rmBarHdrRow[4+i]=ml+'월';
+    }
+    rmBarHdrRow[16]='';
+    const rRmBarHdr = R(); addRow(rmBarHdrRow);
+    addMerge(rRmBarHdr,0,2); addMerge(rRmBarHdr,3,3);
+    setStRange(rRmBarHdr,0,TOTAL_COLS-1, cs(C.lblue,C.black,true,9));
+    setSt(rRmBarHdr,0, cs(C.dgray,C.black,true,9));
+
+    const rmTypeHdrRow = er();
+    rmTypeHdrRow[0]='교재명'; rmTypeHdrRow[3]='구분';
+    const rRmTypeHdr = R(); addRow(rmTypeHdrRow);
+    addMerge(rRmTypeHdr,0,2);
+    setStRange(rRmTypeHdr,0,TOTAL_COLS-1, cs(C.dgray,C.black,true,9));
+
     const books = cfg.textbooks||[];
-    (s.textbooks||[]).forEach(t => {
+    const myProgTests2 = textbookTests[s.id]||{};
+    (s.textbooks||[]).forEach((t,ti)=>{
       const bk = t.tbId?(books.find(b=>b.id===t.tbId)||null):null;
       const tbName = bk?bk.name:(t.name||'교재');
       const tbId = t.tbId||('p_'+s.id+'_'+encodeURIComponent(t.name||''));
       const prog = textbookProgress[tbKey(s.id,tbId)]||{};
       const startDate = prog.startDate||t.startDate||'';
-      const attempts = myProgTests[tbId]||[];
-      const passAttempt = attempts.find(a=>a.passed);
+      const attempts2 = myProgTests2[tbId]||[];
+      const passAttempt = attempts2.find(a=>a.passed);
       const passDate = passAttempt?passAttempt.date:'';
       const rowType = t.rowType||'현행';
 
-      const rIdx = rows.length;
-      const row = emptyRow();
-      row[0] = tbName;
-      row[ROADMAP_TYPE_COL] = rowType;
-      rows.push(row);
-      merges.push({s:{r:rIdx,c:0}, e:{r:rIdx,c:ROADMAP_NAME_END}});
+      const rmRow = er();
+      rmRow[0]=tbName; rmRow[3]=rowType;
+      const rRm = R(); addRow(rmRow);
+      addMerge(rRm,0,2);
+      const bg=ti%2===0?C.lgreen:C.white;
+      setStRange(rRm,0,TOTAL_COLS-1, cs(bg,C.black,false,9));
+      setSt(rRm,0, cs(bg,C.black,false,9,'left'));
+      setSt(rRm,3, cs(bg,C.black,true,9));
 
-      // 분기 첫 달(roadmapStartMonth)을 기준으로 12개월 슬롯의 (년,월) 계산
-      const slots = [];
+      // 활성 구간 계산
+      const sY=startDate?parseInt(startDate.slice(0,4)):0;
+      const sM=startDate?parseInt(startDate.slice(5,7)):0;
+      const pY=passDate?parseInt(passDate.slice(0,4)):0;
+      const pM=passDate?parseInt(passDate.slice(5,7)):0;
+      const slots=[];
       for(let i=0;i<12;i++){
-        let mm = roadmapStartMonth + i;
-        let yy = y;
-        if(mm>12){ mm -= 12; yy += 1; }
-        slots.push({y:yy, m:mm});
+        let mm=roadmapStartMonth+i; let yy=y;
+        if(mm>12){mm-=12;yy+=1;}
+        slots.push({y:yy,m:mm});
       }
-
-      const sY = startDate?parseInt(startDate.substring(0,4)):0;
-      const sM = startDate?parseInt(startDate.substring(5,7)):0;
-      const pY = passDate?parseInt(passDate.substring(0,4)):0;
-      const pM = passDate?parseInt(passDate.substring(5,7)):0;
-
-      const activeFlags = slots.map(slot=>{
+      const flags=slots.map(sl=>{
         if(!startDate) return false;
-        const afterStart = (slot.y>sY) || (slot.y===sY && slot.m>=sM);
-        let beforeEnd = true;
-        if(passDate){
-          beforeEnd = (slot.y<pY) || (slot.y===pY && slot.m<=pM);
-        }
-        return afterStart && beforeEnd;
+        const after=(sl.y>sY)||(sl.y===sY&&sl.m>=sM);
+        let before=true;
+        if(passDate) before=(sl.y<pY)||(sl.y===pY&&sl.m<=pM);
+        return after&&before;
       });
-
-      // 연속된 활성 구간을 셀 병합으로 표시
       let i=0;
       while(i<12){
-        if(activeFlags[i]){
+        if(flags[i]){
           let j=i;
-          while(j+1<12 && activeFlags[j+1]) j++;
-          const c0 = ROADMAP_M_START + i;
-          const c1 = ROADMAP_M_START + j;
-          row[c0] = rowType;
-          if(c1>c0) merges.push({s:{r:rIdx,c:c0}, e:{r:rIdx,c:c1}});
-          i = j+1;
-        } else {
-          i++;
-        }
+          while(j+1<12&&flags[j+1]) j++;
+          const c0=4+i, c1=4+j;
+          rmRow[c0]=rowType;
+          if(c1>c0) merges.push({s:{r:rRm,c:c0},e:{r:rRm,c:c1}});
+          // 활성 구간 색상: 현행=초록, 선행=파랑
+          const barBg=rowType==='선행'?'FFB8D4F0':'FF90D4A8';
+          for(let k=c0;k<=c1;k++) setSt(rRm,k, cs(barBg,C.black,true,9));
+          i=j+1;
+        } else { i++; }
       }
     });
 
+    // 빈행
+    const rSp5 = R(); addRow(er()); setStRange(rSp5,0,TOTAL_COLS-1,cs(C.white));
+
+    // ══ 분기 종합 분석 ══
+    const anaHdrRow = er(); anaHdrRow[0]='분기 종합 분석';
+    const rAnaHdr = R(); addRow(anaHdrRow);
+    addMerge(rAnaHdr,0,TOTAL_COLS-1);
+    setStRange(rAnaHdr,0,TOTAL_COLS-1, cs(C.pink,'FFFFFFFF',true,11,false,'center'));
+
+    const anaRow = er(); anaRow[0]='선생님의  종합  코멘트';
+    const rAna = R(); addRow(anaRow);
+    addMerge(rAna,0,3); addMerge(rAna,4,TOTAL_COLS-1);
+    setStRange(rAna,0,TOTAL_COLS-1, cs(C.white,C.black,false,9,true,'left'));
+    setSt(rAna,0, cs(C.dgray,C.black,true,9,false,'center'));
+    // 코멘트 입력용 빈행 여러 줄
+    for(let ci=0;ci<4;ci++){
+      const rCi = R(); addRow(er());
+      addMerge(rCi,0,TOTAL_COLS-1);
+      setStRange(rCi,0,TOTAL_COLS-1, cs(C.white,C.black,false,9,true));
+      if(ci===0) setSt(rCi,0, {...cs(C.white), border:{top:{style:'thin',color:{rgb:'FFDDDDDD'}},bottom:null,left:{style:'thin',color:{rgb:'FFDDDDDD'}},right:{style:'thin',color:{rgb:'FFDDDDDD'}}}});
+    }
+
+    // ── 시트 빌드 ──
     const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!merges'] = merges;
+
+    // 기본 스타일 적용 (모든 셀 중앙정렬 + 테두리)
     Object.keys(ws).forEach(addr=>{
       if(addr.startsWith('!')) return;
       if(!ws[addr]) return;
-      ws[addr].s = {alignment:{horizontal:'center', vertical:'center', wrapText:false}};
+      if(!ws[addr].s) ws[addr].s = cs(C.white);
     });
-    ws['!merges'] = merges;
-    if(testResultRow >= 0){
-      if(!ws['!rows']) ws['!rows'] = [];
-      ws['!rows'][testResultRow] = {hpt: testResultLines.length * 20 + 10};
-    }
-    ws['!cols'] = [{wch:10},{wch:3},{wch:3},{wch:3}];
-    for(let i=0;i<MAX_SESS;i++) ws['!cols'].push({wch:5},{wch:5});
-    ws['!cols'].push({wch:3},{wch:3},{wch:3},{wch:9});
+
+    // cellStyles 적용
+    Object.entries(cellStyles).forEach(([key, style])=>{
+      const [r,c]=key.split('_').map(Number);
+      const addr=XLSX.utils.encode_cell({r,c});
+      if(!ws[addr]) ws[addr]={v:'',t:'s'};
+      ws[addr].s = style;
+    });
+
+    // * 셀 노란색 배경
+    starCells.forEach(({r,c})=>{
+      const addr=XLSX.utils.encode_cell({r,c});
+      if(!ws[addr]) ws[addr]={v:'',t:'s'};
+      ws[addr].s = cs(C.yellow.slice(2)?C.yellow:null, C.black, true, 9);
+      if(ws[addr].s) ws[addr].s.fill={patternType:'solid',fgColor:{rgb:'FFFF00'}};
+    });
+
+    // 열 너비
+    const colWidths = [
+      {wch:12},{wch:6},{wch:6},{wch:6},  // 0~3
+    ];
+    for(let i=0;i<12;i++) colWidths.push({wch:5}); // 4~15 (월별)
+    colWidths.push({wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:10},{wch:10}); // 16~29
+    ws['!cols'] = colWidths;
+
+    // 행 높이
+    if(!ws['!rows']) ws['!rows']=[];
+    ws['!rows'][r0]={hpt:28}; // 타이틀
+    ws['!rows'][r4]={hpt:22}; // 로드맵 타이틀
 
     XLSX.utils.book_append_sheet(wb, ws, (s.name||'학생').slice(0,31));
   });
 
-  if(!wb.SheetNames.length){ toast('학생이 없습니다.', true); return; }
-
+  if(!wb.SheetNames.length){ toast('학생이 없습니다.',true); return; }
   XLSX.writeFile(wb, `ES분기레포트_${y}_${qNum}분기.xlsx`, {cellStyles:true});
   toast(`ES ${qNum}분기 레포트 다운로드 완료`);
 }
