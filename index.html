@@ -1,4 +1,4 @@
-<!-- v20260618_avg_ac-af -->
+<!-- v20260618_ac-af -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -11042,49 +11042,50 @@ function exportESReport(){
     function setSt(r,c,style){ cellStyles[r+'_'+c]=style; }
     function setStRange(r,c1,c2,style){ for(let c=c1;c<=c2;c++) setSt(r,c,style); }
 
-    // ══ 행 1: 로고 + 제목 ══
-    const titleRow = er();
-    titleRow[0] = 'ES수학학원';
-    titleRow[3] = `${y}년 ${qNum}분기(${months[0].toString().padStart(2,'0')}~${months[2].toString().padStart(2,'0')}월) ES수학학원 레포트`;
-    const r0 = R(); addRow(titleRow);
-    addMerge(r0,0,2);
-    addMerge(r0,3,TOTAL_COLS-1);
-    setStRange(r0,0,TOTAL_COLS-1, cs(C.titleBg,'FFFFFFFF',true,14,false,'center'));
-    setSt(r0,0, cs(C.logoGreen,'FFFFFFFF',true,16,false,'center'));
+    // ══ 행 1~6: 빈 행 (엑셀 1~6행 — 이미지 기준 행 번호 맞추기) ══
+    // 목표: 학생정보=행7, 학습기간=행8, 숨김=행9, 타이틀=행10, 숨김=행11, 첫달헤더=행12
+    for(let pi=0;pi<6;pi++){
+      const rPad=R(); addRow(er());
+      setStRange(rPad,0,TOTAL_COLS-1,cs(C.white));
+    }
 
-    // ══ 행 2: 빈 행 (간격) ══
-    const r1 = R(); addRow(er());
-    setStRange(r1,0,TOTAL_COLS-1, cs(C.white));
+    // ══ 행 7: 학생 정보 헤더 (이름/학교/학년/학습키) ══
+    const infoHdrRow = er();
+    infoHdrRow[0]  = '이름';
+    infoHdrRow[1]  = s.name||'';
+    infoHdrRow[3]  = '학교';
+    infoHdrRow[5]  = '';
+    infoHdrRow[8]  = '학년';
+    infoHdrRow[10] = '';
+    infoHdrRow[13] = '학습  기간';
+    const r0 = R(); addRow(infoHdrRow);
+    addMerge(r0,1,2); addMerge(r0,5,7); addMerge(r0,10,12); addMerge(r0,13,TOTAL_COLS-1);
+    setStRange(r0,0,TOTAL_COLS-1, cs(C.infoBg,C.black,false,10,false,'center'));
+    setSt(r0,0, cs(C.dgray,C.black,true,10));
+    setSt(r0,3, cs(C.dgray,C.black,true,10));
+    setSt(r0,8, cs(C.dgray,C.black,true,10));
+    setSt(r0,13,cs(C.dgray,C.black,true,10));
 
-    // ══ 행 3: 학생 정보 ══
-    const infoRow = er();
-    infoRow[0]  = '이름';
-    infoRow[1]  = s.name||'';
-    infoRow[3]  = '학교';
-    infoRow[5]  = '';           // 직접 입력
-    infoRow[8]  = '학년';
-    infoRow[10] = '';           // 직접 입력
-    infoRow[13] = '학습  기간';
-    infoRow[15] = qLabel;
-    const r2 = R(); addRow(infoRow);
-    addMerge(r2,1,2); addMerge(r2,5,7); addMerge(r2,10,12); addMerge(r2,15,TOTAL_COLS-1);
-    setStRange(r2,0,TOTAL_COLS-1, cs(C.infoBg,C.black,false,10,false,'center'));
-    setSt(r2,0,  cs(C.dgray,C.black,true,10)); setSt(r2,3,  cs(C.dgray,C.black,true,10));
-    setSt(r2,8,  cs(C.dgray,C.black,true,10)); setSt(r2,13, cs(C.dgray,C.black,true,10));
-    setSt(r2,15, cs(C.infoBg,C.black,false,10,false,'left'));
+    // ══ 행 8: 학습기간 값 (병합 이어짐) ══
+    const infoValRow = er();
+    infoValRow[13] = qLabel;
+    const r1 = R(); addRow(infoValRow);
+    addMerge(r1,0,12); addMerge(r1,13,TOTAL_COLS-1);
+    setStRange(r1,0,TOTAL_COLS-1, cs(C.infoBg,C.black,false,10,false,'center'));
+    setSt(r1,13, cs(C.infoBg,C.black,false,10,false,'center'));
 
-    // ══ 행 4: 빈 행 ══
-    const r3 = R(); addRow(er());
-    setStRange(r3,0,TOTAL_COLS-1, cs(C.white));
+    // ══ 행 9: 숨김 빈 행 ══
+    const r2 = R(); addRow(er());
+    setStRange(r2,0,TOTAL_COLS-1, cs(C.white));
 
-    // ══ 행 5: "2026년 학습 개별 맞춤 로드맵" 타이틀 ══
+    // ══ 행 10: "학습 개별 맞춤 로드맵" 타이틀 ══
     const lrmTitleRow = er();
     lrmTitleRow[0] = `${y}년 학습 개별 맞춤 로드맵`;
     const r4 = R(); addRow(lrmTitleRow);
     addMerge(r4,0,TOTAL_COLS-1);
     setStRange(r4,0,TOTAL_COLS-1, cs(C.pink,'FFFFFFFF',true,13,false,'center'));
 
-    // ══ 행 6: 빈 행 ══
+    // ══ 행 11: 숨김 빈 행 ══
     const r5 = R(); addRow(er());
     setStRange(r5,0,TOTAL_COLS-1, cs(C.white));
 
@@ -11291,15 +11292,21 @@ function exportESReport(){
     const rSp4 = R(); addRow(er()); setStRange(rSp4,0,TOTAL_COLS-1,cs(C.white));
 
     // ══ 교재 로드맵 바 ══
+    // 열 구조: col0~3=교재명(4열), col4~5=1번째월(2열), ..., col26~27=12번째월(2열), col28~31=빈칸(4열)
+    // PD_MONTH_START/STEP 재사용 (4, 2)
     const rmBarHdrRow = er();
     rmBarHdrRow[0]='교재 로드맵';
     for(let i=0;i<12;i++){
       const ml=((roadmapStartMonth-1+i)%12)+1;
-      rmBarHdrRow[4+i]=ml+'월';
+      rmBarHdrRow[PD_MONTH_START+i*PD_MONTH_STEP]=ml+'월';
     }
-    rmBarHdrRow[16]='';
     const rRmBarHdr = R(); addRow(rmBarHdrRow);
-    addMerge(rRmBarHdr,0,2); addMerge(rRmBarHdr,3,3);
+    addMerge(rRmBarHdr,0,LABEL_END);
+    for(let i=0;i<12;i++){
+      const c=PD_MONTH_START+i*PD_MONTH_STEP;
+      addMerge(rRmBarHdr,c,c+PD_MONTH_STEP-1);
+    }
+    addMerge(rRmBarHdr,AVG_COL,TOTAL_COLS-1);
     setStRange(rRmBarHdr,0,TOTAL_COLS-1, cs(C.lblue,C.black,true,9));
     setSt(rRmBarHdr,0, cs(C.dgray,C.black,true,9));
 
@@ -11326,12 +11333,13 @@ function exportESReport(){
       rmRow[0]=tbName; rmRow[3]=rowType;
       const rRm = R(); addRow(rmRow);
       addMerge(rRm,0,2);
+      addMerge(rRm,AVG_COL,TOTAL_COLS-1);
       const bg=ti%2===0?C.lgreen:C.white;
       setStRange(rRm,0,TOTAL_COLS-1, cs(bg,C.black,false,9));
       setSt(rRm,0, cs(bg,C.black,false,9,'left'));
       setSt(rRm,3, cs(bg,C.black,true,9));
 
-      // 활성 구간 계산
+      // 활성 구간 계산 (각 월 슬롯 = 2열 단위)
       const sY=startDate?parseInt(startDate.slice(0,4)):0;
       const sM=startDate?parseInt(startDate.slice(5,7)):0;
       const pY=passDate?parseInt(passDate.slice(0,4)):0;
@@ -11349,15 +11357,17 @@ function exportESReport(){
         if(passDate) before=(sl.y<pY)||(sl.y===pY&&sl.m<=pM);
         return after&&before;
       });
+      // 연속 활성 구간을 2열 단위로 병합
       let i=0;
       while(i<12){
         if(flags[i]){
           let j=i;
           while(j+1<12&&flags[j+1]) j++;
-          const c0=4+i, c1=4+j;
+          // i번째 월 시작열 ~ j번째 월 끝열
+          const c0=PD_MONTH_START+i*PD_MONTH_STEP;
+          const c1=PD_MONTH_START+j*PD_MONTH_STEP+(PD_MONTH_STEP-1);
           rmRow[c0]=rowType;
           if(c1>c0) merges.push({s:{r:rRm,c:c0},e:{r:rRm,c:c1}});
-          // 활성 구간 색상: 현행=초록, 선행=파랑
           const barBg=rowType==='선행'?'FFB8D4F0':'FF90D4A8';
           for(let k=c0;k<=c1;k++) setSt(rRm,k, cs(barBg,C.black,true,9));
           i=j+1;
@@ -11414,18 +11424,20 @@ function exportESReport(){
       if(ws[addr].s) ws[addr].s.fill={patternType:'solid',fgColor:{rgb:'FFFF00'}};
     });
 
-    // 열 너비
+    // 열 너비 — 총 32열 (A~AF)
+    // col0~3: 라벨(넓게), col4~27: 1차~12차(각 2열씩, 좁게), col28~31: 평균(4열, 중간)
     const colWidths = [
-      {wch:12},{wch:6},{wch:6},{wch:6},  // 0~3
+      {wch:13},{wch:5},{wch:5},{wch:7},   // col0~3: 라벨
     ];
-    for(let i=0;i<12;i++) colWidths.push({wch:5}); // 4~15 (월별)
-    colWidths.push({wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:8},{wch:10},{wch:10}); // 16~29
+    for(let i=0;i<24;i++) colWidths.push({wch:4}); // col4~27: 차수 데이터 (2열씩 12차)
+    colWidths.push({wch:7},{wch:7},{wch:7},{wch:7}); // col28~31: 평균
     ws['!cols'] = colWidths;
 
     // 행 높이
     if(!ws['!rows']) ws['!rows']=[];
-    ws['!rows'][r0]={hpt:28}; // 타이틀
-    ws['!rows'][r4]={hpt:22}; // 로드맵 타이틀
+    ws['!rows'][r0]={hpt:20}; // 행7: 학생정보 헤더
+    ws['!rows'][r1]={hpt:20}; // 행8: 학습기간
+    ws['!rows'][r4]={hpt:22}; // 행10: 로드맵 타이틀
 
     XLSX.utils.book_append_sheet(wb, ws, (s.name||'학생').slice(0,31));
   });
