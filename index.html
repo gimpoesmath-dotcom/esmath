@@ -1,4 +1,4 @@
-<!-- v20260618_styled_quarterly_report -->
+<!-- v20260618_avg_ac-af -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -440,7 +440,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260618_styled_quarterly_report';
+const APP_VERSION = 'v20260618_avg_ac-af';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -10817,17 +10817,17 @@ function exportESReport(){
   }
 
   // ── 열 구조 ──
-  // 전체 30열 (A=0 ~ AD=29)
+  // 전체 32열 (A=0 ~ AF=31)
   // col 0: 라벨 (넓게)
   // col 1~2: 빈 병합용
   // col 3: 구분/값
   // col 4~27: 1차~12차 (각 2열 병합, DATA_START=4, DATA_STEP=2)
-  // col 28~29: 평균 (2열 병합)
+  // col 28~31: 평균 (AC~AF, 4열 병합)
   const DATA_START = 4;
   const DATA_STEP  = 2;
   const MAX_SESS   = 12;
   const AVG_COL    = 28;
-  const TOTAL_COLS = 30;
+  const TOTAL_COLS = 32;
   const LABEL_END  = 3;  // 0~3 병합
 
   function er(){ return new Array(TOTAL_COLS).fill(''); }
