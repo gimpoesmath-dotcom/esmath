@@ -440,7 +440,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260618_avg_ac-af';
+const APP_VERSION = 'v260622v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -1076,7 +1076,9 @@ async function firebaseAction(action, body){
     try{
       const latestMainSnap = await getDoc(configDocRef());
       if(latestMainSnap.exists()){
+        const legacyExclude = new Set(['makeupDays','students','textbooks']);
         Object.keys(latestMainSnap.data()).forEach(k=>{
+          if(legacyExclude.has(k)) return; // 더 이상 main에 두지 않는 필드 — 보존하지 않음(자연 삭제)
           if(!k.startsWith('_') && !(k in mainToSave)){
             mainToSave[k] = latestMainSnap.data()[k];
           }
@@ -6464,6 +6466,7 @@ function renderSaturdayTable(){
   let h=`<div style="margin-top:24px">
     <div class="toolbar" style="margin-bottom:6px">
       <div class="sec-lbl" style="margin:0">🗓 토요 보강 시간표</div>
+      <button class="btn btn-sm" onclick="refreshSaturdayTable(this)" title="보강 데이터 새로고침">🔄</button>
       <button class="btn btn-primary btn-sm" onclick="openM('addSatStudent')">+ 학생 추가</button>
     </div>
     <div style="font-size:11px;color:var(--text2);margin-bottom:8px">${st.year}년 ${st.month}월 보강일별 학생 배치 · 1교시 10:00~12:00 / 2교시 12:00~14:00 · 학생 칩 클릭 → 변경/제거</div>`;
@@ -6631,6 +6634,20 @@ async function schQuickSave(sid, field, val){
 
 /* makeup_days 컬렉션 전체 로드 → cfg.makeupDays 캐시 재구성
    forceRefresh=true 이면 sessionStorage 캐시를 무시하고 서버에서 직접 읽음 */
+/* 토요 보강 시간표 — 새로고침 버튼 핸들러 (서버에서 강제 재로딩) */
+async function refreshSaturdayTable(btn){
+  if(btn) btn.disabled=true;
+  try{
+    await loadMakeupDaysFromCollection(true);
+    render();
+    toast('보강 시간표 새로고침 완료');
+  }catch(e){
+    toast('새로고침 실패: '+e.message, true);
+  }finally{
+    if(btn) btn.disabled=false;
+  }
+}
+
 async function loadMakeupDaysFromCollection(forceRefresh=false){
   const CACHE_KEY = 'makeup_days_cache';
   const {getDocs, collection} = fb();
