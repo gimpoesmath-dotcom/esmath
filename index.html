@@ -6229,7 +6229,10 @@ function rToday(){
       // 오늘이 사이클에 없으면(비수업일 등) 알람 없음
       if(!currentCycle) return false;
       // 현재 사이클 내에서 오늘(포함)까지의 날짜만 확인
-      const checkDates = currentCycle.dates.filter(d => d <= dateStr);
+      // (등록일 이전 날짜는 참여 자체가 불가능했으므로 검사 대상에서 제외)
+      const sJoinDate = s.joinDate||'';
+      let checkDates = currentCycle.dates.filter(d => d <= dateStr);
+      if(sJoinDate) checkDates = checkDates.filter(d => d >= sJoinDate);
       // 그 중 출결 기록이 없는 날이 하나라도 있으면 알람
       return checkDates.some(d=>{
         const l = mdb.lessons[lk(s.id, d)];
