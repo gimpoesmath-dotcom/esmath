@@ -447,7 +447,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260622v2';
+const APP_VERSION = 'v20260623v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -3297,14 +3297,65 @@ async function changeSeriesTier(seriesName, tier){
 }
 
 async function delTextbook(id){
-  if(!confirm('교재를 삭제합니다. 학생 배정 정보도 함께 제거됩니다. 계속하시겠어요?')) return;
+  // 이 교재와 관련된 진도/시험 기록 보유 학생 집계
+  const studentsWithProgress=[];
+  const studentsWithTests=[];
+  (cfg.students||[]).forEach(s=>{
+    const progKey=tbKey(s.id, String(id));
+    if(textbookProgress[progKey]) studentsWithProgress.push(s.id);
+    if(textbookTests[s.id] && textbookTests[s.id][String(id)] && textbookTests[s.id][String(id)].length>0) studentsWithTests.push(s.id);
+  });
+  const hasRecords = studentsWithProgress.length>0 || studentsWithTests.length>0;
+
+  let deleteRecords=false;
+  if(hasRecords){
+    const parts=[];
+    if(studentsWithProgress.length) parts.push(`진도 기록 ${studentsWithProgress.length}명`);
+    if(studentsWithTests.length) parts.push(`시험 기록 ${studentsWithTests.length}명`);
+    deleteRecords = confirm(
+      `교재를 삭제합니다. 학생 배정 정보도 함께 제거됩니다.\n\n이 교재의 ${parts.join(' · ')}이 남아있습니다.\n함께 삭제하시겠어요?\n\n확인 → 교재 + 배정 + 모든 관련 기록 삭제\n취소 → 교재 + 배정만 삭제 (기록은 보존)`
+    );
+  } else {
+    if(!confirm('교재를 삭제합니다. 학생 배정 정보도 함께 제거됩니다. 계속하시겠어요?')) return;
+  }
+
   cfg.textbooks = (cfg.textbooks||[]).filter(b=>b.id!==id);
   // 학생들의 textbooks에서도 제거
   (cfg.students||[]).forEach(s=>{
     if(s.textbooks) s.textbooks=s.textbooks.filter(t=>t.tbId!==id);
   });
-  await gasCall('saveConfig',{config:cfg});
-  render();
+
+  try{
+    if(deleteRecords){
+      const {getDocs,deleteDoc,query,where}=fb();
+
+      // 시험 기록 일괄 삭제
+      if(studentsWithTests.length){
+        const col=collection(fbDb(),'textbook_tests');
+        const q=query(col,where('textbookId','==',String(id)));
+        const snap=await getDocs(q);
+        for(const d of snap.docs) await deleteDoc(d.ref);
+        studentsWithTests.forEach(sid=>{ if(textbookTests[sid]) delete textbookTests[sid][String(id)]; });
+      }
+
+      // 진도 기록 일괄 삭제
+      if(studentsWithProgress.length){
+        for(const sid of studentsWithProgress){
+          const progKey=tbKey(sid, String(id));
+          await deleteDoc(tbProgressDocRef(progKey));
+          delete textbookProgress[progKey];
+        }
+      }
+    } else if(hasRecords){
+      toast('관련 기록은 보존됩니다.');
+    }
+
+    await gasCall('saveConfig',{config:cfg});
+    render();
+    toast(deleteRecords ? '교재 및 모든 관련 기록이 삭제됐습니다.' : '교재가 삭제됐습니다.');
+  }catch(e){
+    toast('저장 실패: '+e.message, true);
+  }
 }
 
 /* ── WEEKLY HELPERS ── */
@@ -7354,21 +7405,39 @@ function rSettings(){
     h+=`</div>`;
   }
 
-  // ⑤ 휴일
-  h+=`<div class="toolbar" style="margin-top:14px"><b>🗓 휴일 관리</b>${isPrincipal?`<button class="btn btn-primary btn-sm" onclick="openM('addHol')">+ 휴일 추가</button>`:''}</div>
-  <div class="notice">휴일로 등록된 날은 수업 회차 계산에서 자동 제외됩니다.</div>
+  // ⑤ 휴일 (선택된 연도 기준으로만 노출, 접기/펼치기 가능)
+  const holOpen = st.holOpen !== false; // 기본 펼침
+  h+=`<div class="toolbar" style="margin-top:14px">
+    <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="st.holOpen=!(st.holOpen!==false);render()">
+      <b>🗓 휴일 관리 (${st.year}년)</b>
+      <span style="font-size:11px;color:var(--text3);user-select:none">${holOpen?'▲ 접기':'▼ 펼치기'}</span>
+    </div>
+    ${holOpen&&isPrincipal?`<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openM('addHol')">+ 휴일 추가</button>`:''}
+  </div>`;
+  if(holOpen){
+  h+=`<div class="notice">휴일로 등록된 날은 수업 회차 계산에서 자동 제외됩니다. 현재 ${st.year}년 휴일만 표시됩니다.</div>
   <div class="card">`;
-  const hols=cfg.holidays||[];
-  if(!hols.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 휴일 없음</div>`;}
+  const hols=(cfg.holidays||[]).filter(hd=>hd.slice(0,4)===String(st.year));
+  if(!hols.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">${st.year}년에 등록된 휴일 없음</div>`;}
   else{[...hols].sort().forEach(hd=>{const dd=parseDate(hd);h+=`<div class="hi"><span>${hd} (${DAY[dd.getDay()]})</span>${isPrincipal?`<button class="btn btn-sm" onclick="delHol('${hd}')">삭제</button>`:''}</div>`;});}
   h+=`</div>`;
+  } // holOpen 닫기
 
-  // ⑥ 토요보강일
-  h+=`<div class="toolbar" style="margin-top:14px"><b>📅 토요보강일 관리</b>${isPrincipal?`<button class="btn btn-primary btn-sm" onclick="openM('addMkDay')">+ 보강일 추가</button>`:''}</div>
-  <div class="notice">매월 토요보강이 진행되는 날을 등록하세요. 학생 배치는 <b>시간표 → 토요보강 시간표</b>에서 관리합니다.</div>
+  // ⑥ 토요보강일 (선택된 월 이후 일정만 노출, 접기/펼치기 가능)
+  const mkOpen = st.mkOpen !== false; // 기본 펼침
+  h+=`<div class="toolbar" style="margin-top:14px">
+    <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="st.mkOpen=!(st.mkOpen!==false);render()">
+      <b>📅 토요보강일 관리 (${st.year}년 ${st.month}월 이후)</b>
+      <span style="font-size:11px;color:var(--text3);user-select:none">${mkOpen?'▲ 접기':'▼ 펼치기'}</span>
+    </div>
+    ${mkOpen&&isPrincipal?`<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openM('addMkDay')">+ 보강일 추가</button>`:''}
+  </div>`;
+  if(mkOpen){
+  h+=`<div class="notice">매월 토요보강이 진행되는 날을 등록하세요. 학생 배치는 <b>시간표 → 토요보강 시간표</b>에서 관리합니다. ${st.year}년 ${st.month}월 이후 일정만 표시됩니다.</div>
   <div class="card">`;
-  const mkDayList=getAllMakeupDates(); // 모든 등록된 보강일
-  if(!mkDayList.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 토요보강일 없음</div>`;}
+  const mkCutoff=`${st.year}-${String(st.month).padStart(2,'0')}-01`;
+  const mkDayList=getAllMakeupDates().filter(md=>md>=mkCutoff); // 선택된 월 1일 이후 보강일만
+  if(!mkDayList.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">${st.year}년 ${st.month}월 이후 등록된 토요보강일 없음</div>`;}
   else{
     mkDayList.forEach(md=>{
       const dd=parseDate(md);
@@ -7379,6 +7448,8 @@ function rSettings(){
     });
   }
   h+=`</div>`;
+  } // mkOpen 닫기
+
 
   // ⑥-2 보강 데이터 정리 도구 (원장만)
   if(isPrincipal){
@@ -9662,13 +9733,22 @@ async function saveTbStartDate(sid, tbId, dateVal){
 async function removeStuTextbook(sid, tbId){
   const s=cfg.students.find(x=>x.id===sid); if(!s) return;
   if(!s.textbooks){ toast('교재를 찾을 수 없습니다.', true); return; }
-  if(!confirm('교재 배정을 제거합니다. 계속하시겠어요?')) return;
 
-  // 방안 3: 시험 기록 삭제 여부 확인
+  // 진도/시험 기록 존재 여부 확인
   const hasTests = textbookTests[sid] && textbookTests[sid][String(tbId)] && textbookTests[sid][String(tbId)].length > 0;
-  let deleteTests = false;
-  if(hasTests){
-    deleteTests = confirm('이 교재의 시험 기록도 함께 삭제하시겠어요?\n\n확인 → 시험 기록 삭제\n취소 → cfg만 삭제 (시험 기록 보존)');
+  const progKey = tbKey(sid, String(tbId));
+  const hasProgress = !!textbookProgress[progKey];
+
+  let deleteRecords = false;
+  if(hasTests || hasProgress){
+    const parts=[];
+    if(hasProgress) parts.push('진도 기록');
+    if(hasTests) parts.push('시험 기록');
+    deleteRecords = confirm(
+      `교재 배정을 제거합니다.\n\n이 교재의 ${parts.join('·')}이 남아있습니다.\n함께 삭제하시겠어요?\n\n확인 → 배정 + ${parts.join('·')} 모두 삭제\n취소 → 배정만 제거 (기록은 보존, 나중에 같은 교재 재배정 시 자동 연결됨)`
+    );
+  } else {
+    if(!confirm('교재 배정을 제거합니다. 계속하시겠어요?')) return;
   }
 
   // tbId 기준으로 삭제 (인덱스 불일치 방지)
@@ -9680,24 +9760,31 @@ async function removeStuTextbook(sid, tbId){
   if(s.textbooks.length === before){ toast('삭제할 교재를 찾을 수 없습니다.', true); return; }
 
   try{
-    // 시험 기록 삭제 선택 시 textbook_tests에서 해당 항목 삭제
-    if(deleteTests){
+    if(deleteRecords){
       const {getDocs,deleteDoc,query,where}=fb();
-      const col=collection(fbDb(),'textbook_tests');
-      const q=query(col,where('studentId','==',sid),where('textbookId','==',String(tbId)));
-      const snap=await getDocs(q);
-      for(const d of snap.docs) await deleteDoc(d.ref);
-      // 로컬 캐시도 정리
-      if(textbookTests[sid]) delete textbookTests[sid][String(tbId)];
-    } else if(hasTests){
-      // 기록 보존 시 orphaned 기록 안내
-      toast(`시험 기록은 보존됩니다. 나중에 같은 교재 재배정 시 자동 연결됩니다.`);
+
+      // 시험 기록 삭제
+      if(hasTests){
+        const col=collection(fbDb(),'textbook_tests');
+        const q=query(col,where('studentId','==',sid),where('textbookId','==',String(tbId)));
+        const snap=await getDocs(q);
+        for(const d of snap.docs) await deleteDoc(d.ref);
+        if(textbookTests[sid]) delete textbookTests[sid][String(tbId)];
+      }
+
+      // 진도 기록 삭제
+      if(hasProgress){
+        await deleteDoc(tbProgressDocRef(progKey));
+        delete textbookProgress[progKey];
+      }
+    } else if(hasTests || hasProgress){
+      toast(`기록은 보존됩니다. 나중에 같은 교재 재배정 시 자동 연결됩니다.`);
     }
 
     await gasCall('saveConfig',{config:cfg});
     closeM();
     render();
-    toast(deleteTests ? '교재 및 시험 기록이 삭제됐습니다.' : '교재가 제거됐습니다.');
+    toast(deleteRecords ? '교재 및 관련 기록이 모두 삭제됐습니다.' : '교재가 제거됐습니다.');
   }catch(e){
     toast('저장 실패: '+e.message, true);
   }
