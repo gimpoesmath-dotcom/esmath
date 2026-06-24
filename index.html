@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v13';
+const APP_VERSION = 'v20260624v14';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -4888,9 +4888,9 @@ function rPoints(){
           // GROWTH: 인증 필수 (위에서 certified 체크)
           const candidates = [];
           if(sc===100 || (isHighStu && sc===-1)){
-            candidates.push({type:'TOP_HONOR', label:'Top Honor', points:20000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} 100점${ex.certified?'':' (미인증)'}`});
+            candidates.push({type:'TOP_HONOR', label:'Top Honor', points:20000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} 100점`});
           } else if(sc>=90){
-            candidates.push({type:isHighStu?'HIGH_HONOR_HIGH':'HIGH_HONOR_MID', label:'High Honor', points:isHighStu?20000:10000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} ${sc}점${ex.certified?'':' (미인증)'}`});
+            candidates.push({type:isHighStu?'HIGH_HONOR_HIGH':'HIGH_HONOR_MID', label:'High Honor', points:isHighStu?20000:10000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} ${sc}점`});
           }
           if(growth!==null){
             if(growth>=30) candidates.push({type:'GROWTH_30',label:'Growth+30',points:20000,note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} +${growth}점`});
@@ -4924,7 +4924,7 @@ function rPoints(){
               <span style="font-size:10px;color:var(--text3)">${esc(gl)}</span>
             </div>
             <div style="font-size:11px;color:var(--text2)">• ${esc(c.label)} <b style="color:#1e6e3a">+${c.points.toLocaleString()}P</b> <span style="color:var(--text3)">${esc(c.note)}</span></div>
-            <div style="font-size:10px;color:var(--text3)">✅ 성적표 인증 완료</div>
+            ${ex?.certified?`<div style="font-size:10px;color:var(--text3)">✅ 성적표 인증 완료</div>`:''}
             ${alreadyDone?`<div style="font-size:11px;color:#1e6e3a;margin-top:2px">✅ 이미 적립됨</div>`:''}
           </div>
           ${isPrin&&!alreadyDone?`<button class="btn btn-sm btn-primary" onclick="settleSchoolExamPoint('${s.id}','${settleId}',${c.points},'${c.type}','${c.label}','${c.note.replace(/'/g,"\'")}')">+${c.points.toLocaleString()}P 적립</button>`:''}
