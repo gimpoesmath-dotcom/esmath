@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v9';
+const APP_VERSION = 'v20260624v10';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2685,7 +2685,7 @@ function rSchoolExam(){
   const activeGrades = GRADE_ORDER.filter(g=>gradeSet.has(g) && !g.startsWith('초'));
 
   // 전체보기 시 고등학생부터 기본 노출 (초기 진입 시 첫 고등 학년으로 설정)
-  if(!st.seGrade || st.seGrade==='all'){
+  if(!st.seGrade){
     const firstHigh = activeGrades.find(g=>g.startsWith('고'));
     if(firstHigh) st.seGrade = firstHigh;
   }
@@ -2763,6 +2763,7 @@ function rSchoolExam(){
       </select>
     </div>
     <div style="display:flex;gap:4px;flex-wrap:wrap">
+      <button class="btn btn-sm ${selGrade==='all'?'btn-primary':''}" onclick="st.seGrade='all';render()">전체 (중+고)</button>
       ${activeGrades.map(g=>`<button class="btn btn-sm ${selGrade===g?'btn-primary':''}" onclick="st.seGrade='${g}';render()">${g}</button>`).join('')}
     </div>
   </div>`;
