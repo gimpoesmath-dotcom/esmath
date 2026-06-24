@@ -447,7 +447,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v2';
+const APP_VERSION = 'v20260624v3';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -7451,14 +7451,24 @@ function rSettings(){
   </div>`;
   if(holOpen){
   h+=`<div class="notice">휴일로 등록된 날은 수업 회차 계산에서 자동 제외됩니다. ${isPrincipal?'날짜를 클릭하면 휴일을 바로 등록/해제할 수 있어요.':''}</div>`;
-  h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start">`;
-  h+=`<div class="card" style="padding:12px">${buildHolCalendarHTML(st.holCalY, st.holCalM, isPrincipal)}</div>`;
-  h+=`<div class="card">`;
+  h+=`<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">`;
+  h+=`<div class="card" style="padding:12px;flex:0 0 auto;width:280px">${buildHolCalendarHTML(st.holCalY, st.holCalM, isPrincipal)}</div>`;
+  h+=`<div class="card" style="flex:1 1 280px;max-height:280px;overflow-y:auto">`;
   const hols=(cfg.holidays||[]).filter(hd=>hd.slice(0,4)===String(st.year));
   if(!hols.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">${st.year}년에 등록된 휴일 없음</div>`;}
-  else{[...hols].sort().forEach(hd=>{const dd=parseDate(hd);h+=`<div class="hi"><span>${hd} (${DAY[dd.getDay()]})</span>${isPrincipal?`<button class="btn btn-sm" onclick="delHol('${hd}')">삭제</button>`:''}</div>`;});}
+  else{
+    h+=`<div style="display:flex;flex-wrap:wrap;gap:6px">`;
+    [...hols].sort().forEach(hd=>{
+      const dd=parseDate(hd);
+      h+=`<div style="display:inline-flex;align-items:center;gap:6px;padding:5px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);font-size:12px">
+        <span>${hd} (${DAY[dd.getDay()]})</span>
+        ${isPrincipal?`<button class="btn btn-sm" style="padding:2px 6px;font-size:10px" onclick="delHol('${hd}')">삭제</button>`:''}
+      </div>`;
+    });
+    h+=`</div>`;
+  }
   h+=`</div>`;
-  h+=`</div>`; // grid 닫기
+  h+=`</div>`; // flex 닫기
   } // holOpen 닫기
 
   // ⑥ 토요보강일 (선택된 월 이후 일정만 노출, 접기/펼치기 가능)
@@ -10823,11 +10833,15 @@ async function confAddHol(){
 }
 async function delHol(h){cfg.holidays=(cfg.holidays||[]).filter(x=>x!==h);clearSessionsCache();await gasCall('saveConfig',{config:cfg});render();}
 
-/* 휴일 캘린더 — 날짜 클릭으로 즉시 휴일 토글 (원장 전용) */
+/* 휴일 캘린더 — 날짜 클릭 시 확인 팝업 후 휴일 토글 (원장 전용) */
 async function toggleHolDate(dStr){
   if(!isPrincipalNow())return;
   cfg.holidays=cfg.holidays||[];
   const i=cfg.holidays.indexOf(dStr);
+  const dd=parseDate(dStr);
+  const label=`${dStr} (${DAY[dd.getDay()]})`;
+  const msg=i>=0?`${label}\n휴일 등록을 해제하시겠어요?`:`${label}\n휴일로 등록하시겠어요?`;
+  if(!confirm(msg)) return;
   if(i>=0) cfg.holidays.splice(i,1); else cfg.holidays.push(dStr);
   clearSessionsCache();
   await gasCall('saveConfig',{config:cfg});render();
