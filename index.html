@@ -424,6 +424,7 @@ window._fbStorage = null;
       <button class="tab" onclick="showTab('points')">💰 포인트</button>
       <button class="tab" onclick="showTab('schedule')">🗓️ 시간표</button>
       <button class="tab" onclick="showTab('students')">학생 관리</button>
+      <button class="tab" onclick="showTab('schoolexam')">🏫 학교성적</button>
       <button class="tab" onclick="showTab('special')">🎯 특강</button>
       <button class="tab" id="tab-myclass" onclick="showTab('myclass')" style="display:none">내 담당반</button>
       <button class="tab" onclick="showTab('settings')">설정</button>
@@ -447,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v5';
+const APP_VERSION = 'v20260624v7';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -638,7 +639,7 @@ async function showApp(){
     if(mct) mct.style.display='none';
     // 새로고침 후 탭 복원
     const savedTab=localStorage.getItem('lastTab')||'';
-    const validTabs=['matrix','today','weekly','monthly','points','schedule','students','special','settings'];
+    const validTabs=['matrix','today','weekly','monthly','points','schedule','students','schoolexam','special','settings'];
     if(savedTab&&validTabs.includes(savedTab)) st.tab=savedTab;
     else if(st.tab==='myclass') st.tab='today';
   }
@@ -2516,8 +2517,11 @@ function showTab(t){
   // 새로고침 후에도 현재 탭 유지
   try{ localStorage.setItem('lastTab', t); } catch(e){}
   if(t!=='special') st.selectedSpecial=null;
-  const order=['matrix','today','weekly','monthly','points','schedule','students','special','myclass','settings'];
-  document.querySelectorAll('.tab').forEach((el,i)=>el.classList.toggle('active',order[i]===t));
+  document.querySelectorAll('.tab').forEach(el=>{
+    const oc=el.getAttribute('onclick')||'';
+    const m=oc.match(/showTab\('([^']+)'\)/);
+    el.classList.toggle('active', m&&m[1]===t);
+  });
   if(t==='students'&&Object.keys(textbookProgress).length===0){
     render();
     loadTextbookProgress().then(()=>loadTextbookTests()).then(()=>render());
@@ -2543,9 +2547,12 @@ function showTab(t){
     loadSpecialLessons().then(()=>render()).catch(e=>console.warn('특강 로드 실패:',e));
     return;
   }
+  if(t==='schoolexam' && !_loaded.schoolExamData){
+    render();
+    loadSchoolExamData().then(()=>render());
+    return;
+  }
   render();
-}
-function render(){
   if(!cfg||!mdb){document.getElementById('main').innerHTML='<div class="empty">데이터 로딩 중...</div>';return;}
   // 매트릭스 탭 스크롤 위치 보존
   let savedScrollLeft=0, savedScrollTop=0;
@@ -2561,6 +2568,7 @@ function render(){
   else if(st.tab==='weekly')   el.innerHTML=rWeekly();
   else if(st.tab==='monthly')  el.innerHTML=rMonthly();
   else if(st.tab==='points')   el.innerHTML=rPoints();
+  else if(st.tab==='schoolexam') el.innerHTML=rSchoolExam();
   else if(st.tab==='special')  el.innerHTML=rSpecial();
   else if(st.tab==='schedule') el.innerHTML=rSchedule();
   else if(st.tab==='students') el.innerHTML=rStudents();
@@ -2581,6 +2589,14 @@ function render(){
   if(st.tab==='points' && st.ptTab==='balance' && st.ptBalSearch){
     requestAnimationFrame(()=>ptBalSearchFilter(st.ptBalSearch));
   }
+}
+
+// render()는 현재 탭을 재렌더링 — 재진입 방지(무한루프 차단)
+let _rendering = false;
+function render(){
+  if(_rendering) return;
+  _rendering = true;
+  try{ showTab(st.tab); } finally{ _rendering = false; }
 }
 
 // 렌더 후 모든 sinp에 프레즌스 이벤트 연결
@@ -2613,6 +2629,266 @@ function attachPresenceListeners(){
       }
     });
   });
+}
+
+/* ══════════════════════════════════════════
+   🏫 학교성적 탭
+══════════════════════════════════════════ */
+function rSchoolExam(){
+  const EXAM_DEFS=[
+    {key:'s1_mid', label:'1학기 중간'},
+    {key:'s1_fin', label:'1학기 기말'},
+    {key:'s2_mid', label:'2학기 중간'},
+    {key:'s2_fin', label:'2학기 기말'},
+  ];
+  const GRADE_ORDER=['초3','초4','초5','초6','중1','중2','중3','고1','고2','고3'];
+  const HIGH_GRADES=['고1','고2','고3'];
+
+  // 고등 등급 변환 (100점 만점 기준 — 실제는 표준점수지만 원점수 참고용)
+  function toGrade(score){
+    if(score===null||score===undefined||isNaN(score)) return null;
+    if(score>=96) return 1;
+    if(score>=89) return 2;
+    if(score>=77) return 3;
+    if(score>=60) return 4;
+    if(score>=40) return 5;
+    if(score>=23) return 6;
+    if(score>=11) return 7;
+    if(score>=4)  return 8;
+    return 9;
+  }
+  function gradeColor(g){
+    if(g<=2) return 'var(--green)';
+    if(g<=4) return 'var(--blue)';
+    if(g<=6) return 'var(--amber)';
+    return 'var(--red)';
+  }
+
+  // 필터 상태 (st에 저장)
+  if(!st.seYear)  st.seYear = new Date().getFullYear();
+  if(!st.seGrade) st.seGrade = 'all';
+
+  const selYear  = st.seYear;
+  const selGrade = st.seGrade;
+
+  // 연도 목록 빌드 (현재 ±2년)
+  const curY = new Date().getFullYear();
+  const years = [];
+  for(let y=curY-2; y<=curY+1; y++) years.push(y);
+
+  // 학생 목록 (활성 학생만)
+  const allStudents = (cfg.students||[]).filter(s=>!s.archived);
+
+  // 실제 데이터 있는 학년 목록 추출
+  const gradeSet = new Set();
+  allStudents.forEach(s=>{ if(s.grade) gradeSet.add(s.grade); });
+  const activeGrades = GRADE_ORDER.filter(g=>gradeSet.has(g));
+
+  // 필터 적용된 학생 목록
+  const students = allStudents
+    .filter(s=>selGrade==='all' || s.grade===selGrade)
+    .sort((a,b)=>{
+      const gi = g=>GRADE_ORDER.indexOf(g||'');
+      const gd = gi(a.grade)-gi(b.grade);
+      if(gd!==0) return gd;
+      return (a.name||'').localeCompare(b.name||'ko');
+    });
+
+  // 학생 시험 데이터 조회 헬퍼
+  // 연도 필터: gradeLabel이 없는 레거시 데이터는 연도 무관 포함
+  // gradeLabel이 있는 데이터는 savedAt의 연도로 필터 (없으면 그냥 포함)
+  function getExamScore(sid, gradeLabel, examKey){
+    const exams = (schoolExamData[sid]?.exams||[]);
+    // gradeLabel 매칭
+    const ex = exams.find(e=>
+      e.type==='school' && e.key===examKey &&
+      (e.gradeLabel===gradeLabel || (!e.gradeLabel))
+    );
+    if(!ex) return null;
+    // 연도 필터: savedAt 연도가 selYear인지 (없으면 통과)
+    if(ex.savedAt){
+      const exYear = parseInt(ex.savedAt.slice(0,4));
+      if(exYear !== selYear) return null;
+    }
+    return ex;
+  }
+
+  // 직전 시험 점수 계산 (학년 넘어가는 경우 포함)
+  function getPrevScore(sid, grade, examKey){
+    const gradeIdx = GRADE_ORDER.indexOf(grade);
+    if(examKey==='s1_mid'){
+      // 직전 학년 s2_fin
+      if(gradeIdx<=0) return null;
+      const prevGrade = GRADE_ORDER[gradeIdx-1];
+      const prevEx = getExamScore(sid, prevGrade, 's2_fin');
+      if(prevEx && prevEx.certified && prevEx.score!==null) return prevEx.score;
+      return null;
+    }
+    const prevKeyMap = {s1_fin:'s1_mid', s2_mid:'s1_fin', s2_fin:'s2_mid'};
+    const prevKey = prevKeyMap[examKey];
+    if(!prevKey) return null;
+    const prevEx = getExamScore(sid, grade, prevKey);
+    if(prevEx && prevEx.score!==null) return prevEx.score;
+    return null;
+  }
+
+  // 학년별 그룹 평균 계산
+  function gradeAvg(gradeStudents, examKey){
+    const grade = gradeStudents[0]?.grade;
+    const scores = gradeStudents.map(s=>{
+      const ex = getExamScore(s.id, s.grade, examKey);
+      return ex && ex.score!==null && !isNaN(ex.score) && ex.score>=0 ? ex.score : null;
+    }).filter(v=>v!==null);
+    if(!scores.length) return null;
+    return Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*10)/10;
+  }
+
+  // ── HTML 빌드 ──
+  let h='';
+
+  // 툴바
+  h+=`<div class="toolbar">
+    <div class="tleft">
+      <span style="font-size:14px;font-weight:700">🏫 학교 시험 성적 현황</span>
+      <select onchange="st.seYear=parseInt(this.value);render()">
+        ${years.map(y=>`<option value="${y}" ${y===selYear?'selected':''}>${y}년</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap">
+      <button class="btn btn-sm ${selGrade==='all'?'btn-primary':''}" onclick="st.seGrade='all';render()">전체</button>
+      ${activeGrades.map(g=>`<button class="btn btn-sm ${selGrade===g?'btn-primary':''}" onclick="st.seGrade='${g}';render()">${g}</button>`).join('')}
+    </div>
+  </div>`;
+
+  if(!students.length){
+    return h+`<div class="empty">해당 학년 학생이 없습니다.</div>`;
+  }
+
+  // 테이블
+  h+=`<div class="matrix-wrap" id="seWrap">
+  <table class="mtbl">
+    <thead>
+      <tr>
+        <th class="col-student hdr">학생</th>
+        ${EXAM_DEFS.map(d=>`<th class="sess-group" style="min-width:130px;padding:6px 10px">${d.label}</th>`).join('')}
+      </tr>
+    </thead>
+    <tbody>`;
+
+  // 학년 그룹별 렌더
+  const gradeGroups = {};
+  students.forEach(s=>{
+    const g = s.grade||'미설정';
+    if(!gradeGroups[g]) gradeGroups[g]=[];
+    gradeGroups[g].push(s);
+  });
+
+  const groupKeys = Object.keys(gradeGroups).sort((a,b)=>
+    GRADE_ORDER.indexOf(a)-GRADE_ORDER.indexOf(b)
+  );
+
+  groupKeys.forEach(grade=>{
+    const gradeStudents = gradeGroups[grade];
+    const isHigh = HIGH_GRADES.includes(grade);
+
+    // 학년 헤더 행 (평균 포함)
+    h+=`<tr>
+      <td colspan="${1+EXAM_DEFS.length}" style="background:#f0f4fa;padding:6px 12px;font-size:11px;font-weight:700;color:var(--text);border-top:2px solid var(--border2)">
+        🎓 ${esc(grade)} &nbsp;<span style="font-weight:400;color:var(--text2)">(${gradeStudents.length}명)</span>
+        ${EXAM_DEFS.map(d=>{
+          const avg=gradeAvg(gradeStudents, d.key);
+          if(avg===null) return '';
+          const c=avg>=90?'var(--green)':avg>=70?'var(--text)':'var(--red)';
+          return `<span style="margin-left:12px;font-size:10px;color:var(--text2)">${d.label} 평균 <b style="color:${c}">${avg}점</b></span>`;
+        }).join('')}
+      </td>
+    </tr>`;
+
+    // 학생 행
+    gradeStudents.forEach((s,si)=>{
+      const rowCls = si%2===0?'row-e':'row-o';
+      h+=`<tr class="${rowCls}">`;
+      // 학생 이름 셀
+      h+=`<td class="col-student" style="cursor:pointer" onclick="openM('studentProfile','${s.id}')">
+        <div style="font-weight:600;font-size:12px">${esc(s.name)}</div>
+        <div style="display:flex;gap:3px;margin-top:2px;flex-wrap:wrap">
+          ${gradeBadge(s.grade)}${levelBadge(s.level)}
+        </div>
+      </td>`;
+
+      // 시험 4칸
+      EXAM_DEFS.forEach(def=>{
+        const ex = getExamScore(s.id, s.grade, def.key);
+        const score = ex ? ex.score : null;
+        const certified = ex ? ex.certified : false;
+        const prevScore = getPrevScore(s.id, s.grade, def.key);
+        const growth = (score!==null && prevScore!==null && !isNaN(score) && !isNaN(prevScore) && score>=0 && prevScore>=0)
+          ? (score - prevScore) : null;
+
+        h+=`<td class="dcell" style="min-width:130px;padding:6px 8px">`;
+
+        if(score===null){
+          // 미입력
+          h+=`<div style="text-align:center;color:var(--text3);font-size:11px">—</div>`;
+        } else if(score===-1){
+          // 고등 1등급 특수값
+          h+=`<div style="text-align:center">
+            <span style="font-size:15px;font-weight:700;color:var(--green)">1등급</span>
+            <div style="font-size:9px;margin-top:2px;color:var(--green)">TOP</div>
+          </div>`;
+        } else {
+          const scoreColor = score>=90?'var(--green)':score>=70?'var(--text)':'var(--red)';
+          const grade_num = isHigh ? toGrade(score) : null;
+
+          h+=`<div style="text-align:center">`;
+          // 점수
+          h+=`<span style="font-size:16px;font-weight:700;color:${scoreColor}">${score}</span>`;
+          h+=`<span style="font-size:10px;color:var(--text2)">점</span>`;
+
+          // 고등: 등급
+          if(grade_num!==null){
+            h+=`<span style="font-size:10px;font-weight:700;color:${gradeColor(grade_num)};margin-left:4px">${grade_num}등급</span>`;
+          }
+
+          // 변화폭
+          if(growth!==null){
+            const gc = growth>0?'var(--green)':growth<0?'var(--red)':'var(--text3)';
+            const arrow = growth>0?'▲':growth<0?'▼':'▶';
+            const label = def.key==='s1_mid'
+              ? `<span style="font-size:8px;color:var(--text3)">(전학년 2기말)</span>`
+              : '';
+            h+=`<div style="font-size:10px;color:${gc};margin-top:1px">${arrow}${Math.abs(growth)}점 ${label}</div>`;
+          } else if(prevScore===null && def.key!=='s1_mid'){
+            // 직전 시험 미입력
+            h+=`<div style="font-size:9px;color:var(--text3);margin-top:1px">직전 미입력</div>`;
+          }
+
+          // 인증 뱃지
+          if(certified){
+            h+=`<div style="margin-top:3px"><span style="font-size:9px;background:#e2f2e9;color:#1e6e3a;border:1px solid #80c090;border-radius:20px;padding:1px 5px">✅ 인증</span></div>`;
+          }
+          h+=`</div>`;
+        }
+
+        h+=`</td>`;
+      });
+
+      h+=`</tr>`;
+    });
+  });
+
+  h+=`</tbody></table></div>`;
+
+  // 범례
+  h+=`<div style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text2);padding:0 2px">
+    <span style="color:var(--green)">● 90점↑</span>
+    <span style="color:var(--text)">● 70~89점</span>
+    <span style="color:var(--red)">● 70점↓</span>
+    <span>▲▼ = 직전 시험 대비 변화 (1학기 중간은 전학년 2학기 기말 비교)</span>
+    ${activeGrades.some(g=>HIGH_GRADES.includes(g))?'<span style="color:var(--text2)">· 고등 등급: 원점수 기준 참고용</span>':''}
+  </div>`;
+
+  return h;
 }
 
 /* ── TEXTBOOK TAB (통합, 소요기간 기반) ── */
