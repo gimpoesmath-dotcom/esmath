@@ -447,7 +447,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v3';
+const APP_VERSION = 'v20260624v4';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2100,6 +2100,7 @@ let st={
   selectedSpecial:null, // 현재 보고 있는 특강 ID (null이면 목록 화면)
   specialLessonsLoaded:false, // 특강 lesson 데이터 로드 여부
   holCalY:now.getFullYear(), holCalM:now.getMonth()+1, // 휴일 캘린더 보기 연/월
+  mkCalY:now.getFullYear(), mkCalM:now.getMonth()+1, // 토요보강 캘린더 보기 연/월
   cycleCt:null, // 회차 사이클 확인 — 선택된 반
   cycleOpen:true,
 };
@@ -7456,36 +7457,26 @@ function rSettings(){
   h+=`<div class="card" style="flex:1 1 280px;max-height:280px;overflow-y:auto">`;
   const hols=(cfg.holidays||[]).filter(hd=>hd.slice(0,4)===String(st.year));
   if(!hols.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">${st.year}년에 등록된 휴일 없음</div>`;}
-  else{
-    h+=`<div style="display:flex;flex-wrap:wrap;gap:6px">`;
-    [...hols].sort().forEach(hd=>{
-      const dd=parseDate(hd);
-      h+=`<div style="display:inline-flex;align-items:center;gap:6px;padding:5px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);font-size:12px">
-        <span>${hd} (${DAY[dd.getDay()]})</span>
-        ${isPrincipal?`<button class="btn btn-sm" style="padding:2px 6px;font-size:10px" onclick="delHol('${hd}')">삭제</button>`:''}
-      </div>`;
-    });
-    h+=`</div>`;
-  }
+  else{[...hols].sort().forEach(hd=>{const dd=parseDate(hd);h+=`<div class="hi"><span>${hd} (${DAY[dd.getDay()]})</span>${isPrincipal?`<button class="btn btn-sm" onclick="delHol('${hd}')">삭제</button>`:''}</div>`;});}
   h+=`</div>`;
   h+=`</div>`; // flex 닫기
   } // holOpen 닫기
 
-  // ⑥ 토요보강일 (선택된 월 이후 일정만 노출, 접기/펼치기 가능)
+  // ⑥ 토요보강일 관리 — 캘린더(좌) + 목록(우) 2단 구성
   const mkOpen = st.mkOpen !== false; // 기본 펼침
   h+=`<div class="toolbar" style="margin-top:14px">
     <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="st.mkOpen=!(st.mkOpen!==false);render()">
-      <b>📅 토요보강일 관리 (${st.year}년 ${st.month}월 이후)</b>
+      <b>📅 토요보강일 관리</b>
       <span style="font-size:11px;color:var(--text3);user-select:none">${mkOpen?'▲ 접기':'▼ 펼치기'}</span>
     </div>
-    ${mkOpen&&isPrincipal?`<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openM('addMkDay')">+ 보강일 추가</button>`:''}
   </div>`;
   if(mkOpen){
-  h+=`<div class="notice">매월 토요보강이 진행되는 날을 등록하세요. 학생 배치는 <b>시간표 → 토요보강 시간표</b>에서 관리합니다. ${st.year}년 ${st.month}월 이후 일정만 표시됩니다.</div>
-  <div class="card">`;
-  const mkCutoff=`${st.year}-${String(st.month).padStart(2,'0')}-01`;
-  const mkDayList=getAllMakeupDates().filter(md=>md>=mkCutoff); // 선택된 월 1일 이후 보강일만
-  if(!mkDayList.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">${st.year}년 ${st.month}월 이후 등록된 토요보강일 없음</div>`;}
+  h+=`<div class="notice">매월 토요보강이 진행되는 날을 등록하세요. 학생 배치는 <b>시간표 → 토요보강 시간표</b>에서 관리합니다. ${isPrincipal?'캘린더에서 토요일을 클릭하면 보강일을 바로 등록/해제할 수 있어요.':''}</div>`;
+  h+=`<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">`;
+  h+=`<div class="card" style="padding:12px;flex:0 0 auto;width:280px">${buildMkCalendarHTML(st.mkCalY, st.mkCalM, isPrincipal)}</div>`;
+  h+=`<div class="card" style="flex:1 1 280px;max-height:280px;overflow-y:auto">`;
+  const mkDayList=getAllMakeupDates();
+  if(!mkDayList.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 토요보강일 없음</div>`;}
   else{
     mkDayList.forEach(md=>{
       const dd=parseDate(md);
@@ -7496,6 +7487,7 @@ function rSettings(){
     });
   }
   h+=`</div>`;
+  h+=`</div>`; // flex 닫기
   } // mkOpen 닫기
 
 
@@ -10853,6 +10845,96 @@ function holCalNav(n){
   st.holCalY=y; st.holCalM=m; render();
 }
 function holCalToday(){const n=new Date();st.holCalY=n.getFullYear();st.holCalM=n.getMonth()+1;render();}
+
+function mkCalNav(n){
+  let m=st.mkCalM+n, y=st.mkCalY;
+  if(m<1){m=12;y--;} if(m>12){m=1;y++;}
+  st.mkCalY=y; st.mkCalM=m; render();
+}
+function mkCalToday(){const n=new Date();st.mkCalY=n.getFullYear();st.mkCalM=n.getMonth()+1;render();}
+
+/* 토요보강일 캘린더 — 토요일 클릭 시 확인 팝업 후 등록/해제 (원장 전용) */
+async function toggleMkDate(dStr){
+  if(!isPrincipalNow())return;
+  const dt=parseDate(dStr);
+  if(dt.getDay()!==6){ alert('토요일만 보강일로 등록할 수 있습니다.'); return; }
+  const label=`${dStr} (토)`;
+  const entry=getMkEntryByDate(dStr);
+  if(entry){
+    const studCount=getMakeupStudents(entry).length;
+    let msg=`${label}\n보강일 등록을 해제하시겠어요?`;
+    if(studCount>0) msg+=`\n\n⚠️ 등록된 학생이 ${studCount}명 있습니다. 해제하면 해당 학생들의 보강 신청도 취소됩니다.`;
+    if(!confirm(msg)) return;
+    const arr=getMakeupStudents(entry);
+    for(const es of arr){
+      Object.values(mdb.lessons||{}).forEach(l=>{
+        if(l.studentId===es.id && l.makeupRequest && l.makeupRequest.date===dStr){
+          delete l.makeupRequest;
+          persistLesson(l).catch(()=>{});
+        }
+      });
+    }
+    const monthKey=dStr.slice(0,7);
+    if(cfg.makeupDays && cfg.makeupDays[monthKey]){
+      cfg.makeupDays[monthKey]=cfg.makeupDays[monthKey].filter(e=>e.date!==dStr);
+      if(!cfg.makeupDays[monthKey].length) delete cfg.makeupDays[monthKey];
+    }
+    await deleteMakeupDayDoc(dStr);
+    render();
+  } else {
+    if(!confirm(`${label}\n보강일로 등록하시겠어요?`)) return;
+    const monthKey=dStr.slice(0,7);
+    if(!cfg.makeupDays) cfg.makeupDays={};
+    if(!cfg.makeupDays[monthKey]) cfg.makeupDays[monthKey]=[];
+    if(!cfg.makeupDays[monthKey].find(e=>e.date===dStr)){
+      cfg.makeupDays[monthKey].push({date:dStr, students:[]});
+      cfg.makeupDays[monthKey].sort((a,b)=>a.date.localeCompare(b.date));
+    }
+    await saveMakeupDayDoc(dStr);
+    render();
+  }
+}
+
+/* 토요보강일 관리 달력 HTML 빌드 — 토요일 클릭 → 보강일 토글 (원장) */
+function buildMkCalendarHTML(y,m,isPrincipal){
+  const first=new Date(y,m-1,1);
+  const startDow=first.getDay();
+  const daysInMonth=new Date(y,m,0).getDate();
+  const todayStr=dk(new Date());
+
+  let h=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <div style="display:flex;align-items:center;gap:6px">
+      <button class="btn btn-sm" onclick="mkCalNav(-1)">‹</button>
+      <b style="min-width:84px;text-align:center;display:inline-block">${y}년 ${m}월</b>
+      <button class="btn btn-sm" onclick="mkCalNav(1)">›</button>
+    </div>
+    <button class="btn btn-sm" onclick="mkCalToday()">오늘</button>
+  </div>`;
+
+  h+=`<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;font-size:11px;color:var(--text3);margin-bottom:4px">
+    ${DAY.map(d=>`<div>${d}</div>`).join('')}
+  </div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">`;
+  for(let i=0;i<startDow;i++) h+=`<div></div>`;
+  for(let d=1;d<=daysInMonth;d++){
+    const dStr=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dow=new Date(y,m-1,d).getDay();
+    const isSat=dow===6;
+    const isRegistered=isSat && !!getMkEntryByDate(dStr);
+    const isToday=dStr===todayStr;
+    const isWeekend=dow===0||dow===6;
+    const clickable=isPrincipal&&isSat;
+
+    h+=`<div ${clickable?`onclick="toggleMkDate('${dStr}')"`:''}
+      style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:var(--r);font-size:12px;cursor:${clickable?'pointer':'default'};
+      background:${isRegistered?'#e6f0fc':'transparent'};
+      color:${isRegistered?'#1558a8':isWeekend?'var(--text3)':'var(--text)'};
+      border:${isToday?'1.5px solid var(--blue)':'1px solid transparent'};
+      font-weight:${isRegistered||isToday?'700':'400'}">${d}</div>`;
+  }
+  h+=`</div>`;
+  return h;
+}
 
 /* 휴일 관리 달력 HTML 빌드 — 날짜 클릭 → 휴일 토글 (원장) */
 function buildHolCalendarHTML(y,m,isPrincipal){
