@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v12';
+const APP_VERSION = 'v20260624v13';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2850,7 +2850,7 @@ function rSchoolExam(){
 
           h+=`<div style="text-align:center">`;
           // 점수
-          h+=`<span style="font-size:16px;font-weight:700;color:${scoreColor}">${score}</span>`;
+          h+=`<span style="font-size:16px;font-weight:700;color:${scoreColor}">${parseFloat(score.toFixed(1))}</span>`;
           h+=`<span style="font-size:10px;color:var(--text2)">점</span>`;
 
           // 고등: 등급 (직접 입력한 경우만 표시)
@@ -2865,7 +2865,7 @@ function rSchoolExam(){
             const label = def.key==='s1_mid'
               ? `<span style="font-size:8px;color:var(--text3)">(전학년 2기말)</span>`
               : '';
-            h+=`<div style="font-size:10px;color:${gc};margin-top:1px">${arrow}${Math.abs(growth)}점 ${label}</div>`;
+            h+=`<div style="font-size:10px;color:${gc};margin-top:1px">${arrow}${Math.abs(parseFloat(growth.toFixed(1)))}점 ${label}</div>`;
           } else if(prevScore===null && def.key!=='s1_mid'){
             // 직전 시험 미입력
             h+=`<div style="font-size:9px;color:var(--text3);margin-top:1px">직전 미입력</div>`;
@@ -8348,10 +8348,10 @@ function renderSchoolExamSection(sid, s, exams, isPrin){
     h += `<div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px">${def.label}${awardBadge}</div>`;
     if(score!==null){
       const color = score>=90?'var(--green)':score>=70?'var(--text)':'var(--red)';
-      h += `<div style="font-size:20px;font-weight:700;color:${color}">${score}<span style="font-size:11px;font-weight:400;color:var(--text2)">점</span></div>`;
+      h += `<div style="font-size:20px;font-weight:700;color:${color}">${parseFloat(score.toFixed(1))}<span style="font-size:11px;font-weight:400;color:var(--text2)">점</span></div>`;
       if(growth!==null){
         const gc=growth>0?'var(--green)':growth<0?'var(--red)':'var(--text2)';
-        h+=`<div style="font-size:11px;color:${gc};margin-top:2px">${growth>0?'+':''}${growth}점 (이전 ${prevScore}점)</div>`;
+        h+=`<div style="font-size:11px;color:${gc};margin-top:2px">${growth>0?'+':''}${parseFloat(growth.toFixed(1))}점 (이전 ${parseFloat(prevScore.toFixed(1))}점)</div>`;
       }
       h += `<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">`;
       if(certified){
