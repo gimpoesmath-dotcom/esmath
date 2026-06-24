@@ -447,7 +447,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v4';
+const APP_VERSION = 'v20260624v5';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -7442,41 +7442,42 @@ function rSettings(){
     h+=`</div>`;
   }
 
-  // ⑤ 휴일 관리 — 캘린더(좌) + 목록(우) 2단 구성
+  // ⑤ 휴일 & 토요보강일 관리 — 한 행에 캘린더/목록 4칸 구성
   const holOpen = st.holOpen !== false; // 기본 펼침
   h+=`<div class="toolbar" style="margin-top:14px">
     <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="st.holOpen=!(st.holOpen!==false);render()">
-      <b>🗓 휴일 관리 (${st.year}년)</b>
+      <b>🗓 휴일 & 토요보강일 관리</b>
       <span style="font-size:11px;color:var(--text3);user-select:none">${holOpen?'▲ 접기':'▼ 펼치기'}</span>
     </div>
   </div>`;
   if(holOpen){
-  h+=`<div class="notice">휴일로 등록된 날은 수업 회차 계산에서 자동 제외됩니다. ${isPrincipal?'날짜를 클릭하면 휴일을 바로 등록/해제할 수 있어요.':''}</div>`;
+  h+=`<div class="notice">휴일로 등록된 날은 수업 회차 계산에서 자동 제외돼요. ${isPrincipal?'캘린더 날짜를 클릭하면 휴일/보강일을 바로 등록·해제할 수 있어요.':''} 보강일은 ${st.year}년 ${st.month}월 이후 일정만 표시됩니다.</div>`;
   h+=`<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">`;
-  h+=`<div class="card" style="padding:12px;flex:0 0 auto;width:280px">${buildHolCalendarHTML(st.holCalY, st.holCalM, isPrincipal)}</div>`;
-  h+=`<div class="card" style="flex:1 1 280px;max-height:280px;overflow-y:auto">`;
+
+  // 1) 휴일 캘린더
+  h+=`<div class="card" style="padding:10px;flex:1 1 220px;min-width:220px;max-width:260px">
+    <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">🗓 휴일</div>
+    ${buildHolCalendarHTML(st.holCalY, st.holCalM, isPrincipal)}
+  </div>`;
+  // 2) 휴일 목록
+  h+=`<div class="card" style="flex:1 1 220px;min-width:220px;max-height:280px;overflow-y:auto">
+    <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">휴일 목록 (${st.year}년)</div>`;
   const hols=(cfg.holidays||[]).filter(hd=>hd.slice(0,4)===String(st.year));
   if(!hols.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">${st.year}년에 등록된 휴일 없음</div>`;}
   else{[...hols].sort().forEach(hd=>{const dd=parseDate(hd);h+=`<div class="hi"><span>${hd} (${DAY[dd.getDay()]})</span>${isPrincipal?`<button class="btn btn-sm" onclick="delHol('${hd}')">삭제</button>`:''}</div>`;});}
   h+=`</div>`;
-  h+=`</div>`; // flex 닫기
-  } // holOpen 닫기
 
-  // ⑥ 토요보강일 관리 — 캘린더(좌) + 목록(우) 2단 구성
-  const mkOpen = st.mkOpen !== false; // 기본 펼침
-  h+=`<div class="toolbar" style="margin-top:14px">
-    <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="st.mkOpen=!(st.mkOpen!==false);render()">
-      <b>📅 토요보강일 관리</b>
-      <span style="font-size:11px;color:var(--text3);user-select:none">${mkOpen?'▲ 접기':'▼ 펼치기'}</span>
-    </div>
+  // 3) 토요보강 캘린더
+  h+=`<div class="card" style="padding:10px;flex:1 1 220px;min-width:220px;max-width:260px">
+    <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">📅 토요보강</div>
+    ${buildMkCalendarHTML(st.mkCalY, st.mkCalM, isPrincipal)}
   </div>`;
-  if(mkOpen){
-  h+=`<div class="notice">매월 토요보강이 진행되는 날을 등록하세요. 학생 배치는 <b>시간표 → 토요보강 시간표</b>에서 관리합니다. ${isPrincipal?'캘린더에서 토요일을 클릭하면 보강일을 바로 등록/해제할 수 있어요.':''}</div>`;
-  h+=`<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">`;
-  h+=`<div class="card" style="padding:12px;flex:0 0 auto;width:280px">${buildMkCalendarHTML(st.mkCalY, st.mkCalM, isPrincipal)}</div>`;
-  h+=`<div class="card" style="flex:1 1 280px;max-height:280px;overflow-y:auto">`;
-  const mkDayList=getAllMakeupDates();
-  if(!mkDayList.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 토요보강일 없음</div>`;}
+  // 4) 토요보강 목록 (선택된 월 이후만)
+  h+=`<div class="card" style="flex:1 1 220px;min-width:220px;max-height:280px;overflow-y:auto">
+    <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">보강일 목록 (${st.year}년 ${st.month}월~)</div>`;
+  const mkCutoff=`${st.year}-${String(st.month).padStart(2,'0')}-01`;
+  const mkDayList=getAllMakeupDates().filter(md=>md>=mkCutoff);
+  if(!mkDayList.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">${st.year}년 ${st.month}월 이후 등록된 토요보강일 없음</div>`;}
   else{
     mkDayList.forEach(md=>{
       const dd=parseDate(md);
@@ -7487,11 +7488,12 @@ function rSettings(){
     });
   }
   h+=`</div>`;
+
   h+=`</div>`; // flex 닫기
-  } // mkOpen 닫기
+  } // holOpen 닫기
 
 
-  // ⑥-2 보강 데이터 정리 도구 (원장만)
+  // ⑤-2 보강 데이터 정리 도구 (원장만)
   if(isPrincipal){
     h+=`<div class="toolbar" style="margin-top:14px"><b>🧹 보강 데이터 정리</b>
       <button class="btn btn-sm" onclick="diagnoseMakeupData()">🔍 진단하기</button>
