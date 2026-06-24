@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v7';
+const APP_VERSION = 'v20260624v8';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2591,14 +2591,6 @@ function showTab(t){
   }
 }
 
-// render()는 현재 탭을 재렌더링 — 재진입 방지(무한루프 차단)
-let _rendering = false;
-function render(){
-  if(_rendering) return;
-  _rendering = true;
-  try{ showTab(st.tab); } finally{ _rendering = false; }
-}
-
 // 렌더 후 모든 sinp에 프레즌스 이벤트 연결
 function attachPresenceListeners(){
   if(!window._fb||!session) return;
@@ -2671,18 +2663,26 @@ function rSchoolExam(){
   const selYear  = st.seYear;
   const selGrade = st.seGrade;
 
-  // 연도 목록 빌드 (현재 ±2년)
+  // 연도 목록 빌드 (2024 ~ 현재 연도, 매년 자동 증가)
   const curY = new Date().getFullYear();
   const years = [];
-  for(let y=curY-2; y<=curY+1; y++) years.push(y);
+  for(let y=2024; y<=curY; y++) years.push(y);
 
-  // 학생 목록 (활성 학생만)
-  const allStudents = (cfg.students||[]).filter(s=>!s.archived);
+  // 학생 목록 (활성 학생, 초등 제외)
+  const allStudents = (cfg.students||[]).filter(s=>!s.archived && s.grade && !s.grade.startsWith('초'));
 
-  // 실제 데이터 있는 학년 목록 추출
+  // 실제 데이터 있는 학년 목록 추출 (초등 제외)
   const gradeSet = new Set();
   allStudents.forEach(s=>{ if(s.grade) gradeSet.add(s.grade); });
-  const activeGrades = GRADE_ORDER.filter(g=>gradeSet.has(g));
+  const activeGrades = GRADE_ORDER.filter(g=>gradeSet.has(g) && !g.startsWith('초'));
+
+  // 전체보기 시 고등학생부터 기본 노출 (초기 진입 시 첫 고등 학년으로 설정)
+  if(!st.seGrade || st.seGrade==='all'){
+    const firstHigh = activeGrades.find(g=>g.startsWith('고'));
+    if(firstHigh) st.seGrade = firstHigh;
+  }
+  // 혹시 초등 학년이 선택돼 있으면 초기화
+  if(st.seGrade && st.seGrade.startsWith('초')) st.seGrade = activeGrades.find(g=>g.startsWith('고')) || activeGrades[0] || 'all';
 
   // 필터 적용된 학생 목록
   const students = allStudents
@@ -2755,7 +2755,6 @@ function rSchoolExam(){
       </select>
     </div>
     <div style="display:flex;gap:4px;flex-wrap:wrap">
-      <button class="btn btn-sm ${selGrade==='all'?'btn-primary':''}" onclick="st.seGrade='all';render()">전체</button>
       ${activeGrades.map(g=>`<button class="btn btn-sm ${selGrade===g?'btn-primary':''}" onclick="st.seGrade='${g}';render()">${g}</button>`).join('')}
     </div>
   </div>`;
@@ -2838,14 +2837,14 @@ function rSchoolExam(){
           </div>`;
         } else {
           const scoreColor = score>=90?'var(--green)':score>=70?'var(--text)':'var(--red)';
-          const grade_num = isHigh ? toGrade(score) : null;
+          const grade_num = (isHigh && ex?.manualGrade) ? ex.manualGrade : null;
 
           h+=`<div style="text-align:center">`;
           // 점수
           h+=`<span style="font-size:16px;font-weight:700;color:${scoreColor}">${score}</span>`;
           h+=`<span style="font-size:10px;color:var(--text2)">점</span>`;
 
-          // 고등: 등급
+          // 고등: 등급 (직접 입력한 경우만 표시)
           if(grade_num!==null){
             h+=`<span style="font-size:10px;font-weight:700;color:${gradeColor(grade_num)};margin-left:4px">${grade_num}등급</span>`;
           }
@@ -8451,6 +8450,13 @@ function openSchoolExamInput(sid, examKey, examLabel, isHighNum, gradeLabel){
     <div style="font-size:11px;color:var(--text2);background:var(--amber-bg);border-radius:var(--r);padding:6px 10px;margin-bottom:12px">
       ⚠ 성적표 인증 없이 저장 시 포인트 지급 대상에서 제외됩니다.
     </div>
+    ${isHigh?`<div class="frow">
+      <label>등급 직접 입력 <span style="font-size:10px;color:var(--text3)">(입력 시에만 표시, 미입력 시 자동계산 안함)</span></label>
+      <select id="examManualGrade" style="width:100%">
+        <option value="">-- 미입력 --</option>
+        ${[1,2,3,4,5,6,7,8,9].map(g=>`<option value="${g}" ${(existing?.manualGrade===g)?'selected':''}>${g}등급</option>`).join('')}
+      </select>
+    </div>`:''}
     <input type="hidden" id="examGradeLabel" value="${gl}">
     <div class="mfoot">
       <button class="btn" onclick="document.getElementById('examInputOverlay').remove()">취소</button>
@@ -8688,9 +8694,12 @@ async function saveSchoolExamInput(sid, examKey, isHighNum){
   if(!examDb.exams) examDb.exams=[];
   const idx=examDb.exams.findIndex(e=>e.key===examKey&&e.type==='school');
   const gradeLabel = (document.getElementById('examGradeLabel')?.value)||'';
+  const manualGradeRaw = document.getElementById('examManualGrade')?.value;
+  const manualGrade = manualGradeRaw ? parseInt(manualGradeRaw) : undefined;
   const entry={type:'school',key:examKey,score:scoreVal,prevScore:isNaN(prevVal)?null:prevVal,
     certified,certFileName,certUrl,certDataUrl,savedAt:new Date().toISOString(),
-    gradeLabel: gradeLabel||undefined};
+    gradeLabel: gradeLabel||undefined,
+    manualGrade: manualGrade};
   // gradeLabel이 있을 때: 같은 key+gradeLabel인 항목 교체, 없으면 기존 방식
   const matchIdx = gradeLabel
     ? examDb.exams.findIndex(e=>e.key===examKey&&e.type==='school'&&e.gradeLabel===gradeLabel)
