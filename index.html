@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v10';
+const APP_VERSION = 'v20260624v11';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2665,16 +2665,16 @@ function rSchoolExam(){
   }
 
   // 필터 상태 (st에 저장)
-  if(!st.seYear)  st.seYear = new Date().getFullYear();
-  if(!st.seGrade) st.seGrade = 'all';
-
   const selYear  = st.seYear;
   const selGrade = st.seGrade;
 
-  // 연도 목록 빌드 (2024 ~ 현재 연도, 매년 자동 증가)
-  const curY = new Date().getFullYear();
+  // 연도 목록 빌드 (2024 ~ 상단 탭 연도 기준, 매년 자동 증가)
+  const curY = st.year || new Date().getFullYear();
   const years = [];
   for(let y=2024; y<=curY; y++) years.push(y);
+
+  // 학교성적 연도 기본값: 상단 탭 연도
+  if(!st.seYear) st.seYear = curY;
 
   // 학생 목록 (활성 학생, 초등 제외)
   const allStudents = (cfg.students||[]).filter(s=>!s.archived && s.grade && !s.grade.startsWith('초'));
