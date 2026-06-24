@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v14';
+const APP_VERSION = 'v20260624v15';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -4862,7 +4862,7 @@ function rPoints(){
           // growth 계산: 인증 필수 (바로 앞 순서 시험만 참조, 건너뛰기 없음)
           const prevKey = PREV_MAP[ex.key];
           let prevSc = null;
-          if(ex.certified){ // growth는 현재 시험도 인증 필요
+          if(ex.certified === true){ // growth는 현재 시험도 파일 인증 필요
             if(ex.key==='s1_mid'){
               const glIdx = GRADE_ORDER_LIST.indexOf(gl);
               if(glIdx > 0){
@@ -4870,23 +4870,23 @@ function rPoints(){
                 const prevGradeEx = (sDb.exams||[]).find(e=>
                   e.type==='school' && e.gradeLabel===prevGrade && e.key==='s2_fin'
                 );
-                if(prevGradeEx && prevGradeEx.certified && prevGradeEx.score!==null && prevGradeEx.score!==undefined){
+                if(prevGradeEx && prevGradeEx.certified===true && !!(prevGradeEx.certFileName||prevGradeEx.certUrl||prevGradeEx.certDataUrl) && prevGradeEx.score!==null && prevGradeEx.score!==undefined){
                   prevSc = prevGradeEx.score;
                 }
               }
             } else if(prevKey){
               const prevEx = examMapG[prevKey];
-              if(prevEx && prevEx.certified && prevEx.score!==null && prevEx.score!==undefined){
+              if(prevEx && prevEx.certified===true && !!(prevEx.certFileName||prevEx.certUrl||prevEx.certDataUrl) && prevEx.score!==null && prevEx.score!==undefined){
                 prevSc = prevEx.score;
               }
             }
           }
           const growth = (prevSc!==null&&!isNaN(sc)&&!isNaN(prevSc))?(sc-prevSc):null;
 
-          // 포인트 계산
-          // TOP HONOR / HIGH HONOR: 인증 없이도 점수만으로 수여 가능
-          // GROWTH: 인증 필수 (위에서 certified 체크)
+          // 포인트 계산 — 성적표 파일 인증 필수 (certified===true && certFileName 있어야)
           const candidates = [];
+          const isCertified = ex.certified === true && !!(ex.certFileName || ex.certUrl || ex.certDataUrl);
+          if(!isCertified) return; // 파일 인증 없으면 포인트 대상 제외
           if(sc===100 || (isHighStu && sc===-1)){
             candidates.push({type:'TOP_HONOR', label:'Top Honor', points:20000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} 100점`});
           } else if(sc>=90){
