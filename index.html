@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v11';
+const APP_VERSION = 'v20260624v12';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2729,7 +2729,7 @@ function rSchoolExam(){
       if(gradeIdx<=0) return null;
       const prevGrade = GRADE_ORDER[gradeIdx-1];
       const prevEx = getExamScore(sid, prevGrade, 's2_fin');
-      if(prevEx && prevEx.certified && prevEx.score!==null) return prevEx.score;
+      if(prevEx && prevEx.score!==null) return prevEx.score;
       return null;
     }
     const prevKeyMap = {s1_fin:'s1_mid', s2_mid:'s1_fin', s2_fin:'s2_mid'};
@@ -8319,12 +8319,11 @@ function renderSchoolExamSection(sid, s, exams, isPrin){
         // 미입력/미인증이면 → growth 없음 (건너뛰기 금지)
       }
     } else if(def.prevKey){
-      // 같은 학년 내 직전 시험
+      // 같은 학년 내 직전 시험 (인증 여부 무관, 점수만 있으면 성장 표시)
       const prevEx = examMap[def.prevKey];
-      if(prevEx && prevEx.certified && prevEx.score!==null && prevEx.score!==undefined){
+      if(prevEx && prevEx.score!==null && prevEx.score!==undefined){
         prevScore = prevEx.score;
       }
-      // 미입력/미인증이면 → growth 없음 (건너뛰기 금지)
     }
     const growth = (score!==null && prevScore!==null && !isNaN(score) && !isNaN(prevScore)) ? (score - prevScore) : null;
 
