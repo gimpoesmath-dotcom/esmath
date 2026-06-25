@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260625vsetting';
+const APP_VERSION = 'v20260625 setting v2';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -7659,7 +7659,7 @@ function rSettings(){
         <div class="card" id="mkDiagContainer" style="margin-top:4px;display:none;padding:8px"></div>
       </div>`;
 
-    h+=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;margin-top:14px;align-items:start">
+    h+=`<div style="display:grid;grid-template-columns:220px 260px 220px 1fr;gap:14px;margin-top:14px;align-items:start">
       <div style="max-height:320px;overflow-y:auto">${teacherBox}</div>
       <div style="max-height:320px;overflow-y:auto">${classBox}${gradeUpBox}</div>
       <div style="max-height:320px;overflow-y:auto">${dataBox}</div>
@@ -7741,7 +7741,7 @@ function rSettings(){
               ${bk.grade?`<span class="badge b-grade" style="font-size:${tbCompact?'9px':'10px'}">${esc(bk.grade)}</span>`:''}
               ${bk.semester?`<span style="font-size:${tbCompact?'9px':'10px'};color:var(--blue);background:var(--blue-bg);border-radius:8px;padding:1px 6px">${esc(bk.semester)}</span>`:''}
               ${tbCompact?'':bkTierBadge}
-              ${(!tbCompact&&bk.unitCount)?`<span style="font-size:10px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:1px 6px">📋 ${bk.unitCount}단원</span>`:''}
+              ${bk.unitCount?`<span style="font-size:10px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:1px 6px">📋 ${bk.unitCount}단원</span>`:''}
               <span style="font-size:${tbCompact?'10px':'11px'};color:${cnt?'var(--blue)':'var(--text3)'};cursor:${cnt?'pointer':'default'};text-decoration:${cnt?'underline':'none'}" onclick="${cnt?`showTbAssignedStudents('${bk.id}')`:''}" title="${cnt?'클릭하여 배정 학생 보기':''}">${cnt}명</span>
             </div>
             <div style="display:flex;gap:4px;${tbCompact?'':'margin-left:auto'}">
@@ -7763,7 +7763,7 @@ function rSettings(){
             <div><b style="font-size:${tbCompact?'12px':'13px'}">${esc(bk.name)}</b>
               ${bk.grade?`<span class="badge b-grade" style="font-size:${tbCompact?'9px':'10px'};margin-left:6px">${esc(bk.grade)}</span>`:''}
               ${(!tbCompact&&bk.publisher)?`<span style="font-size:11px;color:var(--text3);margin-left:8px">${esc(bk.publisher)}</span>`:''}
-              ${(!tbCompact&&bk.unitCount)?`<span style="font-size:10px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:1px 6px;margin-left:6px">📋 ${bk.unitCount}단원</span>`:''}
+              ${bk.unitCount?`<span style="font-size:10px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:1px 6px;margin-left:6px">📋 ${bk.unitCount}단원</span>`:''}
               <span style="font-size:${tbCompact?'10px':'11px'};color:var(--text3);margin-left:8px">${cnt}명${tbCompact?'':' 배정'}</span>
             </div>
             <div style="display:flex;gap:4px;${tbCompact?'':'margin-left:auto'}">
