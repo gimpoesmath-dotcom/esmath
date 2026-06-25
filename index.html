@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260625v4';
+const APP_VERSION = 'v20260624v15';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -1505,6 +1505,7 @@ let _logSearchKeyword=''; // 학생 이름/선생님 검색
 async function diagnoseMakeupData(){
   const container=document.getElementById('mkDiagContainer');
   if(!container) return;
+  container.style.display='';
   // 진단은 항상 서버 최신 데이터 기준으로 실행 (캐시 무시)
   container.innerHTML=`<div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">서버에서 최신 데이터 확인 중...</div>`;
   try{
@@ -7619,18 +7620,54 @@ function rSettings(){
     }
     classBox+=`</div>`;
 
-    h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;align-items:start">
-      <div>${teacherBox}</div>
-      <div>${classBox}</div>
+    // 데이터정리 박스 (4열 3번째 칸용)
+    const dataBox = (()=>{
+      const lastBackup2 = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
+      const curQNum2 = Math.ceil(st.month/3);
+      const qLabel2 = {1:'1~3월',2:'4~6월',3:'7~9월',4:'10~12월'}[curQNum2];
+      return `<div class="toolbar" style="margin-top:0"><b>💾 데이터 정리</b></div>
+      <div class="card" style="padding:8px 10px;display:flex;flex-direction:column;gap:6px">
+        <button class="btn btn-green" style="width:100%" onclick="exportExcel()">📥 이달 전체 엑셀</button>
+        <button class="btn btn-primary" style="width:100%" onclick="exportESReport()">📋 분기 레포트 (${curQNum2}분기·${qLabel2})</button>
+        <button class="btn btn-primary" style="width:100%" onclick="backupAllData()">💾 전체 백업</button>
+        <button class="btn btn-sm" style="width:100%" onclick="diagnoseMakeupData()">🔍 보강데이터 진단</button>
+        <span style="font-size:10px;color:var(--text3);text-align:center">마지막 백업: ${lastBackup2}</span>
+      </div>`;
+    })();
+
+    // 학년올리기 박스 (4열 4번째 칸용)
+    const gradeUpBox = (()=>{
+      const lastUpYear2 = parseInt(cfg.gradeUpYear)||0;
+      const curYear2 = new Date().getFullYear();
+      const done = lastUpYear2 >= curYear2;
+      return `<div class="toolbar" style="margin-top:0"><b>🎓 학년 올리기</b></div>
+      <div class="card" style="padding:8px 10px;border:2px solid ${done?'var(--border)':'#e8c060'};background:${done?'#fff':'#fffdf0'}">
+        <div style="font-size:11px;color:var(--text2);margin-bottom:8px">
+          ${done ? `✅ ${curYear2}년 완료` : `⚠️ ${curYear2}년 아직 미완료`}
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:10px">초3→초4→...→중3→고1→고2→고3 순으로 전체 학생 학년이 한 단계씩 올라갑니다.</div>
+        ${done
+          ? `<span style="font-size:12px;color:#1e6e3a;font-weight:700">✅ ${curYear2}년 완료</span>`
+          : `<button class="btn btn-primary" style="width:100%" onclick="manualGradeUp()">🎓 ${curYear2}년 학년 올리기</button>`}
+      </div>`;
+    })();
+
+    h+=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;margin-top:14px;align-items:start">
+      <div style="max-height:320px;overflow-y:auto">${teacherBox}</div>
+      <div style="max-height:320px;overflow-y:auto">${classBox}</div>
+      <div style="max-height:320px;overflow-y:auto">${dataBox}</div>
+      <div style="max-height:320px;overflow-y:auto">${gradeUpBox}</div>
     </div>`;
+    h+=`<div class="card" id="mkDiagContainer" style="margin-top:10px;display:none"></div>`;
   }
 
-  // ② 교재 라이브러리 (3열 그리드)
+  // ② 교재 라이브러리는 활동로그 아래 맨 하단으로 이동 (아래 별도 처리)
+  let tbLibraryHTML = '';
   if(isPrincipal){
     const books=cfg.textbooks||[];
     const tbLibOpen = st.tbLibOpen !== false; // 기본 펼침
     const tbCompact = true; // 항상 컴팩트 스타일
-    h+=`<div class="toolbar" style="margin-top:14px">
+    tbLibraryHTML+=`<div class="toolbar" style="margin-top:14px">
       <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="st.tbLibOpen=!(st.tbLibOpen!==false);render()">
         <b>📚 교재 라이브러리</b>
         <span style="font-size:11px;color:var(--text3);user-select:none">${tbLibOpen?'▲ 접기':'▼ 펼치기'}</span>
@@ -7639,7 +7676,7 @@ function rSettings(){
     </div>`;
     if(tbLibOpen){
     if(!books.length){
-      h+=`<div class="card"><div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 교재 없음</div></div>`;
+      tbLibraryHTML+=`<div class="card"><div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 교재 없음</div></div>`;
     } else {
       // 시리즈별 그룹화
       const seriesMap=new Map(); // seriesName → [books]
@@ -7660,7 +7697,7 @@ function rSettings(){
         if(gi!==gj) return (gi<0?99:gi)-(gj<0?99:gj);
         return (semOrder.indexOf(a.semester||'')||0)-(semOrder.indexOf(b.semester||'')||0);
       });
-      h+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">`;
+      tbLibraryHTML+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">`;
       // 시리즈별 카드
       seriesMap.forEach((bkArr,sName)=>{
         const sorted=sortBooks(bkArr);
@@ -7671,7 +7708,7 @@ function rSettings(){
           : seriesTier==='high'
           ? `<span style="font-size:10px;padding:1px 8px;border-radius:20px;background:#f3e8fc;color:#5a2080;border:1px solid #c090e0">HIGH 5,000P</span>`
           : `<span style="font-size:10px;padding:1px 8px;border-radius:20px;background:#e5effc;color:#1558a8;border:1px solid #90b8e8">LOW 2,000P</span>`;
-        h+=`<div class="card" style="margin-bottom:${tbCompact?'4px':'10px'};padding:${tbCompact?'8px 10px':'14px'}">
+        tbLibraryHTML+=`<div class="card" style="margin-bottom:${tbCompact?'4px':'10px'};padding:${tbCompact?'8px 10px':'14px'}">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:${tbCompact?'4px':'8px'};padding-bottom:${tbCompact?'4px':'8px'};border-bottom:1px solid var(--border);flex-wrap:wrap">
             <b style="font-size:${tbCompact?'12px':'14px'}">📖 ${esc(sName)}</b>
             <span style="font-size:10px;color:var(--text3)">${sorted.length}권</span>
@@ -7692,7 +7729,7 @@ function rSettings(){
             : bkTier==='high'
             ? `<span style="font-size:9px;padding:1px 5px;border-radius:10px;background:#f3e8fc;color:#5a2080">HIGH</span>`
             : `<span style="font-size:9px;padding:1px 5px;border-radius:10px;background:#e5effc;color:#1558a8">LOW</span>`;
-          h+=`<div class="hi" style="${tbCompact?'justify-content:flex-start;gap:10px;padding:3px 0;font-size:11px':'align-items:center'}">
+          tbLibraryHTML+=`<div class="hi" style="${tbCompact?'justify-content:flex-start;gap:10px;padding:3px 0;font-size:11px':'align-items:center'}">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <span style="font-size:${tbCompact?'12px':'13px'};font-weight:500">${esc(bk.name)}</span>
               ${bk.grade?`<span class="badge b-grade" style="font-size:${tbCompact?'9px':'10px'}">${esc(bk.grade)}</span>`:''}
@@ -7708,15 +7745,15 @@ function rSettings(){
             </div>
           </div>`;
         });
-        h+=`</div>`;
+        tbLibraryHTML+=`</div>`;
       });
       // 시리즈 없는 교재
       if(noSeries.length){
-        h+=`<div class="card" style="margin-bottom:${tbCompact?'4px':'10px'};padding:${tbCompact?'8px 10px':'14px'}">
+        tbLibraryHTML+=`<div class="card" style="margin-bottom:${tbCompact?'4px':'10px'};padding:${tbCompact?'8px 10px':'14px'}">
           <div style="font-size:${tbCompact?'11px':'12px'};font-weight:700;color:var(--text2);margin-bottom:${tbCompact?'4px':'8px'};padding-bottom:${tbCompact?'4px':'6px'};border-bottom:1px solid var(--border)">기타 교재</div>`;
         noSeries.forEach(bk=>{
           const cnt=(cfg.students||[]).filter(s=>(s.textbooks||[]).some(t=>t.tbId===bk.id)).length;
-          h+=`<div class="hi" style="${tbCompact?'justify-content:flex-start;gap:10px;padding:3px 0;font-size:11px':''}">
+          tbLibraryHTML+=`<div class="hi" style="${tbCompact?'justify-content:flex-start;gap:10px;padding:3px 0;font-size:11px':''}">
             <div><b style="font-size:${tbCompact?'12px':'13px'}">${esc(bk.name)}</b>
               ${bk.grade?`<span class="badge b-grade" style="font-size:${tbCompact?'9px':'10px'};margin-left:6px">${esc(bk.grade)}</span>`:''}
               ${(!tbCompact&&bk.publisher)?`<span style="font-size:11px;color:var(--text3);margin-left:8px">${esc(bk.publisher)}</span>`:''}
@@ -7730,9 +7767,9 @@ function rSettings(){
             </div>
           </div>`;
         });
-        h+=`</div>`;
+        tbLibraryHTML+=`</div>`;
       }
-      h+=`</div>`; // grid-template-columns 닫기
+      tbLibraryHTML+=`</div>`; // grid-template-columns 닫기
     }
     } // tbLibOpen 닫기
   }
@@ -7788,55 +7825,6 @@ function rSettings(){
   } // holOpen 닫기
 
 
-  // ⑤-2 보강 데이터 정리 도구 (원장만)
-  if(isPrincipal){
-    h+=`<div class="toolbar" style="margin-top:14px"><b>🧹 보강 데이터 정리</b>
-      <button class="btn btn-sm" onclick="diagnoseMakeupData()">🔍 진단하기</button>
-    </div>
-    <div class="notice">보강 데이터 무결성을 검사합니다. 교시 미정, 결석 연결이 끊긴 항목 등을 표시하고 정리할 수 있어요.</div>
-    <div class="card" id="mkDiagContainer">
-      <div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">위 [🔍 진단하기] 버튼을 눌러 현재 상태를 확인하세요</div>
-    </div>`;
-  }
-
-  // ⑦ 데이터
-  {
-    const lastBackup = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
-    const curQNum = Math.ceil(st.month/3);
-    const qLabel = {1:'1~3월',2:'4~6월',3:'7~9월',4:'10~12월'}[curQNum];
-    h+=`<div class="toolbar" style="margin-top:14px"><b>💾 데이터</b></div>
-    <div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <button class="btn btn-green" onclick="exportExcel()">📥 이달 전체 엑셀</button>
-      <button class="btn btn-primary" onclick="exportESReport()">📋 분기 레포트 (${curQNum}분기 · ${qLabel})</button>
-      <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-        <span style="font-size:11px;color:var(--text3)">마지막 백업: ${lastBackup}</span>
-        <button class="btn btn-primary" onclick="backupAllData()">💾 전체 백업</button>
-      </div>
-    </div>`;
-  }
-
-  // ⑦-1 학년 올리기 (원장만, 활동 로그 위)
-  if(isPrincipal){
-    const lastUpYear = parseInt(cfg.gradeUpYear)||0;
-    const curYear = new Date().getFullYear();
-    h+=`<div class="card" style="margin-top:14px;border:2px solid ${lastUpYear>=curYear?'var(--border)':'#e8c060'};background:${lastUpYear>=curYear?'#fff':'#fffdf0'}">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <div style="flex:1">
-          <div style="font-size:14px;font-weight:700;margin-bottom:4px">🎓 학년 올리기</div>
-          <div style="font-size:12px;color:var(--text2)">
-            ${lastUpYear>=curYear
-              ? `✅ ${curYear}년 학년 올리기 완료`
-              : `⚠️ 아직 ${curYear}년 학년 올리기를 하지 않았습니다`}
-          </div>
-          <div style="font-size:11px;color:var(--text3);margin-top:3px">초3→초4→...→중3→고1→고2→고3 순서로 전체 학생 학년이 한 단계씩 올라갑니다.</div>
-        </div>
-        ${lastUpYear>=curYear
-          ? `<span style="font-size:12px;color:#1e6e3a;font-weight:700">✅ ${curYear}년 완료</span>`
-          : `<button class="btn btn-primary" onclick="manualGradeUp()" style="flex-shrink:0">🎓 ${curYear}년 학년 올리기</button>`}
-      </div>
-    </div>`;
-  }
-
   // ⑧ 활동 로그 (원장만)
   if(isPrincipal){
     h+=`<div class="toolbar" style="margin-top:14px"><b>📜 활동 로그</b>
@@ -7847,6 +7835,10 @@ function rSettings(){
       <div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">새로고침 버튼을 눌러 로그를 불러오세요</div>
     </div>`;
   }
+
+  // ⑨ 교재 라이브러리 (맨 하단)
+  h += tbLibraryHTML;
+
   return h;
   } catch(e) {
     console.error('rSettings 오류:', e);
