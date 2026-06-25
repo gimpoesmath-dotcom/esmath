@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260625 setting v2';
+const APP_VERSION = 'v2026065 font';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -7559,7 +7559,7 @@ function rSettings(){
     let teacherBox=`<div class="toolbar" style="margin-top:0"><b>👩‍🏫 선생님 명단</b>
       <button class="btn btn-primary btn-sm" onclick="openM('addTeacher')">+ 선생님 추가</button>
     </div>
-    <div class="info-box" style="font-size:11px;padding:8px 10px">🏫 <b>전임</b>: 학생 카드 담당 드롭다운·필터에 표시.&nbsp; 🤝 <b>조교</b>: 출결·숙제 기록 전용.</div>
+    <div class="info-box" style="font-size:11px;padding:8px 10px;line-height:1.8">🏫 <b>전임</b>: 학생 카드 담당 드롭다운·필터에 표시.<br>🤝 <b>조교</b>: 출결·숙제 기록 전용.</div>
     <div class="card" style="padding:8px 10px">`;
     if(!teachers.length){
       teacherBox+=`<div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">등록된 선생님 없음</div>`;
@@ -7574,7 +7574,7 @@ function rSettings(){
         const cntLabel=isAssistant
           ? `<span style="color:var(--text3);font-size:10px;margin-left:6px">출결·숙제 전용</span>`
           : `<span style="color:var(--text3);font-size:10px;margin-left:6px">담당 ${cnt}명</span>`;
-        teacherBox+=`<div class="hi" style="justify-content:flex-start;gap:8px;padding:3px 0;font-size:11px">
+        teacherBox+=`<div class="hi" style="justify-content:flex-start;gap:8px;padding:3px 0;font-size:13px">
           <span><b>${esc(t)}</b>${roleBadge}${cntLabel}</span>
           <div style="display:flex;gap:4px">
             <button class="btn btn-sm" style="padding:2px 6px;font-size:10px" onclick="openM('editTeacher','${esc(t)}')" title="이름·역할 수정">✏️</button>
@@ -7586,7 +7586,6 @@ function rSettings(){
     teacherBox+=`</div>`;
 
     let classBox=`<div class="toolbar" style="margin-top:0"><b>📚 반 관리</b>${isPrincipal?`<button class="btn btn-primary btn-sm" onclick="openM('addCt')">+ 반 추가</button>`:''}</div>
-    <div class="notice" style="font-size:11px;padding:8px 10px">월수반·월수금반·화목반·화목금반 중 필요한 반을 추가하세요.</div>
     <div class="card" style="padding:8px 10px">`;
     if(!ctEntries.length){classBox+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 반 없음</div>`;}
     else{
@@ -7620,50 +7619,39 @@ function rSettings(){
     }
     classBox+=`</div>`;
 
-    // 데이터정리 박스 (열3)
-    const dataBox = (()=>{
-      const lastBackup2 = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
-      const curQNum2 = Math.ceil(st.month/3);
-      const qLabel2 = {1:'1~3월',2:'4~6월',3:'7~9월',4:'10~12월'}[curQNum2];
-      return `<div class="toolbar" style="margin-top:0"><b>💾 데이터 정리</b></div>
+    // 데이터정리 + 학년올리기 + 보강진단 묶음 (열3)
+    const lastBackup2 = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
+    const curQNum2 = Math.ceil(st.month/3);
+    const qLabel2 = {1:'1~3월',2:'4~6월',3:'7~9월',4:'10~12월'}[curQNum2];
+    const lastUpYear2 = parseInt(cfg.gradeUpYear)||0;
+    const curYear2 = new Date().getFullYear();
+    const done2 = lastUpYear2 >= curYear2;
+
+    const rightCol = `
+      <div class="toolbar" style="margin-top:0"><b>💾 데이터 정리</b></div>
       <div class="card" style="padding:8px 10px;display:flex;flex-direction:column;gap:6px">
         <button class="btn btn-green" style="width:100%" onclick="exportExcel()">📥 이달 전체 엑셀</button>
         <button class="btn btn-primary" style="width:100%" onclick="exportESReport()">📋 분기 레포트 (${curQNum2}분기·${qLabel2})</button>
         <button class="btn btn-primary" style="width:100%" onclick="backupAllData()">💾 전체 백업</button>
         <span style="font-size:10px;color:var(--text3);text-align:center;margin-top:2px">마지막 백업: ${lastBackup2}</span>
-      </div>`;
-    })();
-
-    // 학년올리기 박스 (열2 하단에 붙임)
-    const gradeUpBox = (()=>{
-      const lastUpYear2 = parseInt(cfg.gradeUpYear)||0;
-      const curYear2 = new Date().getFullYear();
-      const done = lastUpYear2 >= curYear2;
-      return `<div class="toolbar" style="margin-top:10px"><b>🎓 학년 올리기</b></div>
-      <div class="card" style="padding:8px 10px;border:2px solid ${done?'var(--border)':'#e8c060'};background:${done?'#fff':'#fffdf0'}">
-        <div style="font-size:11px;color:var(--text2);margin-bottom:6px">
-          ${done ? `✅ ${curYear2}년 완료` : `⚠️ ${curYear2}년 아직 미완료`}
-        </div>
+      </div>
+      <div class="toolbar" style="margin-top:10px"><b>🎓 학년 올리기</b></div>
+      <div class="card" style="padding:8px 10px;border:2px solid ${done2?'var(--border)':'#e8c060'};background:${done2?'#fff':'#fffdf0'}">
+        <div style="font-size:11px;color:var(--text2);margin-bottom:6px">${done2?`✅ ${curYear2}년 완료`:`⚠️ ${curYear2}년 아직 미완료`}</div>
         <div style="font-size:10px;color:var(--text3);margin-bottom:8px">초3→초4→...→중3→고1→고2→고3 순으로 전체 학생 학년이 한 단계씩 올라갑니다.</div>
-        ${done
-          ? `<span style="font-size:12px;color:#1e6e3a;font-weight:700">✅ ${curYear2}년 완료</span>`
-          : `<button class="btn btn-primary" style="width:100%" onclick="manualGradeUp()">🎓 ${curYear2}년 학년 올리기</button>`}
-      </div>`;
-    })();
-
-    // 보강진단 박스 (열4)
-    const diagBox = `<div class="toolbar" style="margin-top:0"><b>🔍 보강데이터 진단</b></div>
+        ${done2?`<span style="font-size:12px;color:#1e6e3a;font-weight:700">✅ ${curYear2}년 완료</span>`:`<button class="btn btn-primary" style="width:100%" onclick="manualGradeUp()">🎓 ${curYear2}년 학년 올리기</button>`}
+      </div>
+      <div class="toolbar" style="margin-top:10px"><b>🔍 보강데이터 진단</b></div>
       <div class="card" style="padding:8px 10px;display:flex;flex-direction:column;gap:6px">
-        <div style="font-size:11px;color:var(--text2);margin-bottom:2px">보강 데이터 무결성을 검사합니다. 교시 미정, 결석 연결이 끊긴 항목 등을 표시하고 정리할 수 있어요.</div>
+        <div style="font-size:13px;color:var(--text2)">보강 데이터 무결성을 검사합니다. 교시 미정, 결석 연결이 끊긴 항목 등을 표시하고 정리할 수 있어요.</div>
         <button class="btn btn-sm" style="width:100%" onclick="diagnoseMakeupData()">🔍 진단하기</button>
-        <div class="card" id="mkDiagContainer" style="margin-top:4px;display:none;padding:8px"></div>
+        <div id="mkDiagContainer" style="display:none;margin-top:4px"></div>
       </div>`;
 
-    h+=`<div style="display:grid;grid-template-columns:220px 260px 220px 1fr;gap:14px;margin-top:14px;align-items:start">
+    h+=`<div style="display:grid;grid-template-columns:1fr 1fr 220px;gap:14px;margin-top:14px;align-items:start">
       <div style="max-height:320px;overflow-y:auto">${teacherBox}</div>
-      <div style="max-height:320px;overflow-y:auto">${classBox}${gradeUpBox}</div>
-      <div style="max-height:320px;overflow-y:auto">${dataBox}</div>
-      <div style="max-height:320px;overflow-y:auto">${diagBox}</div>
+      <div style="max-height:320px;overflow-y:auto">${classBox}</div>
+      <div style="max-height:320px;overflow-y:auto">${rightCol}</div>
     </div>`;
   }
 
