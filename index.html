@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260625';
+const APP_VERSION = 'v20260624v15';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -7620,13 +7620,6 @@ function rSettings(){
     classBox+=`</div>`;
 
     // 데이터정리 + 학년올리기 + 보강진단 묶음 (열3)
-    const lastBackup2 = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
-    const curQNum2 = Math.ceil(st.month/3);
-    const qLabel2 = {1:'1~3월',2:'4~6월',3:'7~9월',4:'10~12월'}[curQNum2];
-    const lastUpYear2 = parseInt(cfg.gradeUpYear)||0;
-    const curYear2 = new Date().getFullYear();
-    const done2 = lastUpYear2 >= curYear2;
-
     const lastBackup2 = cfg.lastBackupAt ? new Date(cfg.lastBackupAt).toLocaleString('ko-KR') : '없음';
     const curQNum2 = Math.ceil(st.month/3);
     const qLabel2 = {1:'1~3월',2:'4~6월',3:'7~9월',4:'10~12월'}[curQNum2];
