@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260626v1';
+const APP_VERSION = 'v20260625v2';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2718,22 +2718,15 @@ function rSchoolExam(){
     });
 
   // 학생 시험 데이터 조회 헬퍼
-  // 연도 필터: gradeLabel이 없는 레거시 데이터는 연도 무관 포함
-  // gradeLabel이 있는 데이터는 savedAt의 연도로 필터 (없으면 그냥 포함)
+  // gradeLabel(당시 학년)로 매칭 — savedAt(입력 시점)은 실제 시험 시기와 무관하므로 필터에 사용하지 않음
+  // gradeLabel이 없는 레거시 데이터는 어느 학년/연도로 조회해도 포함됨(이전 방식 호환)
   function getExamScore(sid, gradeLabel, examKey){
     const exams = (schoolExamData[sid]?.exams||[]);
-    // gradeLabel 매칭
     const ex = exams.find(e=>
       e.type==='school' && e.key===examKey &&
       (e.gradeLabel===gradeLabel || (!e.gradeLabel))
     );
-    if(!ex) return null;
-    // 연도 필터: savedAt 연도가 selYear인지 (없으면 통과)
-    if(ex.savedAt){
-      const exYear = parseInt(ex.savedAt.slice(0,4));
-      if(exYear !== selYear) return null;
-    }
-    return ex;
+    return ex||null;
   }
 
   // 직전 시험 점수 계산 (학년 넘어가는 경우 포함)
