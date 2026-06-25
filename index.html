@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260625v3';
+const APP_VERSION = 'v20260625v4';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -7552,58 +7552,92 @@ function rSettings(){
 
   let h=``;
 
-  // ① 담당 선생님 명단 관리 (원장만)
+  // ① 선생님 명단 & 반 관리 — 2열 그리드
   if(isPrincipal){
     const teachers=cfg.teachers||[];
-    h+=`<div class="toolbar" style="margin-top:14px"><b>👩‍🏫 선생님 명단</b>
+    let teacherBox=`<div class="toolbar" style="margin-top:0"><b>👩‍🏫 선생님 명단</b>
       <button class="btn btn-primary btn-sm" onclick="openM('addTeacher')">+ 선생님 추가</button>
     </div>
-    <div class="info-box">🏫 <b>전임 선생님</b>: 학생 카드 담당 드롭다운·필터에 표시되며 본인 담당 학생을 모두 기록합니다.<br>🤝 <b>조교선생님</b>: 출결·숙제 기록 전용이며 담당 드롭다운에 표시되지 않습니다.<br>모든 선생님은 등록된 이름으로 <b>로그인</b>할 수 있습니다.</div>
-    <div class="card">`;
+    <div class="info-box" style="font-size:11px;padding:8px 10px">🏫 <b>전임</b>: 학생 카드 담당 드롭다운·필터에 표시.&nbsp; 🤝 <b>조교</b>: 출결·숙제 기록 전용.</div>
+    <div class="card" style="padding:8px 10px">`;
     if(!teachers.length){
-      h+=`<div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">등록된 선생님 없음 — 위의 [+ 선생님 추가] 버튼을 눌러 추가하세요</div>`;
+      teacherBox+=`<div style="text-align:center;padding:14px;color:var(--text3);font-size:12px">등록된 선생님 없음</div>`;
     } else {
       const assistants=cfg.assistantTeachers||[];
       teachers.forEach(t=>{
         const isAssistant=assistants.includes(t);
-        // 전임만 학생 담당 카운트 (보조는 학생 담당 없음)
         const cnt=isAssistant?0:(cfg.students||[]).filter(s=>s.teacher===t).length;
         const roleBadge=isAssistant
-          ? `<span style="font-size:10px;background:#f3e8fc;color:#5a2080;border:1px solid #c8a8f0;border-radius:20px;padding:1px 7px;margin-left:6px">조교</span>`
-          : `<span style="font-size:10px;background:#e5effc;color:#1558a8;border:1px solid #b0cef0;border-radius:20px;padding:1px 7px;margin-left:6px">전임</span>`;
+          ? `<span style="font-size:9px;background:#f3e8fc;color:#5a2080;border:1px solid #c8a8f0;border-radius:20px;padding:1px 6px;margin-left:6px">조교</span>`
+          : `<span style="font-size:9px;background:#e5effc;color:#1558a8;border:1px solid #b0cef0;border-radius:20px;padding:1px 6px;margin-left:6px">전임</span>`;
         const cntLabel=isAssistant
-          ? `<span style="color:var(--text3);font-size:11px;margin-left:6px">출결·숙제 전용</span>`
-          : `<span style="color:var(--text3);font-size:11px;margin-left:6px">평일 담당 ${cnt}명</span>`;
-        h+=`<div class="hi">
+          ? `<span style="color:var(--text3);font-size:10px;margin-left:6px">출결·숙제 전용</span>`
+          : `<span style="color:var(--text3);font-size:10px;margin-left:6px">담당 ${cnt}명</span>`;
+        teacherBox+=`<div class="hi" style="justify-content:flex-start;gap:8px;padding:3px 0;font-size:11px">
           <span><b>${esc(t)}</b>${roleBadge}${cntLabel}</span>
-          <div style="display:flex;gap:5px">
-            <button class="btn btn-sm" onclick="openM('editTeacher','${esc(t)}')" title="이름·역할 수정">✏️ 수정</button>
-            <button class="btn btn-sm" onclick="delTeacher('${esc(t)}')">삭제</button>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-sm" style="padding:2px 6px;font-size:10px" onclick="openM('editTeacher','${esc(t)}')" title="이름·역할 수정">✏️</button>
+            <button class="btn btn-sm" style="padding:2px 6px;font-size:10px" onclick="delTeacher('${esc(t)}')">삭제</button>
           </div>
         </div>`;
       });
     }
-    h+=`</div>`;
+    teacherBox+=`</div>`;
+
+    let classBox=`<div class="toolbar" style="margin-top:0"><b>📚 반 관리</b>${isPrincipal?`<button class="btn btn-primary btn-sm" onclick="openM('addCt')">+ 반 추가</button>`:''}</div>
+    <div class="notice" style="font-size:11px;padding:8px 10px">월수반·월수금반·화목반·화목금반 중 필요한 반을 추가하세요.</div>
+    <div class="card" style="padding:8px 10px">`;
+    if(!ctEntries.length){classBox+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 반 없음</div>`;}
+    else{
+      const KNOWN=[
+        {id:'MW',  label:'월수반',   badge:'b-mw'},
+        {id:'MWF', label:'월수금반', badge:'b-mwf'},
+        {id:'TT',  label:'화목반',   badge:'b-tt'},
+        {id:'TTF', label:'화목금반', badge:'b-ttf'},
+      ];
+      classBox+=`<div style="display:flex;flex-wrap:wrap;gap:6px;padding:4px 0">`;
+      KNOWN.forEach(g=>{
+        const entry=ctEntries.find(([k])=>k===g.id);
+        if(!entry) return;
+        const cnt2=(cfg.students||[]).filter(s=>s.classType===g.id).length;
+        classBox+=`<div style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);font-size:11px">
+          <span class="badge ${g.badge}">${esc(entry[1].label)}</span>
+          <span style="font-size:10px;color:var(--text3)">${cnt2}명</span>
+          ${isPrincipal?`<button class="btn btn-sm" style="padding:1px 5px;font-size:9px" onclick="delCt('${g.id}')">삭제</button>`:''}
+        </div>`;
+      });
+      const knownIds=KNOWN.map(g=>g.id);
+      ctEntries.filter(([k])=>!knownIds.includes(k)).forEach(([k,v])=>{
+        const cnt2=(cfg.students||[]).filter(s=>s.classType===k).length;
+        classBox+=`<div style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);font-size:11px">
+          <span class="badge ${v.badge||'b-mwf'}">${esc(v.label)}</span>
+          <span style="font-size:10px;color:var(--text3)">${cnt2}명</span>
+          ${isPrincipal?`<button class="btn btn-sm" style="padding:1px 5px;font-size:9px" onclick="delCt('${k}')">삭제</button>`:''}
+        </div>`;
+      });
+      classBox+=`</div>`;
+    }
+    classBox+=`</div>`;
+
+    h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;align-items:start">
+      <div>${teacherBox}</div>
+      <div>${classBox}</div>
+    </div>`;
   }
 
-  // ③ 타임슬롯
+  // ② 교재 라이브러리 (3열 그리드)
   if(isPrincipal){
-    // 교재 라이브러리
     const books=cfg.textbooks||[];
     const tbLibOpen = st.tbLibOpen !== false; // 기본 펼침
-    const tbCompact = st.tbCompact !== false; // 기본 컴팩트
+    const tbCompact = true; // 항상 컴팩트 스타일
     h+=`<div class="toolbar" style="margin-top:14px">
       <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="st.tbLibOpen=!(st.tbLibOpen!==false);render()">
         <b>📚 교재 라이브러리</b>
         <span style="font-size:11px;color:var(--text3);user-select:none">${tbLibOpen?'▲ 접기':'▼ 펼치기'}</span>
       </div>
-      ${tbLibOpen?`<div style="display:flex;gap:6px">
-        <button class="btn btn-sm" onclick="event.stopPropagation();st.tbCompact=!(st.tbCompact!==false);render()">${tbCompact?'🔍 자세히 보기':'📦 숨기기'}</button>
-        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openM('addTextbook')">+ 교재 추가</button>
-      </div>`:''}
+      ${tbLibOpen?`<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openM('addTextbook')">+ 교재 추가</button>`:''}
     </div>`;
     if(tbLibOpen){
-    if(!tbCompact) h+=`<div class="notice">시리즈(예: 풍산자 개념완성)를 큰 틀로 등록하고, 학년·학기별 권을 추가하면 학생 배정 시 자동으로 묶어서 표시됩니다.</div>`;
     if(!books.length){
       h+=`<div class="card"><div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 교재 없음</div></div>`;
     } else {
@@ -7626,6 +7660,7 @@ function rSettings(){
         if(gi!==gj) return (gi<0?99:gi)-(gj<0?99:gj);
         return (semOrder.indexOf(a.semester||'')||0)-(semOrder.indexOf(b.semester||'')||0);
       });
+      h+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">`;
       // 시리즈별 카드
       seriesMap.forEach((bkArr,sName)=>{
         const sorted=sortBooks(bkArr);
@@ -7657,7 +7692,7 @@ function rSettings(){
             : bkTier==='high'
             ? `<span style="font-size:9px;padding:1px 5px;border-radius:10px;background:#f3e8fc;color:#5a2080">HIGH</span>`
             : `<span style="font-size:9px;padding:1px 5px;border-radius:10px;background:#e5effc;color:#1558a8">LOW</span>`;
-          h+=`<div class="hi" style="align-items:center;${tbCompact?'padding:3px 0;font-size:11px':''}">
+          h+=`<div class="hi" style="${tbCompact?'justify-content:flex-start;gap:10px;padding:3px 0;font-size:11px':'align-items:center'}">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <span style="font-size:${tbCompact?'12px':'13px'};font-weight:500">${esc(bk.name)}</span>
               ${bk.grade?`<span class="badge b-grade" style="font-size:${tbCompact?'9px':'10px'}">${esc(bk.grade)}</span>`:''}
@@ -7666,8 +7701,8 @@ function rSettings(){
               ${(!tbCompact&&bk.unitCount)?`<span style="font-size:10px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:1px 6px">📋 ${bk.unitCount}단원</span>`:''}
               <span style="font-size:${tbCompact?'10px':'11px'};color:${cnt?'var(--blue)':'var(--text3)'};cursor:${cnt?'pointer':'default'};text-decoration:${cnt?'underline':'none'}" onclick="${cnt?`showTbAssignedStudents('${bk.id}')`:''}" title="${cnt?'클릭하여 배정 학생 보기':''}">${cnt}명</span>
             </div>
-            <div style="display:flex;gap:4px">
-              ${isPrincipal&&bk.unitCount?`<button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px;':''}color:var(--blue);border-color:#90b8e8" onclick="unitResetAllStudents('${bk.id}',${bk.unitCount})" title="이 교재를 배정받은 모든 학생의 단원을 ${bk.unitCount||0}단원 기준으로 초기화">🔄${tbCompact?'':' 단원 초기화'}</button>`:''}
+            <div style="display:flex;gap:4px;${tbCompact?'':'margin-left:auto'}">
+              ${(isPrincipal&&bk.unitCount&&!tbCompact)?`<button class="btn btn-sm" style="color:var(--blue);border-color:#90b8e8" onclick="unitResetAllStudents('${bk.id}',${bk.unitCount})" title="이 교재를 배정받은 모든 학생의 단원을 ${bk.unitCount||0}단원 기준으로 초기화">🔄 단원 초기화</button>`:''}
               ${isPrincipal?`<button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px':''}" onclick="openM('editTextbook','${bk.id}')">✎${tbCompact?'':' 수정'}</button>
               <button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px':''}" onclick="delTextbook('${bk.id}')">삭제</button>`:''}
             </div>
@@ -7681,15 +7716,15 @@ function rSettings(){
           <div style="font-size:${tbCompact?'11px':'12px'};font-weight:700;color:var(--text2);margin-bottom:${tbCompact?'4px':'8px'};padding-bottom:${tbCompact?'4px':'6px'};border-bottom:1px solid var(--border)">기타 교재</div>`;
         noSeries.forEach(bk=>{
           const cnt=(cfg.students||[]).filter(s=>(s.textbooks||[]).some(t=>t.tbId===bk.id)).length;
-          h+=`<div class="hi" style="${tbCompact?'padding:3px 0;font-size:11px':''}">
+          h+=`<div class="hi" style="${tbCompact?'justify-content:flex-start;gap:10px;padding:3px 0;font-size:11px':''}">
             <div><b style="font-size:${tbCompact?'12px':'13px'}">${esc(bk.name)}</b>
               ${bk.grade?`<span class="badge b-grade" style="font-size:${tbCompact?'9px':'10px'};margin-left:6px">${esc(bk.grade)}</span>`:''}
               ${(!tbCompact&&bk.publisher)?`<span style="font-size:11px;color:var(--text3);margin-left:8px">${esc(bk.publisher)}</span>`:''}
               ${(!tbCompact&&bk.unitCount)?`<span style="font-size:10px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:1px 6px;margin-left:6px">📋 ${bk.unitCount}단원</span>`:''}
               <span style="font-size:${tbCompact?'10px':'11px'};color:var(--text3);margin-left:8px">${cnt}명${tbCompact?'':' 배정'}</span>
             </div>
-            <div style="display:flex;gap:4px">
-              ${isPrincipal&&bk.unitCount?`<button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px;':''}color:var(--blue);border-color:#90b8e8" onclick="unitResetAllStudents('${bk.id}',${bk.unitCount})" title="이 교재를 배정받은 모든 학생의 단원을 ${bk.unitCount||0}단원 기준으로 초기화">🔄${tbCompact?'':' 단원 초기화'}</button>`:''}
+            <div style="display:flex;gap:4px;${tbCompact?'':'margin-left:auto'}">
+              ${(isPrincipal&&bk.unitCount&&!tbCompact)?`<button class="btn btn-sm" style="color:var(--blue);border-color:#90b8e8" onclick="unitResetAllStudents('${bk.id}',${bk.unitCount})" title="이 교재를 배정받은 모든 학생의 단원을 ${bk.unitCount||0}단원 기준으로 초기화">🔄 단원 초기화</button>`:''}
               ${isPrincipal?`<button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px':''}" onclick="openM('editTextbook','${bk.id}')">✎${tbCompact?'':' 수정'}</button>
               <button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px':''}" onclick="delTextbook('${bk.id}')">삭제</button>`:''}
             </div>
@@ -7697,46 +7732,9 @@ function rSettings(){
         });
         h+=`</div>`;
       }
+      h+=`</div>`; // grid-template-columns 닫기
     }
     } // tbLibOpen 닫기
-
-    // ④ 반 관리
-    h+=`<div class="toolbar" style="margin-top:14px"><b>📚 반 관리</b>${isPrincipal?`<button class="btn btn-primary btn-sm" onclick="openM('addCt')">+ 반 추가</button>`:''}</div>
-    <div class="notice">월수반·월수금반·화목반·화목금반 중 필요한 반을 추가하세요. 교시는 학생 관리 탭에서 학생별로 설정합니다.</div>
-    <div class="card">`;
-    if(!ctEntries.length){h+=`<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 반 없음</div>`;}
-    else{
-      const KNOWN=[
-        {id:'MW',  label:'월수반',   badge:'b-mw'},
-        {id:'MWF', label:'월수금반', badge:'b-mwf'},
-        {id:'TT',  label:'화목반',   badge:'b-tt'},
-        {id:'TTF', label:'화목금반', badge:'b-ttf'},
-      ];
-      h+=`<div style="display:flex;flex-wrap:wrap;gap:8px;padding:4px 0">`;
-      // 등록된 4개 먼저
-      KNOWN.forEach(g=>{
-        const entry=ctEntries.find(([k])=>k===g.id);
-        if(!entry) return;
-        const cnt2=(cfg.students||[]).filter(s=>s.classType===g.id).length;
-        h+=`<div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r)">
-          <span class="badge ${g.badge}">${esc(entry[1].label)}</span>
-          <span style="font-size:11px;color:var(--text3)">${cnt2}명</span>
-          ${isPrincipal?`<button class="btn btn-sm" style="padding:2px 6px;font-size:10px" onclick="delCt('${g.id}')">삭제</button>`:''}
-        </div>`;
-      });
-      // 기타 커스텀 반
-      const knownIds=KNOWN.map(g=>g.id);
-      ctEntries.filter(([k])=>!knownIds.includes(k)).forEach(([k,v])=>{
-        const cnt2=(cfg.students||[]).filter(s=>s.classType===k).length;
-        h+=`<div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r)">
-          <span class="badge ${v.badge||'b-mwf'}">${esc(v.label)}</span>
-          <span style="font-size:11px;color:var(--text3)">${cnt2}명</span>
-          ${isPrincipal?`<button class="btn btn-sm" style="padding:2px 6px;font-size:10px" onclick="delCt('${k}')">삭제</button>`:''}
-        </div>`;
-      });
-      h+=`</div>`;
-    }
-    h+=`</div>`;
   }
 
   // ⑤ 휴일 & 토요보강일 관리 — 한 행에 캘린더/목록 4칸 구성
