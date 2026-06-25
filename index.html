@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v15';
+const APP_VERSION = 'v20260626v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2676,12 +2676,27 @@ function rSchoolExam(){
   // 학교성적 연도 기본값: 상단 탭 연도
   if(!st.seYear) st.seYear = curY;
 
-  // 학생 목록 (활성 학생, 초등 제외)
-  const allStudents = (cfg.students||[]).filter(s=>!s.archived && s.grade && !s.grade.startsWith('초'));
+  // 선택한 연도 기준 학생의 "당시 학년" 역산
+  // (상단 탭 연도 curY와 선택 연도 selYear의 차이만큼 학년을 거슬러 올라감)
+  function effGrade(s){
+    const idx = GRADE_ORDER.indexOf(s.grade);
+    if(idx<0) return null;
+    const diff = curY - selYear;
+    const eIdx = idx - diff;
+    if(eIdx<0 || eIdx>=GRADE_ORDER.length) return null;
+    return GRADE_ORDER[eIdx];
+  }
 
-  // 실제 데이터 있는 학년 목록 추출 (초등 제외)
+  // 학생 목록 (활성 학생, 선택 연도 기준 학년이 초등이 아닌 경우만)
+  const allStudents = (cfg.students||[]).filter(s=>{
+    if(s.archived || !s.grade) return false;
+    const eg = effGrade(s);
+    return eg && !eg.startsWith('초');
+  });
+
+  // 실제 데이터 있는 학년 목록 추출 (선택 연도 기준 당시 학년, 초등 제외)
   const gradeSet = new Set();
-  allStudents.forEach(s=>{ if(s.grade) gradeSet.add(s.grade); });
+  allStudents.forEach(s=>{ const eg=effGrade(s); if(eg) gradeSet.add(eg); });
   const activeGrades = GRADE_ORDER.filter(g=>gradeSet.has(g) && !g.startsWith('초'));
 
   // 전체보기 시 고등학생부터 기본 노출 (초기 진입 시 첫 고등 학년으로 설정)
@@ -2689,15 +2704,15 @@ function rSchoolExam(){
     const firstHigh = activeGrades.find(g=>g.startsWith('고'));
     if(firstHigh) st.seGrade = firstHigh;
   }
-  // 혹시 초등 학년이 선택돼 있으면 초기화
-  if(st.seGrade && st.seGrade.startsWith('초')) st.seGrade = activeGrades.find(g=>g.startsWith('고')) || activeGrades[0] || 'all';
+  // 혹시 초등 학년이 선택돼 있거나, 선택 연도 기준 존재하지 않는 학년이면 초기화
+  if(st.seGrade!=='all' && (!activeGrades.includes(st.seGrade))) st.seGrade = activeGrades.find(g=>g.startsWith('고')) || activeGrades[0] || 'all';
 
-  // 필터 적용된 학생 목록
+  // 필터 적용된 학생 목록 (선택 연도 기준 당시 학년으로 필터/정렬)
   const students = allStudents
-    .filter(s=>selGrade==='all' || s.grade===selGrade)
+    .filter(s=>selGrade==='all' || effGrade(s)===selGrade)
     .sort((a,b)=>{
       const gi = g=>GRADE_ORDER.indexOf(g||'');
-      const gd = gi(a.grade)-gi(b.grade);
+      const gd = gi(effGrade(a))-gi(effGrade(b));
       if(gd!==0) return gd;
       return (a.name||'').localeCompare(b.name||'ko');
     });
@@ -2742,9 +2757,9 @@ function rSchoolExam(){
 
   // 학년별 그룹 평균 계산
   function gradeAvg(gradeStudents, examKey){
-    const grade = gradeStudents[0]?.grade;
+    const grade = effGrade(gradeStudents[0]);
     const scores = gradeStudents.map(s=>{
-      const ex = getExamScore(s.id, s.grade, examKey);
+      const ex = getExamScore(s.id, grade, examKey);
       return ex && ex.score!==null && !isNaN(ex.score) && ex.score>=0 ? ex.score : null;
     }).filter(v=>v!==null);
     if(!scores.length) return null;
@@ -2758,7 +2773,7 @@ function rSchoolExam(){
   h+=`<div class="toolbar">
     <div class="tleft">
       <span style="font-size:14px;font-weight:700">🏫 학교 시험 성적 현황</span>
-      <select onchange="st.seYear=parseInt(this.value);render()">
+      <select onchange="st.seYear=parseInt(this.value);st.seGrade=null;render()">
         ${years.map(y=>`<option value="${y}" ${y===selYear?'selected':''}>${y}년</option>`).join('')}
       </select>
     </div>
@@ -2783,10 +2798,10 @@ function rSchoolExam(){
     </thead>
     <tbody>`;
 
-  // 학년 그룹별 렌더
+  // 학년 그룹별 렌더 (선택 연도 기준 당시 학년으로 그룹핑)
   const gradeGroups = {};
   students.forEach(s=>{
-    const g = s.grade||'미설정';
+    const g = effGrade(s)||'미설정';
     if(!gradeGroups[g]) gradeGroups[g]=[];
     gradeGroups[g].push(s);
   });
@@ -2820,16 +2835,17 @@ function rSchoolExam(){
       h+=`<td class="col-student" style="cursor:pointer" onclick="openM('studentProfile','${s.id}')">
         <div style="font-weight:600;font-size:12px">${esc(s.name)}</div>
         <div style="display:flex;gap:3px;margin-top:2px;flex-wrap:wrap">
-          ${gradeBadge(s.grade)}${levelBadge(s.level)}
+          ${gradeBadge(grade)}${levelBadge(s.level)}
+          ${grade!==s.grade?`<span style="font-size:9px;color:var(--text3)">(현재 ${esc(s.grade)})</span>`:''}
         </div>
       </td>`;
 
       // 시험 4칸
       EXAM_DEFS.forEach(def=>{
-        const ex = getExamScore(s.id, s.grade, def.key);
+        const ex = getExamScore(s.id, grade, def.key);
         const score = ex ? ex.score : null;
         const certified = ex ? ex.certified : false;
-        const prevScore = getPrevScore(s.id, s.grade, def.key);
+        const prevScore = getPrevScore(s.id, grade, def.key);
         const growth = (score!==null && prevScore!==null && !isNaN(score) && !isNaN(prevScore) && score>=0 && prevScore>=0)
           ? (score - prevScore) : null;
 
