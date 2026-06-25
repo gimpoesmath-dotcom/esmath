@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260625v2';
+const APP_VERSION = 'v20260624v15';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -7591,15 +7591,19 @@ function rSettings(){
     // 교재 라이브러리
     const books=cfg.textbooks||[];
     const tbLibOpen = st.tbLibOpen !== false; // 기본 펼침
+    const tbCompact = st.tbCompact !== false; // 기본 컴팩트
     h+=`<div class="toolbar" style="margin-top:14px">
       <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="st.tbLibOpen=!(st.tbLibOpen!==false);render()">
         <b>📚 교재 라이브러리</b>
         <span style="font-size:11px;color:var(--text3);user-select:none">${tbLibOpen?'▲ 접기':'▼ 펼치기'}</span>
       </div>
-      ${tbLibOpen?`<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openM('addTextbook')">+ 교재 추가</button>`:''}
+      ${tbLibOpen?`<div style="display:flex;gap:6px">
+        <button class="btn btn-sm" onclick="event.stopPropagation();st.tbCompact=!(st.tbCompact!==false);render()">${tbCompact?'🔍 자세히 보기':'📦 숨기기'}</button>
+        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openM('addTextbook')">+ 교재 추가</button>
+      </div>`:''}
     </div>`;
     if(tbLibOpen){
-    h+=`<div class="notice">시리즈(예: 풍산자 개념완성)를 큰 틀로 등록하고, 학년·학기별 권을 추가하면 학생 배정 시 자동으로 묶어서 표시됩니다.</div>`;
+    if(!tbCompact) h+=`<div class="notice">시리즈(예: 풍산자 개념완성)를 큰 틀로 등록하고, 학년·학기별 권을 추가하면 학생 배정 시 자동으로 묶어서 표시됩니다.</div>`;
     if(!books.length){
       h+=`<div class="card"><div style="text-align:center;padding:12px;color:var(--text3);font-size:12px">등록된 교재 없음</div></div>`;
     } else {
@@ -7632,13 +7636,13 @@ function rSettings(){
           : seriesTier==='high'
           ? `<span style="font-size:10px;padding:1px 8px;border-radius:20px;background:#f3e8fc;color:#5a2080;border:1px solid #c090e0">HIGH 5,000P</span>`
           : `<span style="font-size:10px;padding:1px 8px;border-radius:20px;background:#e5effc;color:#1558a8;border:1px solid #90b8e8">LOW 2,000P</span>`;
-        h+=`<div class="card" style="margin-bottom:10px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border);flex-wrap:wrap">
-            <b style="font-size:14px">📖 ${esc(sName)}</b>
-            <span style="font-size:11px;color:var(--text3)">${sorted.length}권</span>
-            ${tierLabel}
+        h+=`<div class="card" style="margin-bottom:${tbCompact?'4px':'10px'};padding:${tbCompact?'8px 10px':'14px'}">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:${tbCompact?'4px':'8px'};padding-bottom:${tbCompact?'4px':'8px'};border-bottom:1px solid var(--border);flex-wrap:wrap">
+            <b style="font-size:${tbCompact?'12px':'14px'}">📖 ${esc(sName)}</b>
+            <span style="font-size:10px;color:var(--text3)">${sorted.length}권</span>
+            ${tbCompact?'':tierLabel}
             <div style="margin-left:auto;display:flex;gap:5px">
-              <select style="font-size:11px;padding:3px 6px" onchange="changeSeriesTier('${esc(sName)}',this.value)">
+              <select style="font-size:${tbCompact?'10px':'11px'};padding:${tbCompact?'1px 4px':'3px 6px'}" onchange="changeSeriesTier('${esc(sName)}',this.value)">
                 <option value="high" ${seriesTier==='high'?'selected':''}>HIGH 5,000P</option>
                 <option value="low"  ${seriesTier==='low' ?'selected':''}>LOW 2,000P</option>
                 <option value="none" ${seriesTier==='none'?'selected':''}>포인트 없음</option>
@@ -7653,19 +7657,19 @@ function rSettings(){
             : bkTier==='high'
             ? `<span style="font-size:9px;padding:1px 5px;border-radius:10px;background:#f3e8fc;color:#5a2080">HIGH</span>`
             : `<span style="font-size:9px;padding:1px 5px;border-radius:10px;background:#e5effc;color:#1558a8">LOW</span>`;
-          h+=`<div class="hi" style="align-items:center">
+          h+=`<div class="hi" style="align-items:center;${tbCompact?'padding:3px 0;font-size:11px':''}">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-              <span style="font-size:13px;font-weight:500">${esc(bk.name)}</span>
-              ${bk.grade?`<span class="badge b-grade" style="font-size:10px">${esc(bk.grade)}</span>`:''}
-              ${bk.semester?`<span style="font-size:10px;color:var(--blue);background:var(--blue-bg);border-radius:8px;padding:1px 6px">${esc(bk.semester)}</span>`:''}
-              ${bkTierBadge}
-              ${bk.unitCount?`<span style="font-size:10px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:1px 6px">📋 ${bk.unitCount}단원</span>`:''}
-              <span style="font-size:11px;color:${cnt?'var(--blue)':'var(--text3)'};cursor:${cnt?'pointer':'default'};text-decoration:${cnt?'underline':'none'}" onclick="${cnt?`showTbAssignedStudents('${bk.id}')`:''}" title="${cnt?'클릭하여 배정 학생 보기':''}">${cnt}명 배정</span>
+              <span style="font-size:${tbCompact?'12px':'13px'};font-weight:500">${esc(bk.name)}</span>
+              ${bk.grade?`<span class="badge b-grade" style="font-size:${tbCompact?'9px':'10px'}">${esc(bk.grade)}</span>`:''}
+              ${bk.semester?`<span style="font-size:${tbCompact?'9px':'10px'};color:var(--blue);background:var(--blue-bg);border-radius:8px;padding:1px 6px">${esc(bk.semester)}</span>`:''}
+              ${tbCompact?'':bkTierBadge}
+              ${(!tbCompact&&bk.unitCount)?`<span style="font-size:10px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:1px 6px">📋 ${bk.unitCount}단원</span>`:''}
+              <span style="font-size:${tbCompact?'10px':'11px'};color:${cnt?'var(--blue)':'var(--text3)'};cursor:${cnt?'pointer':'default'};text-decoration:${cnt?'underline':'none'}" onclick="${cnt?`showTbAssignedStudents('${bk.id}')`:''}" title="${cnt?'클릭하여 배정 학생 보기':''}">${cnt}명</span>
             </div>
             <div style="display:flex;gap:4px">
-              ${isPrincipal&&bk.unitCount?`<button class="btn btn-sm" style="color:var(--blue);border-color:#90b8e8" onclick="unitResetAllStudents('${bk.id}',${bk.unitCount})" title="이 교재를 배정받은 모든 학생의 단원을 ${bk.unitCount||0}단원 기준으로 초기화">🔄 단원 초기화</button>`:''}
-              ${isPrincipal?`<button class="btn btn-sm" onclick="openM('editTextbook','${bk.id}')">✎ 수정</button>
-              <button class="btn btn-sm" onclick="delTextbook('${bk.id}')">삭제</button>`:''}
+              ${isPrincipal&&bk.unitCount?`<button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px;':''}color:var(--blue);border-color:#90b8e8" onclick="unitResetAllStudents('${bk.id}',${bk.unitCount})" title="이 교재를 배정받은 모든 학생의 단원을 ${bk.unitCount||0}단원 기준으로 초기화">🔄${tbCompact?'':' 단원 초기화'}</button>`:''}
+              ${isPrincipal?`<button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px':''}" onclick="openM('editTextbook','${bk.id}')">✎${tbCompact?'':' 수정'}</button>
+              <button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px':''}" onclick="delTextbook('${bk.id}')">삭제</button>`:''}
             </div>
           </div>`;
         });
@@ -7673,21 +7677,21 @@ function rSettings(){
       });
       // 시리즈 없는 교재
       if(noSeries.length){
-        h+=`<div class="card" style="margin-bottom:10px">
-          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">기타 교재</div>`;
+        h+=`<div class="card" style="margin-bottom:${tbCompact?'4px':'10px'};padding:${tbCompact?'8px 10px':'14px'}">
+          <div style="font-size:${tbCompact?'11px':'12px'};font-weight:700;color:var(--text2);margin-bottom:${tbCompact?'4px':'8px'};padding-bottom:${tbCompact?'4px':'6px'};border-bottom:1px solid var(--border)">기타 교재</div>`;
         noSeries.forEach(bk=>{
           const cnt=(cfg.students||[]).filter(s=>(s.textbooks||[]).some(t=>t.tbId===bk.id)).length;
-          h+=`<div class="hi">
-            <div><b style="font-size:13px">${esc(bk.name)}</b>
-              ${bk.grade?`<span class="badge b-grade" style="font-size:10px;margin-left:6px">${esc(bk.grade)}</span>`:''}
-              ${bk.publisher?`<span style="font-size:11px;color:var(--text3);margin-left:8px">${esc(bk.publisher)}</span>`:''}
-              ${bk.unitCount?`<span style="font-size:10px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:1px 6px;margin-left:6px">📋 ${bk.unitCount}단원</span>`:''}
-              <span style="font-size:11px;color:var(--text3);margin-left:8px">${cnt}명 배정</span>
+          h+=`<div class="hi" style="${tbCompact?'padding:3px 0;font-size:11px':''}">
+            <div><b style="font-size:${tbCompact?'12px':'13px'}">${esc(bk.name)}</b>
+              ${bk.grade?`<span class="badge b-grade" style="font-size:${tbCompact?'9px':'10px'};margin-left:6px">${esc(bk.grade)}</span>`:''}
+              ${(!tbCompact&&bk.publisher)?`<span style="font-size:11px;color:var(--text3);margin-left:8px">${esc(bk.publisher)}</span>`:''}
+              ${(!tbCompact&&bk.unitCount)?`<span style="font-size:10px;color:var(--text2);background:var(--bg2);border-radius:8px;padding:1px 6px;margin-left:6px">📋 ${bk.unitCount}단원</span>`:''}
+              <span style="font-size:${tbCompact?'10px':'11px'};color:var(--text3);margin-left:8px">${cnt}명${tbCompact?'':' 배정'}</span>
             </div>
             <div style="display:flex;gap:4px">
-              ${isPrincipal&&bk.unitCount?`<button class="btn btn-sm" style="color:var(--blue);border-color:#90b8e8" onclick="unitResetAllStudents('${bk.id}',${bk.unitCount})" title="이 교재를 배정받은 모든 학생의 단원을 ${bk.unitCount||0}단원 기준으로 초기화">🔄 단원 초기화</button>`:''}
-              ${isPrincipal?`<button class="btn btn-sm" onclick="openM('editTextbook','${bk.id}')">✎ 수정</button>
-              <button class="btn btn-sm" onclick="delTextbook('${bk.id}')">삭제</button>`:''}
+              ${isPrincipal&&bk.unitCount?`<button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px;':''}color:var(--blue);border-color:#90b8e8" onclick="unitResetAllStudents('${bk.id}',${bk.unitCount})" title="이 교재를 배정받은 모든 학생의 단원을 ${bk.unitCount||0}단원 기준으로 초기화">🔄${tbCompact?'':' 단원 초기화'}</button>`:''}
+              ${isPrincipal?`<button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px':''}" onclick="openM('editTextbook','${bk.id}')">✎${tbCompact?'':' 수정'}</button>
+              <button class="btn btn-sm" style="${tbCompact?'padding:2px 6px;font-size:10px':''}" onclick="delTextbook('${bk.id}')">삭제</button>`:''}
             </div>
           </div>`;
         });
