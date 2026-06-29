@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260624v15';
+const APP_VERSION = 'v20260629v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -6841,7 +6841,12 @@ function renderSaturdayTable(){
   // 다음 달 보강일 중 학생이 등록된 경우만 표시
   const nextDaysWithStuds=nextDays.filter(e=>getMakeupStudents(e).length>0);
   const allDays=[...days, ...nextDaysWithStuds].sort((a,b)=>a.date.localeCompare(b.date));
-  if(!allDays.length) return '';
+  if(!allDays.length){
+    return `<div style="margin-top:24px"><div class="sec-lbl">🗓 토요 보강 시간표</div>
+      <div class="empty" style="padding:16px">이번 달 등록된 토요보강일이 없습니다.<br>
+        <span style="font-size:11px;color:var(--text3)">설정 탭 → 토요보강 캘린더에서 토요일을 클릭하여 보강일을 등록하세요.</span>
+      </div></div>`;
+  }
   const isPrin=session?.role==='principal';
   const allStuds=cfg.students||[];
   const studs=(!isPrin && !st.viewAll)
@@ -6889,12 +6894,20 @@ function renderSaturdayTable(){
       <div style="font-size:10px;color:var(--text3);font-weight:400">${period.time}</div>
     </td>`;
     activeDays.forEach(entry=>{
-      // 교시 매칭 (미정 행은 빈/이상한 값 모두)
+      // 교시 매칭 (미정 행은 빈/이상한 값 모두) + 선생님 권한 필터
       const arr=getMakeupStudents(entry).filter(es=>{
-        if(period.p==='_unassigned_'){
-          return !es.period || (es.period!=='1' && es.period!=='2');
+        const periodMatch=period.p==='_unassigned_'
+          ? (!es.period || (es.period!=='1' && es.period!=='2'))
+          : es.period===period.p;
+        if(!periodMatch) return false;
+        // 선생님: 보강 담당이 본인이거나, 해당 학생의 반 담당이 본인인 경우만 표시
+        if(!isPrin && !st.viewAll){
+          const s2=allStuds.find(x=>x.id===es.id);
+          const isMyMakeup=es.teacher===session?.username;
+          const isMyStudent=s2&&isStudentOfTeacher(s2, session?.username);
+          if(!isMyMakeup && !isMyStudent) return false;
         }
-        return es.period===period.p;
+        return true;
       });
       // 담당 선생님별 그룹
       const byTeacher=new Map();
@@ -7775,7 +7788,7 @@ function rSettings(){
     </div>
   </div>`;
   if(holOpen){
-  h+=`<div class="notice">휴일로 등록된 날은 수업 회차 계산에서 자동 제외돼요. ${isPrincipal?'캘린더 날짜를 클릭하면 휴일/보강일을 바로 등록·해제할 수 있어요.':''} 보강일은 ${st.year}년 ${st.month}월 이후 일정만 표시됩니다.</div>`;
+  h+=`<div class="notice">휴일로 등록된 날은 수업 회차 계산에서 자동 제외돼요. 캘린더 토요일 클릭으로 보강일을 등록·해제할 수 있어요. (선생님도 가능) 보강일은 ${st.year}년 ${st.month}월 이후 일정만 표시됩니다.</div>`;
   h+=`<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">`;
 
   // 1) 휴일 캘린더
@@ -7808,7 +7821,7 @@ function rSettings(){
       const dayLabel=DAY[dd.getDay()];
       const entry=getMkEntryByDate(md);
       const studCount=entry?getMakeupStudents(entry).length:0;
-      h+=`<div class="hi"><span>${md} (${dayLabel}) <span style="color:var(--text3);font-size:11px">${studCount?`· 학생 ${studCount}명`:''}</span></span>${isPrincipal?`<button class="btn btn-sm" onclick="delMkDay('${md}')">삭제</button>`:''}</div>`;
+      h+=`<div class="hi"><span>${md} (${dayLabel}) <span style="color:var(--text3);font-size:11px">${studCount?`· 학생 ${studCount}명`:''}</span></span><button class="btn btn-sm" onclick="delMkDay('${md}')">삭제</button></div>`;
     });
   }
   h+=`</div>`;
@@ -9502,18 +9515,24 @@ function rModal(){
     const nextM=st.month===12?1:st.month+1;
     const nextKey=`${nextY}-${String(nextM).padStart(2,'0')}`;
     const saturdays=allMkDates.filter(d=>d.startsWith(monthKey)||d.startsWith(nextKey));
-    const studs=cfg.students||[];
+    const allStuds=cfg.students||[];
+    const isPrinM=session?.role==='principal';
+    // 선생님: 본인 담당 학생을 먼저, 나머지는 뒤에 (optgroup 분리)
+    const myStuds=isPrinM?[]:allStuds.filter(s=>isStudentOfTeacher(s,session?.username));
+    const otherStuds=isPrinM?allStuds:allStuds.filter(s=>!isStudentOfTeacher(s,session?.username));
     const teacherList=allTeachers();
+    const myName=session?.username||'';
+    const stuOpts=isPrinM
+      ? allStuds.map(s=>{ const ct=CT()[s.classType]; return `<option value="${s.id}" data-teacher="${esc(s.teacher||s.fridayTeacher||'')}">${esc(s.name)} ${s.grade?'('+s.grade+')':''} ${ct?'· '+ct.label:''}</option>`; }).join('')
+      : (myStuds.length?`<optgroup label="내 담당 학생">${myStuds.map(s=>{ const ct=CT()[s.classType]; return `<option value="${s.id}" data-teacher="${esc(s.teacher||s.fridayTeacher||'')}">${esc(s.name)} ${s.grade?'('+s.grade+')':''} ${ct?'· '+ct.label:''}</option>`; }).join('')}</optgroup>`:'')
+        +(otherStuds.length?`<optgroup label="전체 학생">${otherStuds.map(s=>{ const ct=CT()[s.classType]; return `<option value="${s.id}" data-teacher="${esc(s.teacher||s.fridayTeacher||'')}">${esc(s.name)} ${s.grade?'('+s.grade+')':''} ${ct?'· '+ct.label:''}</option>`; }).join('')}</optgroup>`:'');
     div.innerHTML=`<div class="modal" style="max-width:480px">
       <h3>🗓 토요보강 학생 추가</h3>
       ${!saturdays.length?`<div class="notice" style="background:#fce6e6;border-color:#e8a8a8;color:#a02828;margin-bottom:12px">등록된 토요보강일이 없습니다. 설정 → 토요보강일 관리에서 먼저 등록해주세요.</div>`:''}
       <div class="frow"><label>학생 선택</label>
         <select id="satAddSid" style="width:100%" onchange="onSatAddStuChange()">
           <option value="">-- 학생 선택 --</option>
-          ${studs.map(s=>{
-            const ct=CT()[s.classType];
-            return `<option value="${s.id}" data-teacher="${esc(s.teacher||s.fridayTeacher||'')}">${esc(s.name)} ${s.grade?'('+s.grade+')':''} ${ct?'· '+ct.label:''}</option>`;
-          }).join('')}
+          ${stuOpts}
         </select>
       </div>
       <div class="frow"><label>결석일 (이 날짜를 자동으로 결석 처리)</label>
@@ -9527,10 +9546,7 @@ function rModal(){
       <div class="frow"><label>보강 날짜 (토요일)</label>
         <select id="satAddDate" style="width:100%">
           <option value="">-- 날짜 선택 --</option>
-          ${saturdays.map(d=>{
-            const dt=parseDate(d);
-            return `<option value="${d}">${d} (${DAY[dt.getDay()]})</option>`;
-          }).join('')}
+          ${saturdays.map(d=>{ const dt=parseDate(d); return `<option value="${d}">${d} (${DAY[dt.getDay()]})</option>`; }).join('')}
         </select>
       </div>
       <div class="frow"><label>교시</label>
@@ -9542,7 +9558,7 @@ function rModal(){
       <div class="frow"><label>담당 선생님</label>
         <select id="satAddTeacher" style="width:100%">
           <option value="">-- 미지정 --</option>
-          ${teacherList.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+          ${teacherList.map(t=>`<option value="${esc(t)}" ${t===myName&&!isPrinM?'selected':''}>${esc(t)}</option>`).join('')}
         </select>
       </div>
       <div class="mfoot">
@@ -11143,9 +11159,9 @@ function mkCalNav(n){
 }
 function mkCalToday(){const n=new Date();st.mkCalY=n.getFullYear();st.mkCalM=n.getMonth()+1;render();}
 
-/* 토요보강일 캘린더 — 토요일 클릭 시 확인 팝업 후 등록/해제 (원장 전용) */
+/* 토요보강일 캘린더 — 토요일 클릭 시 확인 팝업 후 등록/해제 (원장·선생님 모두 가능) */
 async function toggleMkDate(dStr){
-  if(!isPrincipalNow())return;
+  if(!session) return;
   const dt=parseDate(dStr);
   if(dt.getDay()!==6){ alert('토요일만 보강일로 등록할 수 있습니다.'); return; }
   const label=`${dStr} (토)`;
@@ -11213,7 +11229,7 @@ function buildMkCalendarHTML(y,m,isPrincipal){
     const isRegistered=isSat && !!getMkEntryByDate(dStr);
     const isToday=dStr===todayStr;
     const isWeekend=dow===0||dow===6;
-    const clickable=isPrincipal&&isSat;
+    const clickable=isSat; // 원장·선생님 모두 토요보강일 등록 가능
 
     h+=`<div ${clickable?`onclick="toggleMkDate('${dStr}')"`:''}
       style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:var(--r);font-size:12px;cursor:${clickable?'pointer':'default'};
