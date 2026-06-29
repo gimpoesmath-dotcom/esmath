@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260629v1';
+const APP_VERSION = 'v20260629v2';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -913,21 +913,51 @@ async function backupAllData(){
     spRows.sort((a,b)=>{ if(a[0]!==b[0]) return a[0].localeCompare(b[0],'ko'); if(a[1]!==b[1]) return a[1].localeCompare(b[1],'ko'); return (a[2]||0)-(b[2]||0); });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(spRows), '특강수업기록');
 
-    // 10. 보강 일정 (makeup_days)
+    // 10. 보강 일정 (makeup_days) — Firestore에서 직접 읽기 (캐시 무시)
     const mkRows=[['보강날짜','학생명','교시','담당','보강유형','결석일']];
-    Object.values(cfg.makeupDays||{}).forEach(monthList=>{
-      monthList.forEach(entry=>{
-        const students=entry.students||[];
+    try{
+      const mkSnap = await _gd(_col(fbDb(), 'makeup_days'));
+      mkSnap.forEach(doc=>{
+        const data=doc.data();
+        const dateStr=doc.id;
+        const students=data.students||[];
         students.forEach(es=>{
           const s=studs.find(x=>x.id===es.id);
           mkRows.push([
-            entry.date||'', s?.name||es.id, es.period?es.period+'교시':'',
+            dateStr, s?.name||es.id, es.period?es.period+'교시':'',
             es.teacher||'', es.makeupType==='special'?'특강':'정규',
             es.absentDate||''
           ]);
         });
       });
-    });
+      // 캐시도 최신 상태로 갱신
+      const freshMd={};
+      mkSnap.forEach(doc=>{
+        const data=doc.data();
+        const dateStr=doc.id;
+        const monthKey=dateStr.slice(0,7);
+        if(!freshMd[monthKey]) freshMd[monthKey]=[];
+        freshMd[monthKey].push({date:dateStr, students:data.students||[]});
+      });
+      Object.keys(freshMd).forEach(k=>freshMd[k].sort((a,b)=>a.date.localeCompare(b.date)));
+      cfg.makeupDays=freshMd;
+      try{ sessionStorage.setItem('makeup_days_cache', JSON.stringify(freshMd)); }catch(e){}
+    }catch(e){
+      // Firestore 직접 읽기 실패 시 캐시로 fallback
+      Object.values(cfg.makeupDays||{}).forEach(monthList=>{
+        monthList.forEach(entry=>{
+          const students=entry.students||[];
+          students.forEach(es=>{
+            const s=studs.find(x=>x.id===es.id);
+            mkRows.push([
+              entry.date||'', s?.name||es.id, es.period?es.period+'교시':'',
+              es.teacher||'', es.makeupType==='special'?'특강':'정규',
+              es.absentDate||''
+            ]);
+          });
+        });
+      });
+    }
     mkRows.sort((a,b)=>a[0].localeCompare(b[0]));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mkRows), '보강일정');
 
@@ -7090,13 +7120,43 @@ async function loadMakeupDaysFromCollection(forceRefresh=false){
 
 /* 보강일 문서 저장 후 세션 캐시 무효화 */
 async function saveMakeupDayDoc(dateStr){
-  const {setDoc} = fb();
+  const {setDoc, getDoc} = fb();
   const entry = getMkEntryByDate(dateStr);
   if(!entry) return;
-  await setDoc(makeupDayDocRef(dateStr), {
-    date: dateStr,
-    students: entry.students || []
-  });
+  const ref = makeupDayDocRef(dateStr);
+  const localStudents = entry.students || [];
+
+  // 저장 전 Firebase 최신 데이터 확인 — 캐시가 오래된 상태에서 덮어쓰기 방지
+  try{
+    const snap = await getDoc(ref);
+    if(snap.exists()){
+      const serverStudents = snap.data().students || [];
+      if(serverStudents.length > localStudents.length){
+        const ok = confirm(
+          `⚠️ 저장 전 불일치 감지
+
+` +
+          `서버에 등록된 학생: ${serverStudents.length}명
+` +
+          `현재 화면의 학생: ${localStudents.length}명
+
+` +
+          `화면 데이터가 서버보다 적습니다. 캐시가 오래됐을 수 있습니다.
+` +
+          `지금 저장하면 서버 데이터가 덮어씌워져 학생이 사라질 수 있습니다.
+
+` +
+          `[취소] 누르면 저장하지 않습니다. 페이지를 새로고침 후 다시 시도해주세요.`
+        );
+        if(!ok) return;
+      }
+    }
+  }catch(e){
+    // getDoc 실패 시 그냥 진행 (네트워크 문제 등)
+    console.warn('saveMakeupDayDoc: 서버 확인 실패, 그냥 저장 진행', e);
+  }
+
+  await setDoc(ref, { date: dateStr, students: localStudents });
   try{ sessionStorage.removeItem('makeup_days_cache'); }catch(e){}
 }
 
@@ -7821,7 +7881,7 @@ function rSettings(){
       const dayLabel=DAY[dd.getDay()];
       const entry=getMkEntryByDate(md);
       const studCount=entry?getMakeupStudents(entry).length:0;
-      h+=`<div class="hi"><span>${md} (${dayLabel}) <span style="color:var(--text3);font-size:11px">${studCount?`· 학생 ${studCount}명`:''}</span></span><button class="btn btn-sm" onclick="delMkDay('${md}')">삭제</button></div>`;
+      h+=`<div class="hi"><span>${md} (${dayLabel}) <span style="color:var(--text3);font-size:11px">${studCount?`· 학생 ${studCount}명`:''}</span></span>${isPrincipal?`<button class="btn btn-sm" onclick="delMkDay('${md}')">삭제</button>`:''}</div>`;
     });
   }
   h+=`</div>`;
@@ -11166,7 +11226,14 @@ async function toggleMkDate(dStr){
   if(dt.getDay()!==6){ alert('토요일만 보강일로 등록할 수 있습니다.'); return; }
   const label=`${dStr} (토)`;
   const entry=getMkEntryByDate(dStr);
+  const isPrin=session?.role==='principal';
   if(entry){
+    // 이미 등록된 날짜 클릭
+    if(!isPrin){
+      // 선생님은 삭제 불가 — 안내만 표시
+      alert(`${label}\n이미 등록된 토요보강일입니다.\n\n보강일 삭제는 원장선생님만 할 수 있습니다.\n학생 보강 등록은 시간표 탭 → 토요 보강 시간표 → [+ 학생 추가]를 이용해 주세요.`);
+      return;
+    }
     const studCount=getMakeupStudents(entry).length;
     let msg=`${label}\n보강일 등록을 해제하시겠어요?`;
     if(studCount>0) msg+=`\n\n⚠️ 등록된 학생이 ${studCount}명 있습니다. 해제하면 해당 학생들의 보강 신청도 취소됩니다.`;
