@@ -448,7 +448,7 @@ window._fbStorage = null;
 </div>
 
 <script>
-const APP_VERSION = 'v20260629v2';
+const APP_VERSION = 'v20260701v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -8059,7 +8059,7 @@ function buildProfileHTML(sid){
           }
           h+='<span style="font-size:11px;color:var(--text3)">'+(a.date||'')+'</span>';
           h+='<span style="font-size:11px;color:var(--text2);flex:1">'+(a.memo?esc(a.memo):'')+'</span>';
-          if(isPrin) h+='<button class="btn btn-sm" style="color:var(--red);font-size:10px" onclick="delTest(\''+a.key+'\',\''+sid+'\')">삭제</button>';
+          h+='<button class="btn btn-sm" style="color:var(--red);font-size:10px" onclick="delTest(\''+a.key+'\',\''+sid+'\')">삭제</button>';
           h+='</div>';
         });
         h+='</div>';
@@ -8474,7 +8474,7 @@ function renderExternalExamSection(sid, s, exams, isPrin){
       if(certFile) h+=`<span style="font-size:10px;color:var(--text3)">${esc(certFile)}</span>`;
       if(certified&&(ex.certDataUrl||ex.certUrl||ex.certFileName)) h+=`<button class="btn btn-sm" style="font-size:10px;padding:2px 8px" onclick="viewCertFile('${sid}','${ex.id}','external')">🔍 보기</button>`;
       if(ex.memo) h+=`<span style="font-size:11px;color:var(--text2)">${esc(ex.memo)}</span>`;
-      if(isPrin) h+=`<button class="btn btn-sm btn-red" style="font-size:10px;margin-left:auto" onclick="deleteExternalExam('${sid}','${ex.id}')">삭제</button>`;
+      h+=`<button class="btn btn-sm btn-red" style="font-size:10px;margin-left:auto" onclick="deleteExternalExam('${sid}','${ex.id}')">삭제</button>`;
       h += `</div>`;
     });
     h += '</div>';
