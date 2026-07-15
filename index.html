@@ -322,7 +322,7 @@ select,input[type=text],input[type=date],input[type=number]{padding:5px 9px;font
 </head>
 <body>
 
-<!-- Firebase SDK (Firestore + Storage) -->
+<!-- Firebase SDK (Firestore only — Storage 미사용) -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js';
 import { initializeAppCheck, ReCaptchaV3Provider, getToken } from 'https://www.gstatic.com/firebasejs/12.13.0/firebase-app-check.js';
@@ -451,7 +451,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260701v1';
+const APP_VERSION = 'v20260715v2';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -1387,8 +1387,7 @@ async function loadSchoolExamData(){
 
 async function saveSchoolExamData(sid, data){
   const {setDoc}=fb();
-  // 인증 이미지는 Firebase Storage에 업로드되고, 이 문서엔 다운로드 URL(certUrl)만 저장됨
-  // (certDataUrl은 과거 base64-in-document 방식으로 저장된 구 데이터 호환용으로만 남아있음)
+  // certDataUrl을 Firestore에 직접 저장 (Firebase Storage 미사용, base64 보관)
   const clean=JSON.parse(JSON.stringify(data));
   await setDoc(schoolExamDocRef(sid), clean);
   schoolExamData[sid]=clean;
@@ -5354,41 +5353,30 @@ function printPointsSummary(){
     return false;
   }
 
-  // 인쇄 대상월(printYear/printMonth) "까지"의 누적 잔액 계산
-  // (pointsData[sid].balance는 항상 "현재 시점" 실시간 잔액이라
-  //  인쇄월 이후에 이미 적립된 내역이 있으면 그 값까지 섞여 들어가 버그가 생김.
-  //  그래서 history를 직접 연/월 기준으로 필터링해서 그 시점까지만 합산한다.)
-  function getBalanceThrough(sid, year, month){
+  // 이전달 누적 잔액 / 해당월 누적 잔액 — 반드시 history를 (year,month) 기준으로 직접 합산해서 계산.
+  // pd.balance(실시간 총 잔액)는 인쇄 시점 이후에 발생한 내역까지 포함돼 있어 그대로 쓰면 안 됨.
+  function cumulativeThrough(sid, year, month){
     const pd = pointsData[sid];
     if(!pd) return 0;
     return (pd.history||[])
       .filter(h=> h.year<year || (h.year===year && h.month<=month))
-      .reduce((a,h)=>a+h.points, 0);
+      .reduce((a,h)=>a+(h.points||0), 0);
   }
-
-  // 이전달 누적 잔액 (이달 적립 전, 인쇄월 기준)
-  function getPrevBalance(sid){
-    const prevY = printMonth===1 ? printYear-1 : printYear;
-    const prevM = printMonth===1 ? 12 : printMonth-1;
-    return getBalanceThrough(sid, prevY, prevM);
+  function prevYM(year, month){
+    return month===1 ? {year:year-1, month:12} : {year, month:month-1};
   }
+  const { year: prevPY, month: prevPM } = prevYM(printYear, printMonth);
 
   function getMonthEarned(history){
     return history.filter(h=>h.points>0).reduce((a,h)=>a+h.points,0);
   }
 
-  // 이번달 차감분 (음수 포인트, 절대값으로 반환)
-  function getMonthDeducted(history){
-    return history.filter(h=>h.points<0).reduce((a,h)=>a+h.points,0) * -1;
-  }
-
   // 행 생성
   const rows = filtered.map((s,i)=>{
-    const history      = getMonthHistory(s.id);
-    const monthEarned   = getMonthEarned(history);
-    const monthDeducted = getMonthDeducted(history);
-    const prevBal     = getPrevBalance(s.id);
-    const totalBal    = getBalanceThrough(s.id, printYear, printMonth);
+    const history     = getMonthHistory(s.id);
+    const monthEarned = getMonthEarned(history);
+    const prevBal      = cumulativeThrough(s.id, prevPY, prevPM);
+    const totalBal      = cumulativeThrough(s.id, printYear, printMonth);
     const bg = i%2===0 ? '#fff' : '#f8f8f6';
 
     const cells = ALL_COLS.map(col=>{
@@ -5401,7 +5389,6 @@ function printPointsSummary(){
       <td style="text-align:right;font-weight:700;background:${bg};padding:5px 8px;color:#1a1a1a">${prevBal>0?prevBal.toLocaleString():0}</td>
       ${cells}
       <td style="text-align:right;font-weight:700;color:#1e6e3a;background:${bg};white-space:nowrap;padding:5px 8px">${monthEarned>0?monthEarned.toLocaleString():''}</td>
-      <td style="text-align:right;font-weight:700;color:#c8000a;background:${bg};white-space:nowrap;padding:5px 8px">${monthDeducted>0?'-'+monthDeducted.toLocaleString():''}</td>
       <td style="text-align:right;font-weight:800;background:${monthEarned>0?'#fff9e6':bg};color:${totalBal>0?'#c8000a':'#1a1a1a'};white-space:nowrap;padding:5px 8px">${totalBal.toLocaleString()}</td>
     </tr>`;
   }).join('');
@@ -5451,8 +5438,7 @@ function printPointsSummary(){
         <th rowspan="3" style="background:#f0f4fa;min-width:60px">이름</th>
         <th rowspan="3" style="background:#f0f4fa;min-width:64px;text-align:center">지난달<br>합계</th>
         ${groupHeaderCells}
-        <th rowspan="3" style="background:#e8f5e9;min-width:56px;text-align:center;color:#1e6e3a">이번달<br>적립</th>
-        <th rowspan="3" style="background:#fdeaea;min-width:56px;text-align:center;color:#c8000a">이번달<br>차감</th>
+        <th rowspan="3" style="background:#e8f5e9;min-width:56px;text-align:center;color:#1e6e3a">이번달</th>
         <th rowspan="3" style="background:#fff3cd;min-width:64px;text-align:center;color:#c8000a">누적합계</th>
       </tr>
       <tr>${ptHeaderCells}</tr>
@@ -8344,12 +8330,6 @@ function renderSchoolExamSection(sid, s, exams, isPrin){
     {key:'s2_fin',  label:'2학기 기말', prevKey: 's2_mid'},
   ];
   const isHigh = s.grade && s.grade.startsWith('고');
-  function gradeColor(g){
-    if(g<=2) return 'var(--green)';
-    if(g<=4) return 'var(--blue)';
-    if(g<=6) return 'var(--amber)';
-    return 'var(--red)';
-  }
 
   // 모든 학년 목록 추출 (기존 데이터 + 새 형식)
   const gradeSet = new Set();
@@ -8421,7 +8401,7 @@ function renderSchoolExamSection(sid, s, exams, isPrin){
         prevScore = prevEx.score;
       }
     }
-    const growth = (score!==null && score!==-1 && prevScore!==null && prevScore!==-1 && !isNaN(score) && !isNaN(prevScore)) ? (score - prevScore) : null;
+    const growth = (score!==null && prevScore!==null && !isNaN(score) && !isNaN(prevScore)) ? (score - prevScore) : null;
 
     // 성적상 배지
     let awardBadge = '';
@@ -8443,20 +8423,13 @@ function renderSchoolExamSection(sid, s, exams, isPrin){
     h += `<div style="border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;background:${score!==null?'#fff':'var(--bg2)'}">`;
     h += `<div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px">${def.label}${awardBadge}</div>`;
     if(score!==null){
-      if(score===-1){
-        // 고등 1등급 특수값 (점수 대신 -1로 기록)
-        h += `<div style="font-size:18px;font-weight:700;color:var(--green)">1등급 <span style="font-size:10px;font-weight:600">TOP</span></div>`;
-      } else {
-        const color = score>=90?'var(--green)':score>=70?'var(--text)':'var(--red)';
-        h += `<div style="font-size:20px;font-weight:700;color:${color}">${parseFloat(score.toFixed(1))}<span style="font-size:11px;font-weight:400;color:var(--text2)">점</span>`;
-        if(isHigh && ex && ex.manualGrade){
-          h += `<span style="font-size:12px;font-weight:700;color:${gradeColor(ex.manualGrade)};margin-left:5px">${ex.manualGrade}등급</span>`;
-        }
-        h += `</div>`;
-        if(growth!==null){
-          const gc=growth>0?'var(--green)':growth<0?'var(--red)':'var(--text2)';
-          h+=`<div style="font-size:11px;color:${gc};margin-top:2px">${growth>0?'+':''}${parseFloat(growth.toFixed(1))}점 (이전 ${parseFloat(prevScore.toFixed(1))}점)</div>`;
-        }
+      const color = score>=90?'var(--green)':score>=70?'var(--text)':'var(--red)';
+      const manualGrade = (isHigh && ex && ex.manualGrade) ? ex.manualGrade : null;
+      const mgColor = manualGrade===null ? '' : (manualGrade<=2?'var(--green)':manualGrade<=4?'var(--blue)':manualGrade<=6?'var(--amber)':'var(--red)');
+      h += `<div style="font-size:20px;font-weight:700;color:${color}">${parseFloat(score.toFixed(1))}<span style="font-size:11px;font-weight:400;color:var(--text2)">점</span>${manualGrade!==null?`<span style="font-size:12px;font-weight:700;color:${mgColor};margin-left:5px">${manualGrade}등급</span>`:''}</div>`;
+      if(growth!==null){
+        const gc=growth>0?'var(--green)':growth<0?'var(--red)':'var(--text2)';
+        h+=`<div style="font-size:11px;color:${gc};margin-top:2px">${growth>0?'+':''}${parseFloat(growth.toFixed(1))}점 (이전 ${parseFloat(prevScore.toFixed(1))}점)</div>`;
       }
       h += `<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">`;
       if(certified){
@@ -8480,7 +8453,7 @@ function renderSchoolExamSection(sid, s, exams, isPrin){
 
   // 고등: 1등급 여부 안내
   if(isHigh){
-    h += '<div style="font-size:11px;color:var(--text2);padding:6px 10px;background:var(--bg2);border-radius:var(--r);margin-bottom:10px">💡 <b>고등학교 TOP HONOR</b>: 점수 대신 "1등급"으로 기록할 경우 점수란에 <b>-1</b>을 입력하세요. 포인트 지급은 포인트 탭에서 직접 적립해주세요.</div>';
+    h += '<div style="font-size:11px;color:var(--text2);padding:6px 10px;background:var(--bg2);border-radius:var(--r);margin-bottom:10px">💡 <b>고등학교 등급 기록 방법</b><br>· 원점수를 모르고 <b>1등급 여부만</b> 아는 경우: 점수란에 <b>-1</b>을 입력하세요.<br>· 원점수와 등급(1~9등급)을 <b>모두 아는</b> 경우: 점수는 그대로 입력하고, 아래 "등급 직접 입력"에서 등급을 선택하면 점수 옆에 함께 표시됩니다.<br>· TOP HONOR 포인트 지급은 포인트 탭에서 직접 적립해주세요.</div>';
   }
 
   // KUT 외부시험 섹션도 함께 포함
@@ -8630,26 +8603,27 @@ function openExternalExamInput(sid){
 /* ── 성적표 파일 저장 (Firestore base64 방식 — Storage 미사용) ── */
 // Storage 관련 함수는 제거, base64를 Firestore에 직접 저장하는 방식으로 통일
 
-// 성적표 이미지를 Firebase Storage에 업로드하고 다운로드 URL을 반환
-// (Firestore 문서에는 이 URL 문자열만 저장 — 문서 크기 한도 문제 원천 차단)
+// Storage 경로 규칙: cert_files/{학생ID}/{keyOrId} (같은 시험을 재업로드하면 같은 경로를 덮어써서 orphan 파일 방지)
+function certStoragePath(sid, keyOrId){
+  return `cert_files/${sid}/${keyOrId}`;
+}
+
 async function uploadCertFile(sid, keyOrId, dataUrl){
-  const {storage, storageRef, uploadString, getDownloadURL} = fbStorage();
-  const path = `cert_files/${sid}/${keyOrId}`;
-  const fileRef = storageRef(storage, path);
-  await uploadString(fileRef, dataUrl, 'data_url');
-  const url = await getDownloadURL(fileRef);
-  // 빠른 재조회를 위해 로컬에도 캐싱 (실패해도 무시)
-  saveCertLocal(sid, keyOrId, dataUrl);
-  return url;
+  const st = fbStorage();
+  if(!st) throw new Error('Storage가 초기화되지 않았습니다');
+  const fileRef = st.storageRef(st.storage, certStoragePath(sid, keyOrId));
+  await st.uploadString(fileRef, dataUrl, 'data_url');
+  return await st.getDownloadURL(fileRef);
 }
 
 async function getCertDownloadUrl(sid, keyOrId){
+  const st = fbStorage();
+  if(!st) return null;
   try{
-    const {storage, storageRef, getDownloadURL} = fbStorage();
-    const fileRef = storageRef(storage, `cert_files/${sid}/${keyOrId}`);
-    return await getDownloadURL(fileRef);
+    const fileRef = st.storageRef(st.storage, certStoragePath(sid, keyOrId));
+    return await st.getDownloadURL(fileRef);
   }catch(e){
-    return null; // 아직 업로드된 파일이 없음
+    return null; // 파일 없음 등
   }
 }
 
@@ -8727,14 +8701,15 @@ function clearCertPaste(inputId, previewId, zoneId){
 }
 
 async function deleteCertFile(sid, keyOrId){
-  try{
-    const {storage, storageRef, deleteObject} = fbStorage();
-    const fileRef = storageRef(storage, `cert_files/${sid}/${keyOrId}`);
-    await deleteObject(fileRef);
-  }catch(e){
-    // 파일이 원래 없었거나(구 데이터) 이미 삭제된 경우 — 무시하고 진행
-  }
   deleteCertLocal(sid, keyOrId);
+  const st = fbStorage();
+  if(!st) return;
+  try{
+    const fileRef = st.storageRef(st.storage, certStoragePath(sid, keyOrId));
+    await st.deleteObject(fileRef);
+  }catch(e){
+    // 파일이 애초에 없던 경우(구버전 base64 레코드 등)는 조용히 무시
+  }
 }
 
 // localStorage 캐시 함수 (성적표 이미지 로컬 캐싱용)
@@ -8804,9 +8779,7 @@ async function saveSchoolExamInput(sid, examKey, isHighNum){
 
   const prevVal=prevInp.value.trim()!==''?parseFloat(prevInp.value):null;
   const gradeLabel = (document.getElementById('examGradeLabel')?.value)||'';
-  // 학년이 다르면 같은 examKey라도 다른 시험이므로, Storage 경로도 학년별로 구분
-  const certId = gradeLabel ? (examKey+'__'+gradeLabel) : examKey;
-
+  const storageKey = `school_${examKey}_${gradeLabel||'default'}`; // Storage 경로용 고유 키 (학년까지 구분)
   let certified=false, certFileName='', certUrl='';
 
   if(fileInp.files&&fileInp.files[0]){
@@ -8814,16 +8787,19 @@ async function saveSchoolExamInput(sid, examKey, isHighNum){
     if(file.size>3*1024*1024){ alert('파일 크기는 3MB 이하여야 합니다.\n카카오톡으로 받은 이미지나 캡처 화면을 사용해주세요.'); return; }
     toast('성적표 압축 중...');
     const dataUrl=await compressImageFile(file);
+    saveCertLocal(sid, storageKey, dataUrl); // 로컬 캐시 (같은 기기에서 빠른 미리보기용)
+    toast('성적표 업로드 중...');
     try{
-      toast('성적표 업로드 중...');
-      certUrl = await uploadCertFile(sid, certId, dataUrl);
+      certUrl = await uploadCertFile(sid, storageKey, dataUrl);
     }catch(e){
-      alert('성적표 파일 업로드에 실패했습니다: '+e.message);
+      toast('성적표 업로드 실패: '+e.message, true);
       return;
     }
     certified=true; certFileName=file.name;
   } else {
-    const existing=(schoolExamData[sid]?.exams||[]).find(e=>e.key===examKey&&e.type==='school'&&(gradeLabel?e.gradeLabel===gradeLabel:!e.gradeLabel));
+    // 같은 학년 + 같은 시험(key)의 기존 인증 정보를 재사용 (학년 구분 없이 찾던 기존 버그 수정)
+    const existing=(schoolExamData[sid]?.exams||[]).find(e=>
+      e.key===examKey&&e.type==='school'&&(gradeLabel?e.gradeLabel===gradeLabel:!e.gradeLabel));
     if(existing&&existing.certified){ certified=existing.certified; certFileName=existing.certFileName||''; certUrl=existing.certUrl||''; }
   }
 
@@ -8832,7 +8808,6 @@ async function saveSchoolExamInput(sid, examKey, isHighNum){
   const idx=examDb.exams.findIndex(e=>e.key===examKey&&e.type==='school');
   const manualGradeRaw = document.getElementById('examManualGrade')?.value;
   const manualGrade = manualGradeRaw ? parseInt(manualGradeRaw) : undefined;
-  // certUrl(Storage 다운로드 링크)만 저장 — 이미지 원본(base64)은 더 이상 Firestore 문서에 넣지 않음
   const entry={type:'school',key:examKey,score:scoreVal,prevScore:isNaN(prevVal)?null:prevVal,
     certified,certFileName,certUrl,savedAt:new Date().toISOString(),
     gradeLabel: gradeLabel||undefined,
@@ -8872,11 +8847,12 @@ async function saveExternalExamInput(sid){
     if(file.size>3*1024*1024){ alert('파일 크기는 3MB 이하여야 합니다.\n카카오톡으로 받은 이미지나 캡처 화면을 사용해주세요.'); return; }
     toast('성적표 압축 중...');
     const dataUrl=await compressImageFile(file);
+    saveCertLocal(sid, id, dataUrl); // 로컬 캐시 (같은 기기에서 빠른 미리보기용)
+    toast('성적표 업로드 중...');
     try{
-      toast('성적표 업로드 중...');
       certUrl = await uploadCertFile(sid, id, dataUrl);
     }catch(e){
-      alert('성적표 파일 업로드에 실패했습니다: '+e.message);
+      toast('성적표 업로드 실패: '+e.message, true);
       return;
     }
     certified=true; certFileName=file.name;
@@ -8907,15 +8883,13 @@ async function deleteSchoolExamByGrade(sid, examKey, gradeLabel){
     examDb=JSON.parse(JSON.stringify(schoolExamData[sid]||{exams:[]}));
   }
   if(!examDb.exams) examDb.exams=[];
-  const certId = gradeLabel ? (examKey+'__'+gradeLabel) : examKey;
   if(gradeLabel){
     examDb.exams=examDb.exams.filter(e=>!(e.key===examKey&&e.type==='school'&&e.gradeLabel===gradeLabel));
   } else {
     examDb.exams=examDb.exams.filter(e=>!(e.key===examKey&&e.type==='school'&&!e.gradeLabel));
   }
-  try{ await deleteCertFile(sid, certId); }catch(e){}
-  deleteCertLocal(sid, certId);
-
+  const storageKey = `school_${examKey}_${gradeLabel||'default'}`;
+  try{ await deleteCertFile(sid, storageKey); }catch(e){}
   try{
     await saveSchoolExamData(sid, examDb);
     schoolExamData[sid] = examDb;
@@ -8978,22 +8952,21 @@ function viewCertFile(sid, keyOrId, type, gradeLabel){
   const examDb = schoolExamData[sid]||{exams:[]};
   const exams  = examDb.exams||[];
   let ex = null;
-  let certId = keyOrId;
   if(type==='school'){
-    ex = gradeLabel
-      ? exams.find(e=>e.type==='school' && e.key===keyOrId && e.gradeLabel===gradeLabel)
-      : exams.find(e=>e.type==='school' && e.key===keyOrId && !e.gradeLabel);
-    certId = gradeLabel ? (keyOrId+'__'+gradeLabel) : keyOrId;
+    ex = exams.find(e=>e.type==='school' && e.key===keyOrId && (gradeLabel?e.gradeLabel===gradeLabel:!e.gradeLabel))
+      || exams.find(e=>e.type==='school' && e.key===keyOrId); // 학년 라벨 없는 구버전 레코드 대비
   } else {
     ex = exams.find(e=>e.type==='external' && e.id===keyOrId);
   }
   if(!ex||!ex.certified){ toast('인증된 파일이 없습니다.',true); return; }
 
+  const storageKey = type==='school' ? `school_${keyOrId}_${(ex.gradeLabel||gradeLabel)||'default'}` : keyOrId;
   const fileName = ex.certFileName||'성적표';
+  const isPdfFile = fileName.toLowerCase().endsWith('.pdf');
 
   // 공통 표시 함수
   function showCertData(dataUrl){
-    const isPdf = dataUrl.startsWith('data:application/pdf');
+    const isPdf = isPdfFile || dataUrl.startsWith('data:application/pdf');
     if(isPdf){
       const w = window.open();
       if(!w){ toast('팝업이 차단되었습니다. 브라우저 팝업 허용 후 다시 시도해주세요.',true); return; }
@@ -9016,22 +8989,22 @@ function viewCertFile(sid, keyOrId, type, gradeLabel){
     }
   }
 
-  // ① Firebase Storage 다운로드 URL (다른 기기에서도 항상 열람 가능)
-  if(ex.certUrl){ showCertData(ex.certUrl); return; }
-
-  // ② localStorage 캐시 (같은 브라우저에서만 유효, 빠른 경로)
-  const localDataUrl = getCertLocal(sid, certId);
+  // ① localStorage 캐시 먼저 (빠름, 같은 기기에서 방금 올린 경우)
+  const localDataUrl = getCertLocal(sid, storageKey) || getCertLocal(sid, keyOrId);
   if(localDataUrl){ showCertData(localDataUrl); return; }
 
-  // ③ 구버전 데이터 호환: Firestore 문서에 직접 박혀있던 base64 필드
+  // ② Firebase Storage 다운로드 URL (다른 기기에서도 항상 열람 가능)
+  if(ex.certUrl){ showCertData(ex.certUrl); return; }
+
+  // ③ 구버전 레코드: Firestore 문서에 직접 저장된 base64 값
   if(ex.certDataUrl){ showCertData(ex.certDataUrl); return; }
 
   // ④ 파일 없음 안내
   alert(
-    `📂 성적표 파일을 찾을 수 없습니다.\n\n` +
+    `📂 성적표 파일을 이 기기에서 찾을 수 없습니다.\n\n` +
     `가능한 원인:\n` +
-    `• 업로드가 완료되기 전에 창을 닫은 경우\n` +
-    `• 파일이 삭제된 경우\n\n` +
+    `• 다른 컴퓨터/기기에서 업로드한 경우\n` +
+    `• 브라우저 캐시(방문 기록)를 삭제한 경우\n\n` +
     `해결 방법: 성적표를 다시 업로드해주세요.`
   );
 }
