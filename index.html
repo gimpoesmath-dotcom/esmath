@@ -2879,15 +2879,9 @@ function rSchoolExam(){
 
         h+=`<td class="dcell" style="min-width:130px;padding:6px 8px">`;
 
-        if(score===null){
-          // 미입력
+        if(score===null || score<0){
+          // 미입력 (구버전 -1 특수값 레코드도 여기로 폴백 — 더 이상 지원하지 않음)
           h+=`<div style="text-align:center;color:var(--text3);font-size:11px">—</div>`;
-        } else if(score===-1){
-          // 고등 1등급 특수값
-          h+=`<div style="text-align:center">
-            <span style="font-size:15px;font-weight:700;color:var(--green)">1등급</span>
-            <div style="font-size:9px;margin-top:2px;color:var(--green)">TOP</div>
-          </div>`;
         } else {
           const scoreColor = score>=90?'var(--green)':score>=70?'var(--text)':'var(--red)';
           const grade_num = (isHigh && ex?.manualGrade) ? ex.manualGrade : null;
@@ -4473,6 +4467,17 @@ async function settleSchoolExamPoint(sid, settleId, points, type, label, note){
   render();
 }
 
+// 성적상(Top/High Honor 등) 후보를 적립하지 않고 목록에서 제외 — 같은 학기 내 다른 시험으로 이미 동일한 상을 수여해 중복 수여를 막아야 할 때 사용
+async function dismissSchoolExamPoint(sid, settleId, label){
+  if(!confirm(`"${label}" 항목을 이번엔 적립하지 않고 목록에서 제외할까요?\n(포인트는 지급되지 않으며, 이 항목은 더 이상 목록에 표시되지 않습니다)`)) return;
+  const pd = pointsData[sid]||{balance:0,history:[],settled:[]};
+  if(!pd.settled) pd.settled=[];
+  if(!pd.settled.includes(settleId)) pd.settled.push(settleId);
+  await savePointsData(sid, pd);
+  toast('적립하지 않음으로 처리했습니다');
+  render();
+}
+
 // 포인트 저장 (Firebase)
 async function savePointsData(sid, data){
   const {setDoc}=fb();
@@ -4953,8 +4958,11 @@ function rPoints(){
           const candidates = [];
           const isCertified = ex.certified === true && !!(ex.certFileName || ex.certUrl || ex.certDataUrl);
           if(!isCertified) return; // 파일 인증 없으면 포인트 대상 제외
-          if(sc===100 || (isHighStu && sc===-1)){
-            candidates.push({type:'TOP_HONOR', label:'Top Honor', points:20000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} 100점`});
+          // 중등: 등급 체계가 없으므로 100점일 때만 Top Honor
+          // 고등: 100점이거나, 원점수와 무관하게 등급 드롭다운에서 1등급으로 기록된 경우 Top Honor
+          const isTopHonor = sc===100 || (isHighStu && ex.manualGrade===1);
+          if(isTopHonor){
+            candidates.push({type:'TOP_HONOR', label:'Top Honor', points:20000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} ${sc===100?'100점':`${sc}점 (1등급)`}`});
           } else if(sc>=90){
             candidates.push({type:isHighStu?'HIGH_HONOR_HIGH':'HIGH_HONOR_MID', label:'High Honor', points:isHighStu?10000:5000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} ${sc}점`});
           }
@@ -4964,11 +4972,12 @@ function rPoints(){
             else if(growth>=10) candidates.push({type:'GROWTH_10',label:'Growth+10',points:5000,note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} +${growth}점`});
           }
           if(!candidates.length) return;
-          // 이미 적립된 항목은 목록에서 완전히 제외
+          // 이미 적립됐거나 '적립하지 않기'로 제외 처리된 항목은 목록에서 완전히 제외
           candidates.forEach(c=>{
             const settleId = `${c.type}__${gl}__${ex.key}`;
             const alreadyDone = (pointsData[s.id]?.history||[]).some(hh=>hh.settleId===settleId);
-            if(alreadyDone) return; // 적립 완료 → 노출 안 함
+            const dismissed = (pointsData[s.id]?.settled||[]).includes(settleId);
+            if(alreadyDone || dismissed) return; // 적립 완료 또는 제외 처리 → 노출 안 함
             schoolPtRows.push({s, c, ex, gl, settleId, alreadyDone:false});
           });
         });
@@ -4994,6 +5003,7 @@ function rPoints(){
             ${alreadyDone?`<div style="font-size:11px;color:#1e6e3a;margin-top:2px">✅ 이미 적립됨</div>`:''}
           </div>
           ${isPrin&&!alreadyDone?`<button class="btn btn-sm btn-primary" onclick="settleSchoolExamPoint('${s.id}','${settleId}',${c.points},'${c.type}','${c.label}','${c.note.replace(/'/g,"\'")}')">+${c.points.toLocaleString()}P 적립</button>`:''}
+          ${isPrin&&!alreadyDone?`<button class="btn btn-sm" title="같은 학기에 이미 다른 시험으로 같은 상을 수여한 경우 등, 중복 수여를 막을 때 사용" onclick="dismissSchoolExamPoint('${s.id}','${settleId}','${c.label.replace(/'/g,"\'")}')">🚫 적립 안함</button>`:''}
         </div>`;
       });
     }
@@ -8477,7 +8487,7 @@ function renderSchoolExamSection(sid, s, exams, isPrin){
 
   // 고등: 1등급 여부 안내
   if(isHigh){
-    h += '<div style="font-size:11px;color:var(--text2);padding:6px 10px;background:var(--bg2);border-radius:var(--r);margin-bottom:10px">💡 <b>고등학교 등급 기록 방법</b><br>· 원점수를 모르고 <b>1등급 여부만</b> 아는 경우: 점수란에 <b>-1</b>을 입력하세요.<br>· 원점수와 등급(1~9등급)을 <b>모두 아는</b> 경우: 점수는 그대로 입력하고, 아래 "등급 직접 입력"에서 등급을 선택하면 점수 옆에 함께 표시됩니다.<br>· TOP HONOR 포인트 지급은 포인트 탭에서 직접 적립해주세요.</div>';
+    h += '<div style="font-size:11px;color:var(--text2);padding:6px 10px;background:var(--bg2);border-radius:var(--r);margin-bottom:10px">💡 <b>고등학교 등급 기록 방법</b><br>· 원점수를 입력하고, 아래 "등급 직접 입력"에서 해당 등급을 선택하세요. 점수 옆에 등급이 함께 표시됩니다.<br>· 등급에서 <b>1등급</b>을 선택하면 원점수와 무관하게 자동으로 Top Honor 적립 대상이 됩니다.<br>· 실제 포인트 지급은 포인트 탭에서 직접 적립해주세요.</div>';
   }
 
   // KUT 외부시험 섹션도 함께 포함
@@ -8535,8 +8545,8 @@ function openSchoolExamInput(sid, examKey, examLabel, isHighNum, gradeLabel){
   overlay.innerHTML=`<div class="modal" style="width:400px">
     <h3>📝 ${esc(examLabel)} 성적 입력</h3>
     <div class="frow">
-      <label>점수 ${isHigh?'(1등급은 -1 입력)':''}</label>
-      <input type="number" id="examScoreInp" value="${score}" min="${isHigh?-1:0}" max="100" step="0.1" style="width:100%" placeholder="0~100">
+      <label>점수</label>
+      <input type="number" id="examScoreInp" value="${score}" min="0" max="100" step="0.1" style="width:100%" placeholder="0~100">
     </div>
     <!-- 직전 시험 점수: 같은 학년 직전 인증 시험에서 자동 참조 -->
     <input type="hidden" id="examPrevScoreInp" value="">
