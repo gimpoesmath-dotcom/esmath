@@ -451,7 +451,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260715v2';
+const APP_VERSION = 'v20260701v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -4490,13 +4490,16 @@ async function confAddManualPoint(){
   if(isNaN(pts)||pts===0){alert('포인트를 입력해주세요');return;}
   const pd = pointsData[sid]||{balance:0,history:[],settled:[]};
   pd.balance = (pd.balance||0) + pts;
+  // 정산월 드롭다운(st.ptSettleYear/Month) 기준으로 저장 — 학교성적 포인트와 동일한 규칙
+  const recYear  = st.ptSettleYear  || (st.month===1 ? st.year-1 : st.year);
+  const recMonth = st.ptSettleMonth || (st.month===1 ? 12 : st.month-1);
   pd.history = [...(pd.history||[]), {
     id:'h'+Date.now()+Math.random(),
     type:'MANUAL',
     label,
     points: pts,
     note,
-    year: st.year, month: st.month,
+    year: recYear, month: recMonth,
     date: dk(new Date()),
     by: session?.username||'',
   }];
@@ -4517,13 +4520,15 @@ async function confUsePoint(){
     if(!confirm(`잔액(${(pd.balance||0).toLocaleString()}P)보다 차감액이 큽니다. 계속할까요?`)) return;
   }
   pd.balance = (pd.balance||0) - pts;
+  const recYear  = st.ptSettleYear  || (st.month===1 ? st.year-1 : st.year);
+  const recMonth = st.ptSettleMonth || (st.month===1 ? 12 : st.month-1);
   pd.history = [...(pd.history||[]), {
     id:'h'+Date.now()+Math.random(),
     type:'USE',
     label:'포인트 사용',
     points: -pts,
     note: note||'수강료 차감',
-    year: st.year, month: st.month,
+    year: recYear, month: recMonth,
     date: dk(new Date()),
     by: session?.username||'',
   }];
@@ -4543,6 +4548,23 @@ async function delPointHistory(sid, hid){
   pd.balance = (pd.balance||0) - target.points; // 역산
   await savePointsData(sid, pd);
   toast('삭제됐습니다'); render();
+}
+
+// 포인트 내역의 정산월(year/month) 수정 — 잘못 태깅된 과거 내역 바로잡기용 (잔액에는 영향 없음, 월 분류만 변경)
+async function editPointHistoryMonth(sid, hid){
+  const pd = pointsData[sid];
+  if(!pd) return;
+  const target = pd.history.find(h=>h.id===hid);
+  if(!target) return;
+  const input = prompt(`정산월을 "YYYY-M" 형식으로 입력하세요 (예: 2026-6)`, `${target.year}-${target.month}`);
+  if(!input) return;
+  const m = input.trim().match(/^(\d{4})-(\d{1,2})$/);
+  if(!m){ alert('형식이 올바르지 않습니다. 예: 2026-6'); return; }
+  const y = parseInt(m[1]), mo = parseInt(m[2]);
+  if(mo<1||mo>12){ alert('월은 1~12 사이여야 합니다.'); return; }
+  target.year = y; target.month = mo;
+  await savePointsData(sid, pd);
+  toast('정산월이 수정됐습니다'); render();
 }
 
 function rPoints(){
@@ -4934,7 +4956,7 @@ function rPoints(){
           if(sc===100 || (isHighStu && sc===-1)){
             candidates.push({type:'TOP_HONOR', label:'Top Honor', points:20000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} 100점`});
           } else if(sc>=90){
-            candidates.push({type:isHighStu?'HIGH_HONOR_HIGH':'HIGH_HONOR_MID', label:'High Honor', points:isHighStu?20000:10000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} ${sc}점`});
+            candidates.push({type:isHighStu?'HIGH_HONOR_HIGH':'HIGH_HONOR_MID', label:'High Honor', points:isHighStu?10000:5000, note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} ${sc}점`});
           }
           if(growth!==null){
             if(growth>=30) candidates.push({type:'GROWTH_30',label:'Growth+30',points:20000,note:`${gl} ${EXAM_LABELS[ex.key]||ex.key} +${growth}점`});
@@ -5108,9 +5130,11 @@ function rPoints(){
               h += `<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;background:var(--bg2);flex-wrap:wrap">
                 <div style="flex:1;min-width:80px">
                   <div style="font-size:11px;font-weight:600">${esc(item.label)}</div>
-                  <div style="font-size:10px;color:var(--text3)">${esc(item.date||'')}${item.by?' · '+esc(item.by):''}</div>
+                  <div style="font-size:10px;color:var(--text3)">${esc(item.date||'')}${item.by?' · '+esc(item.by):''} · 정산 ${item.year}년 ${item.month}월</div>
                 </div>
                 <span style="font-size:13px;font-weight:700;color:${isPlus?'#1e6e3a':'var(--red)'};white-space:nowrap">${isPlus?'+':''}${item.points.toLocaleString()}P</span>
+                ${isPrin?`<button class="btn btn-sm" style="padding:1px 5px;font-size:10px"
+                  onclick="event.stopPropagation();editPointHistoryMonth('${s.id}','${item.id}')" title="정산월 수정">✏️</button>`:''}
                 ${isPrin?`<button class="btn btn-sm" style="color:var(--red);padding:1px 5px;font-size:10px"
                   onclick="event.stopPropagation();delPointHistory('${s.id}','${item.id}')">✕</button>`:''}
               </div>`;
