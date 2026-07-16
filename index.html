@@ -451,7 +451,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260701v1';
+const APP_VERSION = 'v20260716v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -7890,7 +7890,7 @@ function rSettings(){
     </div>
   </div>`;
   if(holOpen){
-  h+=`<div class="notice">휴일로 등록된 날은 수업 회차 계산에서 자동 제외돼요. 캘린더 토요일 클릭으로 보강일을 등록·해제할 수 있어요. 보강일은 ${st.year}년 ${st.month}월 이후 일정만 표시됩니다.</div>`;
+  h+=`<div class="notice">휴일로 등록된 날은 수업 회차 계산에서 자동 제외돼요. 토요보강일 등록·해제는 원장선생님만 가능하며, 등록된 내용은 모든 선생님 화면에 동일하게 표시됩니다. 보강일은 ${st.year}년 ${st.month}월 이후 일정만 표시됩니다.</div>`;
   h+=`<div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">`;
 
   // 1) 휴일 캘린더
@@ -11300,7 +11300,7 @@ function mkCalNav(n){
 }
 function mkCalToday(){const n=new Date();st.mkCalY=n.getFullYear();st.mkCalM=n.getMonth()+1;render();}
 
-/* 토요보강일 캘린더 — 토요일 클릭 시 확인 팝업 후 등록/해제 (원장·선생님 모두 가능) */
+/* 토요보강일 캘린더 — 토요일 클릭 시 확인 팝업 후 등록/해제 (등록·해제 모두 원장 전용, 선생님은 조회만) */
 async function toggleMkDate(dStr){
   if(!session) return;
   const dt=parseDate(dStr);
@@ -11336,6 +11336,11 @@ async function toggleMkDate(dStr){
     await deleteMakeupDayDoc(dStr);
     render();
   } else {
+    if(!isPrin){
+      // 선생님은 신규 등록 불가 — 안내만 표시
+      alert(`${label}\n토요보강일 등록은 원장선생님만 할 수 있습니다.`);
+      return;
+    }
     if(!confirm(`${label}\n보강일로 등록하시겠어요?`)) return;
     const monthKey=dStr.slice(0,7);
     if(!cfg.makeupDays) cfg.makeupDays={};
@@ -11377,7 +11382,7 @@ function buildMkCalendarHTML(y,m,isPrincipal){
     const isRegistered=isSat && !!getMkEntryByDate(dStr);
     const isToday=dStr===todayStr;
     const isWeekend=dow===0||dow===6;
-    const clickable=isSat; // 원장·선생님 모두 토요보강일 등록 가능
+    const clickable=isSat; // 클릭은 모두 가능하지만, 등록/해제 처리는 toggleMkDate 내부에서 원장 권한만 허용
 
     h+=`<div ${clickable?`onclick="toggleMkDate('${dStr}')"`:''}
       style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:var(--r);font-size:12px;cursor:${clickable?'pointer':'default'};
@@ -11459,6 +11464,7 @@ function getMkEntryByDate(dateStr){
 }
 
 async function confAddMkDay(){
+  if(!isPrincipalNow()){ alert('토요보강일 등록은 원장선생님만 할 수 있습니다.'); return; }
   const v=document.getElementById('mkddate').value;
   if(!v){alert('날짜를 선택해주세요');return;}
   const dt=parseDate(v);
