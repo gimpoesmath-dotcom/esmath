@@ -451,7 +451,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260716v2';
+const APP_VERSION = 'v20260721v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -717,7 +717,7 @@ async function loadConfig(){
       try{
         const {setDoc}=fb();
         const toSave=Object.fromEntries(Object.entries(cfg).filter(([k])=>!k.startsWith('_')));
-        const {students: _s, textbooks: _t, ...mainOnly} = toSave;
+        const {students: _s, textbooks: _t, makeupDays: _md, ...mainOnly} = toSave;
         await setDoc(configDocRef(), mainOnly);
         clearSessionsCache();
         console.log('[자동보정] 회차값 표준화:', fixedList.join(', '));
@@ -990,7 +990,7 @@ async function backupAllData(){
     // 마지막 백업 시각 저장 (main 문서만 업데이트)
     cfg.lastBackupAt=now2.toISOString();
     const {setDoc: _setDoc2}=fb();
-    const {students: _bs, textbooks: _bt, ...mainBackup} = Object.fromEntries(
+    const {students: _bs, textbooks: _bt, makeupDays: _bmd, ...mainBackup} = Object.fromEntries(
       Object.entries(cfg).filter(([k])=>!k.startsWith('_'))
     );
     await _setDoc2(configDocRef(), mainBackup);
@@ -1784,53 +1784,20 @@ async function diagnoseMakeupData(){
     h+=`</div>`;
   }
 
-  // 고아 보강 신청 (lesson에만 있음)
+  // 미연결 보강 신청 (lesson에만 있음)
   if(issues.orphanRequest.length){
-    const satDates2=days.map(e=>e.date).sort();
-    const teacherOpts2For=(cur)=>allTeachers().map(t=>`<option value="${esc(t)}" ${t===cur?'selected':''}>${esc(t)}</option>`).join('');
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fce6e6;border:1px solid #e8a8a8;border-radius:var(--r)">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <b style="font-size:13px">🔍 미연결 보강 신청 (${issues.orphanRequest.length}건)</b>
         <button class="btn btn-sm btn-green" onclick="autoFixOrphansByReattach()">⚡ 자동 복구</button>
-        <button class="btn btn-sm btn-primary" onclick="fixOrphanRequests()">일괄 정리(신청 제거)</button>
       </div>
-      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">결석 lesson에 makeupRequest 정보는 있지만, 토요보강 데이터에서는 학생이 빠진 경우입니다.<br>보강일을 등록해 연결하거나, 신청 정보를 제거할 수 있습니다.</div>`;
-    issues.orphanRequest.forEach((o,oi)=>{
-      const satOpts2=satDates2.length
-        ? satDates2.map(d=>`<option value="${d}" ${d===o.reqDate?'selected':''}>${d}</option>`).join('')
-        : '<option value="">보강일 없음</option>';
-      const editId2=`orphan_edit_${oi}`;
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">결석 lesson에 makeupRequest 정보는 있지만, 토요보강 데이터에서는 학생이 빠진 경우입니다. 자동 복구로 토요보강 명단에 다시 채워 넣을 수 있습니다.</div>`;
+    issues.orphanRequest.forEach(o=>{
       h+=`<div style="border:1px solid #e8a8a8;border-radius:6px;padding:8px;margin-bottom:8px;background:#fff8f8">
         <div style="display:flex;align-items:center;gap:6px;font-size:12px;flex-wrap:wrap">
           <span>📅 <b>${o.absentDate}</b> 결석 → <b>${o.reqDate}</b> 보강(없음)</span>
           <span style="font-weight:600">${esc(o.name)}</span>
           ${o.isSpecial?`<span style="font-size:10px;padding:1px 6px;border-radius:10px;background:#f3e8fc;color:#5a2080;font-weight:600">특강</span>`:`<span style="font-size:10px;padding:1px 6px;border-radius:10px;background:var(--blue-bg);color:var(--blue);font-weight:600">정규</span>`}
-          <button class="btn btn-sm btn-primary" style="margin-left:auto;font-size:10px;padding:2px 8px"
-            onclick="document.getElementById('${editId2}').style.display=document.getElementById('${editId2}').style.display==='none'?'block':'none'">✏️ 수정/재연결</button>
-          <button class="btn btn-sm" style="color:var(--red);font-size:10px;padding:2px 8px" onclick="clearOrphanSingle('${o.sid}','${o.absentDate}')">🗑 신청 제거</button>
-        </div>
-        <div id="${editId2}" style="display:none;margin-top:8px;padding:8px;background:#fff;border:1px solid #e0a0a0;border-radius:4px">
-          <div style="font-size:11px;color:var(--text2);margin-bottom:6px">보강일, 교시, 담당을 지정해 토요보강 시간표에 다시 등록합니다</div>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <label style="font-size:11px">보강일
-              <select id="${editId2}_date" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                ${satOpts2}
-              </select>
-            </label>
-            <label style="font-size:11px">교시
-              <select id="${editId2}_period" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                <option value="1" ${o.period==='1'?'selected':''}>1교시</option>
-                <option value="2" ${o.period==='2'?'selected':''}>2교시</option>
-              </select>
-            </label>
-            <label style="font-size:11px">담당
-              <select id="${editId2}_teacher" style="font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;margin-left:3px">
-                <option value="" ${!o.teacher?'selected':''}>미지정</option>
-                ${teacherOpts2For(o.teacher)}
-              </select>
-            </label>
-            <button class="btn btn-sm btn-primary" style="font-size:11px" onclick="reattachOrphan('${o.sid}','${o.absentDate}','${editId2}')">💾 저장/등록</button>
-          </div>
         </div>
       </div>`;
     });
@@ -1925,41 +1892,6 @@ async function autoFixOrphansByReattach(){
   }catch(e){ toast('복구 저장 실패: '+e.message, true); }
 }
 
-
-// 고아 보강 신청 정리 — lesson / specialLesson에서 미연결 보강 정보 제거 (정규 + 특강)
-async function fixOrphanRequests(){
-  if(!confirm('lesson/specialLesson에 남아있는 미연결 보강 신청 정보를 모두 제거하시겠어요?\n(결석 기록은 그대로 유지됩니다)')) return;
-  const monthKey=`${st.year}-${String(st.month).padStart(2,'0')}`;
-  const days=(cfg.makeupDays||{})[monthKey]||[];
-  const updatedLessons=[], updatedSpecial=[];
-
-  Object.values(mdb.lessons||{}).forEach(l=>{
-    if(!l.makeupRequest) return;
-    const entry=days.find(e=>e.date===l.makeupRequest.date);
-    const arr=entry?getMakeupStudents(entry):[];
-    if(!arr.some(x=>x.id===l.studentId && x.makeupType!=='special')){
-      delete l.makeupRequest; updatedLessons.push(l);
-    }
-  });
-
-  Object.values(specialLessons||{}).forEach(l=>{
-    if(!l.specialMakeupRequest) return;
-    const entry=days.find(e=>e.date===l.specialMakeupRequest.date);
-    const arr=entry?getMakeupStudents(entry):[];
-    if(!arr.some(x=>x.id===l.studentId && x.makeupType==='special')){
-      delete l.specialMakeupRequest; updatedSpecial.push(l);
-    }
-  });
-
-  const total=updatedLessons.length+updatedSpecial.length;
-  if(total===0){ toast('정리할 데이터가 없습니다'); return; }
-  try{
-    for(const l of updatedLessons){ await persistLesson(l); }
-    for(const l of updatedSpecial){ await gasCall('saveSpecialLesson',{lesson:l}); }
-    toast(`${total}건 정리 완료 (정규 ${updatedLessons.length}, 특강 ${updatedSpecial.length})`);
-    diagnoseMakeupData(); render();
-  }catch(e){ toast('정리 실패: '+e.message,true); }
-}
 
 
 async function loadActivityLogs(){
@@ -6929,15 +6861,20 @@ function renderSaturdayTable(){
   const activeDays=allDays;
   if(!activeDays.length) return '';
 
+  // 보강데이터 진단 버튼: 원장 또는 전임(teacher)만 사용 가능, 조교는 제외
+  const canDiagnoseMakeup = session?.role==='principal' || session?.role==='teacher';
+
   let h=`<div style="margin-top:24px">
     <div class="toolbar" style="margin-bottom:6px">
       <div class="sec-lbl" style="margin:0">🗓 토요 보강 시간표</div>
       <div style="display:flex;gap:6px">
         <button class="btn btn-sm" onclick="refreshSaturdayTable(this)" title="보강 데이터 새로고침">🔄 새로고침</button>
+        ${canDiagnoseMakeup?`<button class="btn btn-sm" onclick="diagnoseMakeupData()" title="보강 데이터 무결성 진단">🔍 진단</button>`:''}
         <button class="btn btn-primary btn-sm" onclick="openM('addSatStudent')">+ 학생 추가</button>
       </div>
     </div>
-    <div style="font-size:11px;color:var(--text2);margin-bottom:8px">${st.year}년 ${st.month}월 보강일별 학생 배치 · 1교시 10:00~12:00 / 2교시 12:00~14:00 · 학생 칩 클릭 → 변경/제거</div>`;
+    <div style="font-size:11px;color:var(--text2);margin-bottom:8px">${st.year}년 ${st.month}월 보강일별 학생 배치 · 1교시 10:00~12:00 / 2교시 12:00~14:00 · 학생 칩 클릭 → 변경/제거</div>
+    ${canDiagnoseMakeup?`<div id="mkDiagContainer" style="display:none;margin-bottom:10px"></div>`:''}`;
 
   h+=`<div style="overflow-x:auto"><table class="sch-tbl">
     <thead><tr>
@@ -10758,54 +10695,6 @@ async function fixSpecialNoAbsent(sid, makeupDate){
     diagnoseMakeupData();
     render();
   }catch(e){ toast('수정 실패: '+e.message,true); }
-}
-
-// ── 진단: 고아 보강 신청 → 단건 신청 제거 ──
-async function clearOrphanSingle(sid, absentDate){
-  const stud=(cfg.students||[]).find(s=>s.id===sid);
-  if(!confirm(`${stud?.name||'해당 학생'}의 결석(${absentDate}) lesson에서 보강 신청 정보만 제거합니다.\n결석 기록은 유지됩니다.`)) return;
-  const l=Object.values(mdb.lessons||{}).find(x=>x.studentId===sid && x.date===absentDate);
-  if(!l||!l.makeupRequest){ toast('삭제할 정보가 없습니다'); return; }
-  delete l.makeupRequest;
-  try{
-    await persistLesson(l);
-    toast('보강 신청 정보 제거 완료');
-    diagnoseMakeupData();
-  }catch(e){ toast('제거 실패: '+e.message,true); }
-}
-
-// ── 진단: 고아 보강 신청 → 보강일 재연결(토요보강 시간표에 다시 등록) ──
-async function reattachOrphan(sid, absentDate, editId){
-  const dateEl=document.getElementById(editId+'_date');
-  const periodEl=document.getElementById(editId+'_period');
-  const teacherEl=document.getElementById(editId+'_teacher');
-  const targetDate=dateEl?dateEl.value:'';
-  const period=periodEl?periodEl.value:'';
-  const teacher=teacherEl?teacherEl.value:'';
-  if(!targetDate){ toast('보강일을 선택하세요',true); return; }
-  const entry=getMkEntryByDate(targetDate);
-  if(!entry){ toast('선택한 날짜는 등록된 보강일이 아닙니다',true); return; }
-  // 1) makeupDays에 학생 추가
-  let arr=getMakeupStudents(entry);
-  const alreadyIdx=arr.findIndex(x=>x.id===sid && (x.period||'')===String(period));
-  if(alreadyIdx>=0){
-    // 이미 있으면 담당만 업데이트
-    arr[alreadyIdx]={...arr[alreadyIdx], teacher};
-  } else {
-    arr.push({id:sid, period, teacher});
-  }
-  entry.students=arr;
-  delete entry.studentIds;
-  // 2) lesson의 makeupRequest 업데이트
-  const l=getOrCreate(sid, absentDate);
-  l.makeupRequest={date:targetDate, period, teacher};
-  try{
-    await saveMakeupDayDoc(targetDate);
-    await persistLesson(l);
-    toast(`${targetDate} ${period}교시 보강으로 재연결 완료`);
-    diagnoseMakeupData();
-    render();
-  }catch(e){ toast('재연결 실패: '+e.message,true); }
 }
 
 // 설정에서 보강일에 등록된 학생 1명 제거
