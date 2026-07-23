@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260723v2';
+const APP_VERSION = 'v20260723v3';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -3060,6 +3060,16 @@ function rSpecialMatrix(spId){
         <input class="sinp" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="spSave('${sp.id}','${s.id}',${sn},'testScore',this.value)">
       </td>
       <td style="padding:3px;border-bottom:1px solid var(--border);min-width:140px">
+        ${(()=>{
+          if(!l.date) return '';
+          const dp=l.date.split('-');
+          const ph=prevHwInMonth(s.id, l.date, s.classType, +dp[0], +dp[1]);
+          if(!ph) return '';
+          const badge = ph.source==='special'
+            ? `<span style="color:#a05a00;background:#fffbef;border:1px solid #e0c080;border-radius:8px;padding:0 5px;margin-right:3px">🎯${esc(ph.specialName||'특강')}</span>`
+            : `<span style="color:#2a6ea8;background:#eef5fb;border:1px solid #a8cbe8;border-radius:8px;padding:0 5px;margin-right:3px">📘정규</span>`;
+          return `<div class="prev-box" style="font-size:9px;padding:3px 5px;margin-bottom:3px">📋${ph.date?`[${ph.date}] `:''}${badge}${esc(ph.hw)}</div>`;
+        })()}
         <textarea class="tinp" placeholder="오늘 과제" onblur="spSave('${sp.id}','${s.id}',${sn},'homework',this.value)" style="width:100%;min-height:30px">${esc(l.homework||'')}</textarea>
       </td>
       <td style="padding:3px;border-bottom:1px solid var(--border);border-right:2px solid var(--border);min-width:140px">
@@ -6728,6 +6738,10 @@ function renderTodaySpecialSection(dateStr, teacherFilter, isPrin){
   </div><div class="timeslot-body"><div class="student-grid">`;
   items.forEach(({sp,s,sn,l})=>{
     const att=l.attendance||'';
+    const ph = l.date ? prevHwInMonth(s.id, l.date, s.classType, +l.date.slice(0,4), +l.date.slice(5,7)) : null;
+    const phBadge = ph ? (ph.source==='special'
+      ? `<span style="font-size:10px;color:#a05a00;background:#fffbef;border:1px solid #e0c080;border-radius:8px;padding:1px 6px;margin-right:4px">🎯 ${esc(ph.specialName||'특강')}</span>`
+      : `<span style="font-size:10px;color:#2a6ea8;background:#eef5fb;border:1px solid #a8cbe8;border-radius:8px;padding:1px 6px;margin-right:4px">📘 정규수업</span>`) : '';
     h+=`<div class="today-card" style="border-left:3px solid #a05a00">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
         <b style="font-size:13px">${esc(s.name)}</b>
@@ -6744,7 +6758,10 @@ function renderTodaySpecialSection(dateStr, teacherFilter, isPrin){
         <div><div class="field-lbl">시험점수</div><input class="sinp-full" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="spSave('${sp.id}','${s.id}',${sn},'testScore',this.value)"></div>
       </div>
       <div style="margin-bottom:6px"><div class="field-lbl">오늘 진도</div><textarea class="tarea" onblur="spSave('${sp.id}','${s.id}',${sn},'progress',this.value)">${esc(l.progress||'')}</textarea></div>
-      <div style="margin-bottom:6px"><div class="field-lbl">오늘 과제</div><textarea class="tarea" onblur="spSave('${sp.id}','${s.id}',${sn},'homework',this.value)">${esc(l.homework||'')}</textarea></div>
+      <div style="margin-bottom:6px"><div class="field-lbl">오늘 과제</div>
+        ${ph?`<div class="prev-box">📋 지난 과제: ${ph.date?`<span style="font-size:10px;color:var(--text3)">[${ph.date}]</span> `:''}${phBadge}${esc(ph.hw)}</div>`:''}
+        <textarea class="tarea" onblur="spSave('${sp.id}','${s.id}',${sn},'homework',this.value)">${esc(l.homework||'')}</textarea>
+      </div>
     </div>`;
   });
   h+=`</div></div>`;
