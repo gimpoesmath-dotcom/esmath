@@ -1,4 +1,3 @@
-<!-- v20260622v2 -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -451,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260723v1';
+const APP_VERSION = 'v20260723v2';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2395,23 +2394,40 @@ function prevHwInMonth(sid,dateStr,classType,year,month){
     .map(k=>k.slice(sid.length+1))
     .filter(d=>d<dateStr && !allSessionDates.includes(d));
 
-  const allDates = [...new Set([...allSessionDates, ...satDates])];
+  // 숙제 연동(linkHomework)이 켜진 특강의 날짜도 포함 — 날짜별로 어느 특강 기록인지 매핑해둠
+  const specialDateMap = {}; // date -> {key, specialName}
+  ((cfg.specialClasses||[]).filter(sp=>sp.linkHomework && (sp.students||[]).includes(sid))).forEach(sp=>{
+    for(let sn=1; sn<=(sp.totalSessions||0); sn++){
+      const key = spLessonKey(sp.id, sid, sn);
+      const l = specialLessons[key];
+      if(l && l.date && l.date < dateStr){
+        specialDateMap[l.date] = {key, specialName: sp.name};
+      }
+    }
+  });
+
+  const allDates = [...new Set([...allSessionDates, ...satDates, ...Object.keys(specialDateMap)])];
   // 역순 (최근순)
   const sortedDates = [...allDates].sort((a,b)=>b.localeCompare(a));
 
   for(const d of sortedDates){
-    const l = merged[lk(sid,d)];
+    const spInfo = specialDateMap[d];
+    const l = spInfo ? specialLessons[spInfo.key] : merged[lk(sid,d)];
     const att = l ? l.attendance : ''; // lesson 없으면 미입력
     const isAbsent = att==='absent';
     if(isAbsent) continue; // 결석 → 이월
 
     // 출석/지각/미입력 → 이 날의 과제 확인 후 중단
     const hw = l ? (l.homework||'') : '';
-    if(hw.trim()) return {hw:hw.trim(), date:d};
+    if(hw.trim()){
+      return spInfo
+        ? {hw:hw.trim(), date:d, source:'special', specialName:spInfo.specialName}
+        : {hw:hw.trim(), date:d, source:'regular'};
+    }
     return null; // 과제 없음 → 더 이전 소급 금지
   }
 
-  if(mdb.carryIn&&mdb.carryIn[sid]) return {hw:mdb.carryIn[sid], date:''};
+  if(mdb.carryIn&&mdb.carryIn[sid]) return {hw:mdb.carryIn[sid], date:'', source:'regular'};
   return null;
 }
 
@@ -2993,7 +3009,7 @@ function rSpecialMatrix(spId){
         <tr style="background:var(--bg2)">
           <th style="padding:8px 10px;border-bottom:1px solid var(--border);border-right:1px solid var(--border);text-align:left;position:sticky;left:0;background:var(--bg2);z-index:2;min-width:120px">학생</th>`;
   for(let sn=1; sn<=(sp.totalSessions||0); sn++){
-    h+=`<th colspan="5" style="padding:6px;border-bottom:1px solid var(--border);border-right:2px solid var(--border);text-align:center;background:#f0f5fa">
+    h+=`<th colspan="6" style="padding:6px;border-bottom:1px solid var(--border);border-right:2px solid var(--border);text-align:center;background:#f0f5fa">
       ${sn}회차
     </th>`;
   }
@@ -3002,8 +3018,9 @@ function rSpecialMatrix(spId){
   for(let sn=1; sn<=(sp.totalSessions||0); sn++){
     h+=`<th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">날짜</th>
     <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">출결</th>
-    <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">과제</th>
+    <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">과제점수</th>
     <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">시험</th>
+    <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">오늘 과제</th>
     <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border);border-right:2px solid var(--border)">진도/특이</th>`;
   }
   h+=`</tr></thead><tbody>`;
@@ -3041,6 +3058,9 @@ function rSpecialMatrix(spId){
       </td>
       <td style="padding:3px;border-bottom:1px solid var(--border);min-width:55px">
         <input class="sinp" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="spSave('${sp.id}','${s.id}',${sn},'testScore',this.value)">
+      </td>
+      <td style="padding:3px;border-bottom:1px solid var(--border);min-width:140px">
+        <textarea class="tinp" placeholder="오늘 과제" onblur="spSave('${sp.id}','${s.id}',${sn},'homework',this.value)" style="width:100%;min-height:30px">${esc(l.homework||'')}</textarea>
       </td>
       <td style="padding:3px;border-bottom:1px solid var(--border);border-right:2px solid var(--border);min-width:140px">
         <textarea class="tinp" placeholder="진도/특이사항" onblur="spSave('${sp.id}','${s.id}',${sn},'progress',this.value)" style="width:100%;min-height:30px">${esc(l.progress||'')}</textarea>
@@ -4738,10 +4758,7 @@ function rPoints(){
 
     if(doneList.length){
       h += `<div style="margin-top:10px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-          <div style="font-size:12px;font-weight:700;color:var(--text2)">정산 완료 (${doneList.length}명)</div>
-          ${isPrin?`<button class="btn btn-sm" style="font-size:10px;color:var(--red);margin-left:auto" onclick="resetAllAttendSettle(${settleYear},${settleMonth})">전체삭제</button>`:''}
-        </div>
+        <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">정산 완료 (${doneList.length}명)</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">`;
       doneList.forEach(s=>{
         const ct = CT()[s.classType];
@@ -5507,59 +5524,13 @@ async function skipAttendSettle(year, month){
 
 // 출결 정산 취소 (개별)
 async function resetAttendSettle(sid, year, month){
+  if(!confirm('이 학생의 출결 정산을 취소하고 다시 선택할 수 있게 합니다.\n(이미 적립된 포인트는 내역에서 직접 삭제해주세요)')) return;
+  const settleKey = `attend_${year}-${String(month).padStart(2,'0')}`;
   const pd = pointsData[sid];
   if(!pd) return;
-  const settleKey = `attend_${year}-${String(month).padStart(2,'0')}`;
-  const histIdx = (pd.history||[]).findIndex(h=>h.year===year && h.month===month && (h.type==='PERFECT'||h.type==='STEADY'));
-  const matched = histIdx>-1 ? pd.history[histIdx] : null;
-  const msg = matched
-    ? `이 학생의 출결 정산을 취소합니다.\n\n적립됐던 "${matched.label} +${matched.points.toLocaleString()}P" 내역도 함께 삭제되고 잔액에서 차감됩니다.\n계속하시겠어요?`
-    : '이 학생의 출결 정산을 취소하고 다시 선택할 수 있게 합니다.';
-  if(!confirm(msg)) return;
-
   pd.attendSettled = (pd.attendSettled||[]).filter(k=>k!==settleKey);
-  if(matched){
-    pd.balance = (pd.balance||0) - (matched.points||0);
-    pd.history = pd.history.filter((_,i)=>i!==histIdx);
-  }
   await savePointsData(sid, pd);
-  toast(matched ? '정산 취소 및 적립 포인트 삭제 완료' : '정산 취소됐습니다'); render();
-}
-
-// 출결 정산 취소 (전체)
-async function resetAllAttendSettle(year, month){
-  const settleKey = `attend_${year}-${String(month).padStart(2,'0')}`;
-  const studs = (cfg.students||[]).filter(s=>isAttendSettled(s.id,year,month));
-  if(!studs.length){ toast('정산 완료된 학생이 없습니다',true); return; }
-
-  let ptCount=0, ptSum=0;
-  studs.forEach(s=>{
-    const pd = pointsData[s.id];
-    const m = (pd?.history||[]).find(h=>h.year===year && h.month===month && (h.type==='PERFECT'||h.type==='STEADY'));
-    if(m){ ptCount++; ptSum+=m.points; }
-  });
-
-  const yl = `${year}년 ${month}월`;
-  const msg = ptCount
-    ? `${yl} 출결 정산을 전체 취소합니다. (${studs.length}명)\n\n적립됐던 포인트 내역 ${ptCount}건(총 +${ptSum.toLocaleString()}P)도 함께 삭제되고 잔액에서 차감됩니다.\n계속하시겠어요?`
-    : `${yl} 출결 정산을 전체 취소합니다. (${studs.length}명)\n계속하시겠어요?`;
-  if(!confirm(msg)) return;
-
-  setSyncState('syncing','정산 취소 처리 중...');
-  for(const s of studs){
-    const pd = pointsData[s.id];
-    if(!pd) continue;
-    pd.attendSettled = (pd.attendSettled||[]).filter(k=>k!==settleKey);
-    const histIdx = (pd.history||[]).findIndex(h=>h.year===year && h.month===month && (h.type==='PERFECT'||h.type==='STEADY'));
-    if(histIdx>-1){
-      const removed = pd.history[histIdx];
-      pd.balance = (pd.balance||0) - (removed.points||0);
-      pd.history = pd.history.filter((_,i)=>i!==histIdx);
-    }
-    await savePointsData(s.id, pd);
-  }
-  setSyncState('ok','완료');
-  toast(`${yl} 출결 정산 전체 취소 완료 (${studs.length}명)`); render();
+  toast('정산 취소됐습니다'); render();
 }
 
 // 출결 정산 여부 확인 (attendSettled 기준)
@@ -5987,7 +5958,7 @@ function renderMatrixTable(studs,mergedCols,todayStr,cls){
           h+=`<td class="dcell${tc} sat-cell" style="min-width:100px;max-width:130px"><textarea class="tinp" onblur="mSave('${s.id}','${d}','progress',this.value)">${esc(l.progress||'')}</textarea></td>`;
           // 이전 과제 표시 (정규 회차랑 똑같이)
           const ph=prevHwInMonth(s.id,d,cls,st.year,st.month);
-          h+=`<td class="dcell${tc} sat-cell" style="min-width:100px;max-width:130px">${ph?`<span class="prev-chip" title="${ph.date?ph.date+' 과제: ':''} ${esc(ph.hw)}">📋 ${esc(ph.hw)}</span>`:''}<textarea class="tinp" onblur="mSaveHw('${s.id}','${d}','${cls}',this.value)">${esc(l.homework||'')}</textarea></td>`;
+          h+=`<td class="dcell${tc} sat-cell" style="min-width:100px;max-width:130px">${ph?`<span class="prev-chip" title="${ph.date?ph.date+' 과제: ':''} ${esc(ph.hw)}">📋 ${ph.source==='special'?`<span style="color:#a05a00">🎯${esc(ph.specialName||'특강')}</span> `:''}${esc(ph.hw)}</span>`:''}<textarea class="tinp" onblur="mSaveHw('${s.id}','${d}','${cls}',this.value)">${esc(l.homework||'')}</textarea></td>`;
           h+=`<td class="dcell c${tc} sat-cell"><span class="chk" onclick="mToggle('${s.id}','${d}','makeupClass')">${l.makeupClass?'✅':'☐'}</span></td>`;
           h+=`<td class="dcell${tc} sat-cell" style="min-width:90px;max-width:130px"><textarea class="tinp" onblur="mSave('${s.id}','${d}','note',this.value)">${esc(l.note||'')}</textarea></td>`;
         }
@@ -6009,7 +5980,7 @@ function renderMatrixTable(studs,mergedCols,todayStr,cls){
         h+=`<td class="dcell c${tc}">${starBtn}<input class="sinp" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="mSave('${s.id}','${d}','testScore',this.value)" style="${l.testIsFullRange?'background:#fff8e8':''}">${l.testIsFullRange&&l.testScore?'<div style="font-size:9px;color:var(--amber);font-weight:700;text-align:center;margin-top:1px">전범위</div>':''}</td>`;
         h+=`<td class="dcell${tc}" style="min-width:100px;max-width:130px"><input type="text" class="tinp" style="font-size:10px;color:var(--purple);border-bottom:1px dashed #d4a0f0;margin-bottom:2px;padding-bottom:2px;width:100%" placeholder="목표진도..." value="${esc(l.targetProgress||'')}" onblur="mSave('${s.id}','${d}','targetProgress',this.value)"><textarea class="tinp" onblur="mSave('${s.id}','${d}','progress',this.value)">${esc(l.progress||'')}</textarea></td>`;
         const ph=prevHwInMonth(s.id,d,cls,st.year,st.month);
-        h+=`<td class="dcell${tc}" style="min-width:100px;max-width:130px">${ph?`<span class="prev-chip" title="${ph.date?ph.date+' 과제: ':''} ${esc(ph.hw)}">📋 ${esc(ph.hw)}</span>`:''}<textarea class="tinp" onblur="mSaveHw('${s.id}','${d}','${cls}',this.value)">${esc(l.homework||'')}</textarea></td>`;
+        h+=`<td class="dcell${tc}" style="min-width:100px;max-width:130px">${ph?`<span class="prev-chip" title="${ph.date?ph.date+' 과제: ':''} ${esc(ph.hw)}">📋 ${ph.source==='special'?`<span style="color:#a05a00">🎯${esc(ph.specialName||'특강')}</span> `:''}${esc(ph.hw)}</span>`:''}<textarea class="tinp" onblur="mSaveHw('${s.id}','${d}','${cls}',this.value)">${esc(l.homework||'')}</textarea></td>`;
         h+=`<td class="dcell c${tc}"><span class="chk" onclick="mToggle('${s.id}','${d}','makeupClass')">${l.makeupClass?'✅':'☐'}</span></td>`;
         h+=`<td class="dcell${tc}" style="min-width:90px;max-width:130px"><textarea class="tinp" onblur="mSave('${s.id}','${d}','note',this.value)">${esc(l.note||'')}</textarea></td>`;
       }
@@ -6046,7 +6017,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
       </div>
       ${ph?`<div style="margin-bottom:8px">
         <div class="field-lbl">지난 시간 과제</div>
-        <div class="prev-box" style="user-select:text;cursor:default">📋 ${ph.date?`<span style="font-size:10px;color:var(--text3)">[${ph.date}]</span> `:''}${esc(ph.hw)}</div>
+        <div class="prev-box" style="user-select:text;cursor:default">📋 ${ph.date?`<span style="font-size:10px;color:var(--text3)">[${ph.date}]</span> `:''}${ph.source==='special'?`<span style="font-size:10px;color:#a05a00;background:#fffbef;border:1px solid #e0c080;border-radius:8px;padding:1px 6px;margin-right:4px">🎯 ${esc(ph.specialName||'특강')}</span>`:''}${esc(ph.hw)}</div>
       </div>`:''}
       <div style="margin-bottom:8px">
         <div class="field-lbl">목표진도</div>
@@ -6105,7 +6076,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
     </div>
     <div style="margin-bottom:6px"><div class="field-lbl">오늘 진도</div><textarea class="tarea" onblur="tSave('${s.id}','${dateStr}','${s.classType}','progress',this.value)">${esc(l.progress||'')}</textarea></div>
     <div style="margin-bottom:6px"><div class="field-lbl">오늘 과제</div>
-      ${ph?`<div class="prev-box">📋 지난 과제: ${ph.date?`<span style="font-size:10px;color:var(--text3)">[${ph.date}]</span> `:''}${esc(ph.hw)}</div>`:''}
+      ${ph?`<div class="prev-box">📋 지난 과제: ${ph.date?`<span style="font-size:10px;color:var(--text3)">[${ph.date}]</span> `:''}${ph.source==='special'?`<span style="font-size:10px;color:#a05a00;background:#fffbef;border:1px solid #e0c080;border-radius:8px;padding:1px 6px;margin-right:4px">🎯 ${esc(ph.specialName||'특강')}</span>`:''}${esc(ph.hw)}</div>`:''}
       <textarea class="tarea" oninput="tUpdateHwMem('${s.id}','${dateStr}',this.value)" onblur="tSaveHw('${s.id}','${dateStr}','${s.classType}',this.value)">${esc(l.homework||'')}</textarea>
     </div>
     ${renderUnitCheckPanels(s.id, s.textbooks||[], parseDate(dateStr).getDay(), dateStr)}
@@ -6729,6 +6700,54 @@ function rToday(){
     h+=`</div></div>`;
   }
 
+  h+=renderTodaySpecialSection(dateStr, teacherFilter, isPrin);
+
+  return h;
+}
+
+/* 오늘입력 탭: 오늘 날짜에 회차 날짜가 지정된 특강 세션들을 모아 보여줌 */
+function renderTodaySpecialSection(dateStr, teacherFilter, isPrin){
+  const specials = cfg.specialClasses||[];
+  const items = []; // {sp, s, sn, l}
+  specials.forEach(sp=>{
+    if(teacherFilter && sp.teacher && sp.teacher!==teacherFilter) return;
+    (sp.students||[]).forEach(sid=>{
+      const s=(cfg.students||[]).find(x=>x.id===sid);
+      if(!s) return;
+      if(!isPrin && !isStudentOfTeacher(s, session?.username) && sp.teacher!==session?.username) return;
+      for(let sn=1; sn<=(sp.totalSessions||0); sn++){
+        const l=specialLessons[spLessonKey(sp.id,sid,sn)];
+        if(l && l.date===dateStr){ items.push({sp, s, sn, l}); }
+      }
+    });
+  });
+  if(!items.length) return '';
+
+  let h=`<div class="timeslot-hdr" style="margin-top:14px"><b style="font-size:14px">🎯 오늘의 특강</b>
+    <span style="font-size:12px;color:var(--text3);margin-left:6px">${items.length}명</span>
+  </div><div class="timeslot-body"><div class="student-grid">`;
+  items.forEach(({sp,s,sn,l})=>{
+    const att=l.attendance||'';
+    h+=`<div class="today-card" style="border-left:3px solid #a05a00">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <b style="font-size:13px">${esc(s.name)}</b>
+        ${s.grade?gradeBadge(s.grade):''}
+        <span style="font-size:10px;color:#a05a00;background:#fffbef;border:1px solid #e0c080;border-radius:8px;padding:1px 6px">🎯 ${esc(sp.name)} ${sn}회차</span>
+        <div style="display:flex;gap:3px;margin-left:auto;align-items:center">
+          <button class="abm${att==='attend'?' on-attend':''}" onclick="spAttend('${sp.id}','${s.id}',${sn},'attend');render()">출</button>
+          <button class="abm${att==='late'?' on-late':''}" onclick="spAttend('${sp.id}','${s.id}',${sn},'late');render()">지</button>
+          <button class="abm${att==='absent'?' on-absent':''}" onclick="spAttend('${sp.id}','${s.id}',${sn},'absent');render()">결</button>
+        </div>
+      </div>
+      <div class="score-row">
+        <div><div class="field-lbl">과제점수</div><input class="sinp-full" type="text" value="${esc(l.homeworkScore||'')}" placeholder="-" onblur="spSave('${sp.id}','${s.id}',${sn},'homeworkScore',this.value)"></div>
+        <div><div class="field-lbl">시험점수</div><input class="sinp-full" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="spSave('${sp.id}','${s.id}',${sn},'testScore',this.value)"></div>
+      </div>
+      <div style="margin-bottom:6px"><div class="field-lbl">오늘 진도</div><textarea class="tarea" onblur="spSave('${sp.id}','${s.id}',${sn},'progress',this.value)">${esc(l.progress||'')}</textarea></div>
+      <div style="margin-bottom:6px"><div class="field-lbl">오늘 과제</div><textarea class="tarea" onblur="spSave('${sp.id}','${s.id}',${sn},'homework',this.value)">${esc(l.homework||'')}</textarea></div>
+    </div>`;
+  });
+  h+=`</div></div>`;
   return h;
 }
 
@@ -9510,7 +9529,7 @@ function rModal(){
     const studRows=studs.map(s=>{
       const ct=CT()[s.classType];
       const checked=selStuds.has(s.id);
-      return `<label style="display:flex;align-items:center;gap:6px;padding:6px;border-bottom:1px solid var(--border-light, #f0f0f0);cursor:pointer;font-size:12px">
+      return `<label class="sp-stud-row" data-name="${esc(s.name.toLowerCase())}" style="display:flex;align-items:center;gap:6px;padding:6px;border-bottom:1px solid var(--border-light, #f0f0f0);cursor:pointer;font-size:12px">
         <input type="checkbox" class="sp-stud-chk" data-sid="${s.id}" ${checked?'checked':''}>
         <span style="font-weight:600;min-width:60px">${s.name}</span>
         ${s.grade?gradeBadge(s.grade):''}
@@ -9530,14 +9549,33 @@ function rModal(){
       <div class="frow"><label>시작일 (선택)</label>
         <input type="date" id="spStart" value="${esc(sp?.startDate||'')}" style="width:200px">
       </div>
+      <div class="frow"><label>반복 요일 (자동 날짜배정)</label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          ${['월','화','수','목','금'].map((d,i)=>{
+            const dow=i+1;
+            const checked=(sp?.repeatDays||[]).includes(dow);
+            return `<label style="display:flex;align-items:center;gap:3px;font-size:12px;cursor:pointer">
+              <input type="checkbox" class="sp-repeat-day" value="${dow}" ${checked?'checked':''}>${d}
+            </label>`;
+          }).join('')}
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-top:3px">시작일 기준으로 선택한 요일에 맞춰 회차별 날짜를 자동으로 채워줍니다. 이미 입력된 날짜는 덮어쓰지 않으며, 이후 매트릭스에서 학생별로 개별 수정할 수 있습니다.</div>
+      </div>
       <div class="frow"><label>담당 선생님</label>
         <select id="spTeacher" style="width:100%">
           <option value="">선택 안 함</option>
           ${teacherList.map(t=>`<option value="${esc(t)}" ${sp?.teacher===t?'selected':''}>${esc(t)}</option>`).join('')}
         </select>
       </div>
+      <div class="frow"><label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="spLinkHw" ${sp?.linkHomework?'checked':''}> 숙제 연동 (정규수업 '지난 과제'에 이 특강 과제를 표시)
+      </label></div>
       <div class="frow"><label>신청 학생 (체크하여 선택)</label>
-        <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r);background:#fff">
+        <input type="text" id="spStudSearch" placeholder="학생 이름 검색" style="width:100%;margin-bottom:6px;padding:6px 8px;border:1px solid var(--border);border-radius:var(--r);font-size:12px;font-family:inherit"
+          oninput="if(!this.dataset.composing) filterSpStudList(this.value)"
+          oncompositionstart="this.dataset.composing='1'"
+          oncompositionend="this.dataset.composing='';filterSpStudList(this.value)">
+        <div id="spStudListWrap" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r);background:#fff">
           ${studs.length?studRows:'<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">등록된 학생이 없습니다</div>'}
         </div>
       </div>
@@ -10126,6 +10164,42 @@ async function confEditTextbook(tbId){
   toast(`'${newName}' 수정 완료 (단원 ${newUnitCount}개)`);
 }
 
+/* 특강 모달 학생 검색 필터 — 체크 상태(checked)는 건드리지 않고 표시 여부만 토글 */
+function filterSpStudList(q){
+  const kw=(q||'').trim().toLowerCase();
+  document.querySelectorAll('#spStudListWrap .sp-stud-row').forEach(row=>{
+    const name=row.dataset.name||'';
+    row.style.display=(!kw||name.includes(kw))?'':'none';
+  });
+}
+
+/* 특강 회차 날짜 자동배정: 시작일+반복요일 기준, 이미 값 있는 칸은 보존 */
+function autoAssignSpecialDates(sp){
+  const changed=[];
+  if(!sp.startDate || !(sp.repeatDays&&sp.repeatDays.length) || !sp.totalSessions) return changed;
+  (sp.students||[]).forEach(sid=>{
+    let cur=parseDate(sp.startDate);
+    let sn=1;
+    let guard=0; // 무한루프 방지
+    while(sn<=sp.totalSessions && guard<400){
+      guard++;
+      const dow=cur.getDay();
+      if(sp.repeatDays.includes(dow)){
+        const key=spLessonKey(sp.id,sid,sn);
+        const existing=specialLessons[key]||{specialId:sp.id, studentId:sid, sessionNo:sn};
+        if(!existing.date){
+          existing.date=dk(cur);
+          specialLessons[key]=existing;
+          changed.push(existing);
+        }
+        sn++;
+      }
+      cur=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate()+1);
+    }
+  });
+  return changed;
+}
+
 async function confSaveSpecial(spId){
   const name=document.getElementById('spName').value.trim();
   if(!name){alert('특강 이름을 입력해주세요');return;}
@@ -10133,30 +10207,43 @@ async function confSaveSpecial(spId){
   if(totalSessions<1){alert('회차는 1 이상이어야 합니다');return;}
   const startDate=document.getElementById('spStart').value;
   const teacher=document.getElementById('spTeacher').value;
+  const linkHomework=!!document.getElementById('spLinkHw')?.checked;
+  const repeatDays=[...document.querySelectorAll('.sp-repeat-day:checked')].map(el=>parseInt(el.value));
   // 체크된 학생들 수집
   const students=[...document.querySelectorAll('.sp-stud-chk:checked')].map(el=>el.dataset.sid);
 
   if(!cfg.specialClasses) cfg.specialClasses=[];
 
+  let sp;
   if(spId && spId!=='null'){
     // 수정
-    const sp=cfg.specialClasses.find(x=>x.id===spId);
+    sp=cfg.specialClasses.find(x=>x.id===spId);
     if(sp){
       sp.name=name;
       sp.totalSessions=totalSessions;
       sp.startDate=startDate;
       sp.teacher=teacher;
       sp.students=students;
+      sp.linkHomework=linkHomework;
+      sp.repeatDays=repeatDays;
     }
   } else {
     // 추가
-    cfg.specialClasses.push({
+    sp={
       id:'sp'+Date.now(),
-      name, totalSessions, startDate, teacher, students,
-    });
+      name, totalSessions, startDate, teacher, students, linkHomework, repeatDays,
+    };
+    cfg.specialClasses.push(sp);
   }
+
+  // 반복요일 기준 회차별 날짜 자동배정 (이미 입력된 날짜는 보존)
+  const changedLessons = sp ? autoAssignSpecialDates(sp) : [];
+
   try{
     await gasCall('saveConfig',{config:cfg});
+    for(const l of changedLessons){
+      await gasCall('saveSpecialLesson',{lesson:l});
+    }
     closeM();
     toast(spId&&spId!=='null'?'특강 정보 저장 완료':'특강 추가 완료');
     render();
