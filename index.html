@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260723v5';
+const APP_VERSION = 'v20260723v6';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -653,6 +653,7 @@ async function showApp(){
     loadConfig(),
     loadMonthData(),
     loadMakeupDaysFromCollection(true),   // 로그인 시 항상 서버에서 최신 데이터 로드 (캐시는 다른 브라우저/계정의 등록내용을 반영 못하므로 로그인 시점엔 사용하지 않음)
+    loadSpecialLessons(),   // '오늘 입력' 탭의 오늘의 특강 섹션이 특강 탭 방문 없이도 바로 보이도록 초기 로드
   ]);
   setSyncState('ok','준비 완료');
 
@@ -8015,7 +8016,7 @@ function rSettings(){
     const labels={teacher:'평일 담당',fridayTeacher:'금요일 담당',grade:'학년',level:'레벨',weekdayTime:'월~목 교시',fridayTime:'금요일 교시'};
     const lbl=labels[field]||field;
     toast(`${s.name} ${lbl} → ${val||'(미지정)'} 저장됨`);
-    if(field==='grade'||field==='level'||field==='weekdayTime'||field==='fridayTime') render();
+    if(field==='grade'||field==='level'||field==='weekdayTime'||field==='fridayTime'||field==='teacher'||field==='fridayTeacher') render();
   }catch(e){ toast('저장 실패: '+e.message,true); }
 }
 
