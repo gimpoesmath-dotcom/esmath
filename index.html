@@ -451,7 +451,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260721v1';
+const APP_VERSION = 'v20260723v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -4738,7 +4738,10 @@ function rPoints(){
 
     if(doneList.length){
       h += `<div style="margin-top:10px">
-        <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">정산 완료 (${doneList.length}명)</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <div style="font-size:12px;font-weight:700;color:var(--text2)">정산 완료 (${doneList.length}명)</div>
+          ${isPrin?`<button class="btn btn-sm" style="font-size:10px;color:var(--red);margin-left:auto" onclick="resetAllAttendSettle(${settleYear},${settleMonth})">전체삭제</button>`:''}
+        </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">`;
       doneList.forEach(s=>{
         const ct = CT()[s.classType];
@@ -5504,13 +5507,59 @@ async function skipAttendSettle(year, month){
 
 // 출결 정산 취소 (개별)
 async function resetAttendSettle(sid, year, month){
-  if(!confirm('이 학생의 출결 정산을 취소하고 다시 선택할 수 있게 합니다.\n(이미 적립된 포인트는 내역에서 직접 삭제해주세요)')) return;
-  const settleKey = `attend_${year}-${String(month).padStart(2,'0')}`;
   const pd = pointsData[sid];
   if(!pd) return;
+  const settleKey = `attend_${year}-${String(month).padStart(2,'0')}`;
+  const histIdx = (pd.history||[]).findIndex(h=>h.year===year && h.month===month && (h.type==='PERFECT'||h.type==='STEADY'));
+  const matched = histIdx>-1 ? pd.history[histIdx] : null;
+  const msg = matched
+    ? `이 학생의 출결 정산을 취소합니다.\n\n적립됐던 "${matched.label} +${matched.points.toLocaleString()}P" 내역도 함께 삭제되고 잔액에서 차감됩니다.\n계속하시겠어요?`
+    : '이 학생의 출결 정산을 취소하고 다시 선택할 수 있게 합니다.';
+  if(!confirm(msg)) return;
+
   pd.attendSettled = (pd.attendSettled||[]).filter(k=>k!==settleKey);
+  if(matched){
+    pd.balance = (pd.balance||0) - (matched.points||0);
+    pd.history = pd.history.filter((_,i)=>i!==histIdx);
+  }
   await savePointsData(sid, pd);
-  toast('정산 취소됐습니다'); render();
+  toast(matched ? '정산 취소 및 적립 포인트 삭제 완료' : '정산 취소됐습니다'); render();
+}
+
+// 출결 정산 취소 (전체)
+async function resetAllAttendSettle(year, month){
+  const settleKey = `attend_${year}-${String(month).padStart(2,'0')}`;
+  const studs = (cfg.students||[]).filter(s=>isAttendSettled(s.id,year,month));
+  if(!studs.length){ toast('정산 완료된 학생이 없습니다',true); return; }
+
+  let ptCount=0, ptSum=0;
+  studs.forEach(s=>{
+    const pd = pointsData[s.id];
+    const m = (pd?.history||[]).find(h=>h.year===year && h.month===month && (h.type==='PERFECT'||h.type==='STEADY'));
+    if(m){ ptCount++; ptSum+=m.points; }
+  });
+
+  const yl = `${year}년 ${month}월`;
+  const msg = ptCount
+    ? `${yl} 출결 정산을 전체 취소합니다. (${studs.length}명)\n\n적립됐던 포인트 내역 ${ptCount}건(총 +${ptSum.toLocaleString()}P)도 함께 삭제되고 잔액에서 차감됩니다.\n계속하시겠어요?`
+    : `${yl} 출결 정산을 전체 취소합니다. (${studs.length}명)\n계속하시겠어요?`;
+  if(!confirm(msg)) return;
+
+  setSyncState('syncing','정산 취소 처리 중...');
+  for(const s of studs){
+    const pd = pointsData[s.id];
+    if(!pd) continue;
+    pd.attendSettled = (pd.attendSettled||[]).filter(k=>k!==settleKey);
+    const histIdx = (pd.history||[]).findIndex(h=>h.year===year && h.month===month && (h.type==='PERFECT'||h.type==='STEADY'));
+    if(histIdx>-1){
+      const removed = pd.history[histIdx];
+      pd.balance = (pd.balance||0) - (removed.points||0);
+      pd.history = pd.history.filter((_,i)=>i!==histIdx);
+    }
+    await savePointsData(s.id, pd);
+  }
+  setSyncState('ok','완료');
+  toast(`${yl} 출결 정산 전체 취소 완료 (${studs.length}명)`); render();
 }
 
 // 출결 정산 여부 확인 (attendSettled 기준)
