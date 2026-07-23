@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260723v4';
+const APP_VERSION = 'v20260723v5';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2975,10 +2975,38 @@ function rSpecial(){
 function openSpecial(spId){
   st.selectedSpecial=spId;
   render();
+  preloadSpecialMonths(spId);
 }
 function backToSpecialList(){
   st.selectedSpecial=null;
   render();
+}
+
+/* 특강 세션 날짜(및 그 직전 한 달)에 해당하는 정규 수업 데이터를 미리 로드
+   — 특강 화면에서 '지난 과제'(정규수업 과제) 조회가 항상 정확히 동작하도록 함 */
+async function preloadSpecialMonths(spId){
+  const sp=(cfg.specialClasses||[]).find(x=>x.id===spId);
+  if(!sp) return;
+  const months=new Set(); // 'YYYY-M' 형태로 중복 제거
+  const addMonthsFor=(dateStr)=>{
+    if(!dateStr) return;
+    const y=+dateStr.slice(0,4), m=+dateStr.slice(5,7);
+    months.add(y+'-'+m);
+    const pm=m===1?12:m-1, py=m===1?y-1:y;
+    months.add(py+'-'+pm); // 직전달(이전 과제 소급용)도 함께 로드
+  };
+  if(sp.startDate) addMonthsFor(sp.startDate);
+  (sp.students||[]).forEach(sid=>{
+    for(let sn=1; sn<=(sp.totalSessions||0); sn++){
+      const l=specialLessons[spLessonKey(sp.id,sid,sn)];
+      if(l && l.date) addMonthsFor(l.date);
+    }
+  });
+  for(const key of months){
+    const [y,m]=key.split('-').map(Number);
+    await ensureMonthLoaded(y,m);
+  }
+  if(st.selectedSpecial===spId) render();
 }
 
 function rSpecialMatrix(spId){
