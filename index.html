@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260727v3';
+const APP_VERSION = 'v20260727v4';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -6821,13 +6821,28 @@ function renderTodaySpecialSection(dateStr, teacherFilter, isPrin){
           <button class="abm${att==='absent'?' on-absent':''}" onclick="spAttend('${sp.id}','${s.id}',${sn},'absent');render()">결</button>
         </div>
       </div>
+      ${att==='absent'?(l.specialMakeupRequest
+        ? `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f0f7e8;border:1px solid #c8e0a8;border-radius:6px;margin-bottom:8px;font-size:11px">
+            <span style="color:#3a6818;font-weight:600">✅ 보강 신청 완료</span>
+            <span style="color:var(--text2)">${l.specialMakeupRequest.date} · ${l.specialMakeupRequest.period}교시 · ${esc(l.specialMakeupRequest.teacher||'담당 미지정')}</span>
+            <button class="btn btn-sm" style="margin-left:auto;font-size:10px" onclick="cancelSpecialMakeup('${sp.id}','${s.id}',${sn})">취소</button>
+          </div>`
+        : `<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:#fef5e7;border:1px solid #f0d090;border-radius:6px;margin-bottom:8px;font-size:11px">
+            <span style="color:#a05a00;font-weight:600">📅 결석보강</span>
+            <button class="btn btn-sm" style="margin-left:auto;font-size:11px" onclick="openM('requestSpecialMakeup','${sp.id}','${s.id}',${sn})">+ 보강 신청</button>
+          </div>`
+      ):''}
+      ${ph?`<div style="margin-bottom:6px">
+        <div class="field-lbl">지난 시간 과제</div>
+        ${renderPrevHwBadges(ph)}
+      </div>`:''}
+      <div style="margin-bottom:6px"><div class="field-lbl">목표진도</div><input type="text" class="sinp-full" value="${esc(l.targetProgress||'')}" placeholder="이번 수업 목표 진도를 입력하세요" onblur="spSave('${sp.id}','${s.id}',${sn},'targetProgress',this.value)"></div>
       <div class="score-row">
         <div><div class="field-lbl">과제점수</div><input class="sinp-full" type="text" value="${esc(l.homeworkScore||'')}" placeholder="-" onblur="spSave('${sp.id}','${s.id}',${sn},'homeworkScore',this.value)"></div>
         <div><div class="field-lbl">시험점수</div><input class="sinp-full" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="spSave('${sp.id}','${s.id}',${sn},'testScore',this.value)"></div>
       </div>
       <div style="margin-bottom:6px"><div class="field-lbl">오늘 진도</div><textarea class="tarea" onblur="spSave('${sp.id}','${s.id}',${sn},'progress',this.value)">${esc(l.progress||'')}</textarea></div>
       <div style="margin-bottom:6px"><div class="field-lbl">오늘 과제</div>
-        ${ph?`<div class="field-lbl">지난 과제</div>${renderPrevHwBadges(ph)}`:''}
         <textarea class="tarea" onblur="spSave('${sp.id}','${s.id}',${sn},'homework',this.value)">${esc(l.homework||'')}</textarea>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
