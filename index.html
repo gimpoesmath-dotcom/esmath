@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260723v6';
+const APP_VERSION = 'v20260727v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -6120,6 +6120,9 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
         <div class="field-lbl">특이사항</div>
         <input type="text" class="tarea" style="min-height:unset;padding:5px 8px" value="${esc(l.note||'')}" placeholder="" onblur="tSave('${s.id}','${dateStr}','${s.classType}','note',this.value)">
       </div>
+      ${l.makeupClass?`<div style="margin-bottom:8px">
+        <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--green-bg);color:var(--green);border:1px solid var(--green)">✅ 보강 수업</span>
+      </div>`:''}
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button onclick="copyScoreClip('${s.id}','${dateStr}')" style="flex:1;min-width:0;padding:5px 8px;font-size:11px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:4px">📋 점수 복사</button>
         <button onclick="copyProgressClip('${s.id}','${dateStr}')" style="flex:1;min-width:0;padding:5px 8px;font-size:11px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:4px">📋 진도/과제 복사</button>
