@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260727v1';
+const APP_VERSION = 'v20260727v2';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -6147,6 +6147,10 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
     </div>
     ${specialNote?`<div style="font-size:11px;color:#5a2080;background:#f3e8fc;border:1px solid #d4a0f0;border-radius:5px;padding:4px 8px;margin-bottom:6px;font-weight:600">📌 ${esc(specialNote)}</div>`:''}
     ${att==='absent'?renderMakeupRequestRow(s.id, dateStr):''}
+    ${ph?`<div style="margin-bottom:6px">
+      <div class="field-lbl">지난 시간 과제</div>
+      ${renderPrevHwBadges(ph)}
+    </div>`:''}
     <div style="margin-bottom:6px"><div class="field-lbl">목표진도</div><input type="text" class="sinp-full" value="${esc(l.targetProgress||'')}" placeholder="이번 수업 목표 진도를 입력하세요" onblur="tSave('${s.id}','${dateStr}','${s.classType}','targetProgress',this.value)"></div>
     <div class="score-row">
       <div><div class="field-lbl">과제점수</div><input class="sinp-full" type="text" value="${esc(l.homeworkScore||'')}" placeholder="-" onblur="tSave('${s.id}','${dateStr}','${s.classType}','homeworkScore',this.value)"></div>
@@ -6154,7 +6158,6 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
     </div>
     <div style="margin-bottom:6px"><div class="field-lbl">오늘 진도</div><textarea class="tarea" onblur="tSave('${s.id}','${dateStr}','${s.classType}','progress',this.value)">${esc(l.progress||'')}</textarea></div>
     <div style="margin-bottom:6px"><div class="field-lbl">오늘 과제</div>
-      ${ph?`<div class="field-lbl" style="margin-top:2px">지난 과제</div>${renderPrevHwBadges(ph)}`:''}
       <textarea class="tarea" oninput="tUpdateHwMem('${s.id}','${dateStr}',this.value)" onblur="tSaveHw('${s.id}','${dateStr}','${s.classType}',this.value)">${esc(l.homework||'')}</textarea>
     </div>
     ${renderUnitCheckPanels(s.id, s.textbooks||[], parseDate(dateStr).getDay(), dateStr)}
