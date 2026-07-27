@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260727v4';
+const APP_VERSION = 'v20260727v5';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -3077,7 +3077,7 @@ function rSpecialMatrix(spId){
         <tr style="background:var(--bg2)">
           <th style="padding:8px 10px;border-bottom:1px solid var(--border);border-right:1px solid var(--border);text-align:left;position:sticky;left:0;background:var(--bg2);z-index:2;min-width:120px">학생</th>`;
   for(let sn=1; sn<=(sp.totalSessions||0); sn++){
-    h+=`<th colspan="6" style="padding:6px;border-bottom:1px solid var(--border);border-right:2px solid var(--border);text-align:center;background:#f0f5fa">
+    h+=`<th colspan="8" style="padding:6px;border-bottom:1px solid var(--border);border-right:2px solid var(--border);text-align:center;background:#f0f5fa">
       ${sn}회차
     </th>`;
   }
@@ -3087,9 +3087,11 @@ function rSpecialMatrix(spId){
     h+=`<th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">날짜</th>
     <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">출결</th>
     <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">과제점수</th>
-    <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">시험</th>
+    <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">시험점수</th>
+    <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">목표진도</th>
+    <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">오늘진도</th>
     <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border)">오늘 과제</th>
-    <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border);border-right:2px solid var(--border)">진도/특이</th>`;
+    <th style="padding:4px;font-size:10px;color:var(--text2);border-bottom:1px solid var(--border);border-right:2px solid var(--border)">특이사항</th>`;
   }
   h+=`</tr></thead><tbody>`;
 
@@ -3127,6 +3129,12 @@ function rSpecialMatrix(spId){
       <td style="padding:3px;border-bottom:1px solid var(--border);min-width:55px">
         <input class="sinp" type="text" value="${esc(l.testScore||'')}" placeholder="-" onblur="spSave('${sp.id}','${s.id}',${sn},'testScore',this.value)">
       </td>
+      <td style="padding:3px;border-bottom:1px solid var(--border);min-width:110px">
+        <textarea class="tinp" placeholder="목표진도" onblur="spSave('${sp.id}','${s.id}',${sn},'targetProgress',this.value)" style="width:100%;min-height:30px">${esc(l.targetProgress||'')}</textarea>
+      </td>
+      <td style="padding:3px;border-bottom:1px solid var(--border);min-width:110px">
+        <textarea class="tinp" placeholder="오늘 진도" onblur="spSave('${sp.id}','${s.id}',${sn},'progress',this.value)" style="width:100%;min-height:30px">${esc(l.progress||'')}</textarea>
+      </td>
       <td style="padding:3px;border-bottom:1px solid var(--border);min-width:140px">
         ${(()=>{
           if(!l.date) return '';
@@ -3137,8 +3145,8 @@ function rSpecialMatrix(spId){
         })()}
         <textarea class="tinp" placeholder="오늘 과제" onblur="spSave('${sp.id}','${s.id}',${sn},'homework',this.value)" style="width:100%;min-height:30px">${esc(l.homework||'')}</textarea>
       </td>
-      <td style="padding:3px;border-bottom:1px solid var(--border);border-right:2px solid var(--border);min-width:140px">
-        <textarea class="tinp" placeholder="진도/특이사항" onblur="spSave('${sp.id}','${s.id}',${sn},'progress',this.value)" style="width:100%;min-height:30px">${esc(l.progress||'')}</textarea>
+      <td style="padding:3px;border-bottom:1px solid var(--border);border-right:2px solid var(--border);min-width:110px">
+        <textarea class="tinp" placeholder="특이사항" onblur="spSave('${sp.id}','${s.id}',${sn},'note',this.value)" style="width:100%;min-height:30px">${esc(l.note||'')}</textarea>
       </td>`;
     }
     h+=`</tr>`;
@@ -3280,8 +3288,8 @@ function exportSpecialExcel(spId){
   const headRow1=['학생','학년','반'];
   const headRow2=['','',''];
   for(let sn=1; sn<=totalSessions; sn++){
-    headRow1.push(`${sn}회차`,'','','','');
-    headRow2.push('날짜','출결','과제','시험','진도/특이');
+    headRow1.push(`${sn}회차`,'','','','','','','');
+    headRow2.push('날짜','출결','과제점수','시험점수','목표진도','오늘진도','오늘과제','특이사항');
   }
   const rows=[headRow1, headRow2];
   studs.forEach(s=>{
@@ -3294,7 +3302,10 @@ function exportSpecialExcel(spId){
         attMap[l.attendance||''] || '-',
         l.homeworkScore||'',
         l.testScore||'',
-        l.progress||''
+        l.targetProgress||'',
+        l.progress||'',
+        l.homework||'',
+        l.note||''
       );
     }
     rows.push(row);
@@ -3305,14 +3316,14 @@ function exportSpecialExcel(spId){
   // 셀 너비 조정
   const cols=[{wch:10},{wch:8},{wch:12}];
   for(let sn=1; sn<=totalSessions; sn++){
-    cols.push({wch:12},{wch:8},{wch:8},{wch:8},{wch:24});
+    cols.push({wch:12},{wch:8},{wch:8},{wch:8},{wch:16},{wch:16},{wch:24},{wch:16});
   }
   ws['!cols']=cols;
-  // 1행 회차명 셀 병합 (각 회차 5칸씩)
+  // 1행 회차명 셀 병합 (각 회차 8칸씩)
   const merges=[];
   for(let sn=0; sn<totalSessions; sn++){
-    const startCol=3 + sn*5;
-    merges.push({s:{r:0,c:startCol}, e:{r:0,c:startCol+4}});
+    const startCol=3 + sn*8;
+    merges.push({s:{r:0,c:startCol}, e:{r:0,c:startCol+7}});
   }
   ws['!merges']=merges;
   XLSX.utils.book_append_sheet(wb, ws, '회차 매트릭스');
@@ -6084,12 +6095,15 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
         ${s.grade?gradeBadge(s.grade):''}
         ${s.level?levelBadge(s.level):''}
         <button onclick="openM('studentProfile','${s.id}')" style="padding:2px 8px;font-size:11px;border:1px solid var(--border2);border-radius:6px;background:var(--bg);color:var(--text2);cursor:pointer;font-family:inherit">📋 상세</button>
+        ${sn?`<span style="font-size:10px;color:var(--text3)">${sn}회차</span>`:''}
         <div style="display:flex;gap:3px;margin-left:auto;align-items:center">
+          ${sTbs.length?`<button title="전범위 시험 점수 입력" style="padding:2px 7px;font-size:12px;border:1px solid var(--amber);border-radius:10px;background:var(--amber-bg);color:var(--amber);cursor:pointer;font-weight:700" onclick="openM('addTest','${s.id}')">✱</button>`:''}
           <button class="abm${att==='attend'?' on-attend':''}" onclick="tAttend('${s.id}','${dateStr}','attend')">출</button>
           <button class="abm${att==='late'?' on-late':''}" onclick="tAttend('${s.id}','${dateStr}','late')">지</button>
           <button class="abm${att==='absent'?' on-absent':''}" onclick="tAttend('${s.id}','${dateStr}','absent')">결</button>
         </div>
       </div>
+      ${specialNote?`<div style="font-size:11px;color:#5a2080;background:#f3e8fc;border:1px solid #d4a0f0;border-radius:5px;padding:4px 8px;margin-bottom:8px;font-weight:600">📌 ${esc(specialNote)}</div>`:''}
       ${ph?`<div style="margin-bottom:8px">
         <div class="field-lbl">지난 시간 과제</div>
         <div style="user-select:text;cursor:default">${renderPrevHwBadges(ph)}</div>
@@ -6844,6 +6858,9 @@ function renderTodaySpecialSection(dateStr, teacherFilter, isPrin){
       <div style="margin-bottom:6px"><div class="field-lbl">오늘 진도</div><textarea class="tarea" onblur="spSave('${sp.id}','${s.id}',${sn},'progress',this.value)">${esc(l.progress||'')}</textarea></div>
       <div style="margin-bottom:6px"><div class="field-lbl">오늘 과제</div>
         <textarea class="tarea" onblur="spSave('${sp.id}','${s.id}',${sn},'homework',this.value)">${esc(l.homework||'')}</textarea>
+      </div>
+      <div style="margin-bottom:6px"><div class="field-lbl">특이사항</div>
+        <input type="text" class="tarea" style="min-height:unset;padding:5px 8px" value="${esc(l.note||'')}" placeholder="" onblur="spSave('${sp.id}','${s.id}',${sn},'note',this.value)">
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button onclick="copySpecialScoreClip('${sp.id}','${s.id}',${sn})" style="flex:1;min-width:0;padding:5px 8px;font-size:11px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:4px" title="과제점수·시험점수 복사">📋 점수 복사</button>
