@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260727v2';
+const APP_VERSION = 'v20260727v3';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -6830,6 +6830,10 @@ function renderTodaySpecialSection(dateStr, teacherFilter, isPrin){
         ${ph?`<div class="field-lbl">지난 과제</div>${renderPrevHwBadges(ph)}`:''}
         <textarea class="tarea" onblur="spSave('${sp.id}','${s.id}',${sn},'homework',this.value)">${esc(l.homework||'')}</textarea>
       </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button onclick="copySpecialScoreClip('${sp.id}','${s.id}',${sn})" style="flex:1;min-width:0;padding:5px 8px;font-size:11px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:4px" title="과제점수·시험점수 복사">📋 점수 복사</button>
+        <button onclick="copySpecialProgressClip('${sp.id}','${s.id}',${sn})" style="flex:1;min-width:0;padding:5px 8px;font-size:11px;border:1px solid var(--border2);border-radius:var(--r);background:var(--bg2);color:var(--text2);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:4px" title="진도·과제 복사">📋 진도/과제 복사</button>
+      </div>
     </div>`;
   });
   h+=`</div></div>`;
@@ -12518,6 +12522,35 @@ function copyScoreClip(sid, dateStr){
 
 function copyProgressClip(sid, dateStr){
   const l = getLesson(sid, dateStr) || {};
+  const parts = [];
+  if(l.progress && l.progress.trim()) parts.push('진도: ' + l.progress.trim());
+  if(l.homework && l.homework.trim()) parts.push('과제: ' + l.homework.trim());
+  if(!parts.length){ toast('진도/과제 데이터가 없습니다.', true); return; }
+  const text = parts.join(' / ');
+  navigator.clipboard.writeText(text).then(()=>toast('📋 진도/과제 복사됨')).catch(()=>{
+    const ta=document.createElement('textarea'); ta.value=text;
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta); toast('📋 진도/과제 복사됨');
+  });
+}
+
+/* 특강용: 회차 기반 lesson(specialLessons)에서 점수/진도·과제 복사 */
+function copySpecialScoreClip(spId, sid, sn){
+  const l = specialLessons[spLessonKey(spId, sid, sn)] || {};
+  const parts = [];
+  if(l.homeworkScore || l.homeworkScore===0) parts.push('과제 ' + l.homeworkScore + '점');
+  if(l.testScore || l.testScore===0) parts.push('시험 ' + l.testScore + '점');
+  if(!parts.length){ toast('점수 데이터가 없습니다.', true); return; }
+  const text = parts.join(', ');
+  navigator.clipboard.writeText(text).then(()=>toast('📋 점수 복사됨: ' + text)).catch(()=>{
+    const ta=document.createElement('textarea'); ta.value=text;
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta); toast('📋 점수 복사됨: ' + text);
+  });
+}
+
+function copySpecialProgressClip(spId, sid, sn){
+  const l = specialLessons[spLessonKey(spId, sid, sn)] || {};
   const parts = [];
   if(l.progress && l.progress.trim()) parts.push('진도: ' + l.progress.trim());
   if(l.homework && l.homework.trim()) parts.push('과제: ' + l.homework.trim());
