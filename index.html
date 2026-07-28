@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260727v5';
+const APP_VERSION = 'v20260728v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -1476,12 +1476,12 @@ async function persistLessonFb(lesson, knownUpdatedAt, forceOverwrite=false){
 }
 
 // ── persistLesson 래퍼 ──
-async function persistLesson(lesson, forceOverwrite=false){
+async function persistLesson(lesson, forceOverwrite=false, field=null){
   const key=lesson.studentId+'_'+lesson.date;
   const knownUpdatedAt=forceOverwrite?null:(lessonVersions[key]||null);
   try{
     const res=await persistLessonFb(lesson,knownUpdatedAt,forceOverwrite);
-    if(res.conflict){ showConflictModal(lesson,res); return false; }
+    if(res.conflict){ showConflictModal(lesson,res,field); return false; }
     return true;
   }catch(e){ toast('저장 실패: '+e.message,true); return false; }
 }
@@ -1979,9 +1979,27 @@ function debounceLogSearch(){
   _logSearchTimer=setTimeout(()=>{ loadActivityLogs(); }, 250);
 }
 
-// 충돌 모달 표시
-function showConflictModal(myLesson, conflictInfo){
-  pendingConflict = { myLesson, conflictInfo };
+// 필드명 → 한글 라벨
+function fieldLabel(f){
+  return {attendance:'출결', homeworkScore:'과제점수', testScore:'시험점수', progress:'진도',
+    homework:'과제내용', note:'특이사항', targetProgress:'목표진도', makeupClass:'보강여부'}[f] || f;
+}
+// 필드 값 → 표시용 문자열
+function fieldValDisplay(f, l){
+  if(!l) return '(없음)';
+  if(f==='attendance') return attLabel(l.attendance);
+  if(f==='makeupClass') return l.makeupClass ? '체크됨' : '체크 안 됨';
+  if(f==='homeworkScore'||f==='testScore'){
+    const v=l[f];
+    if(!v && v!==0) return '(없음)';
+    return String(v)+'점'+(f==='testScore'&&l.testIsFullRange?' (전범위)':'');
+  }
+  return (l[f]!==undefined && l[f]!==null && String(l[f]).trim()!=='') ? String(l[f]) : '(없음)';
+}
+
+// 충돌 모달 표시 — field가 있으면 그 칸(필드) 하나만 비교/해결, 없으면 레코드 전체 비교(구형 호출 대비)
+function showConflictModal(myLesson, conflictInfo, field){
+  pendingConflict = { myLesson, conflictInfo, field };
   const ex=document.getElementById('conflictOverlay'); if(ex) ex.remove();
 
   const timeStr = conflictInfo.conflictedAt
@@ -1992,14 +2010,29 @@ function showConflictModal(myLesson, conflictInfo){
   const stuName = (cfg.students||[]).find(s=>s.id===myLesson.studentId)?.name || '';
   const dateInfo = myLesson.date ? ` · ${myLesson.date}` : '';
 
-  const div=document.createElement('div');
-  div.id='conflictOverlay';
-  div.className='overlay';
-  div.style.zIndex='500';
-  div.innerHTML=`<div class="conflict-modal">
-    <h3>⚠️ 수정 충돌 발생</h3>
-    ${stuName?`<div style="font-size:12px;background:#fdf0d8;border:1px solid #e0c060;border-radius:var(--r);padding:5px 10px;margin-bottom:8px;color:#7a4e00"><b>👤 ${esc(stuName)}</b>${esc(dateInfo)}</div>`:''}
-    <div class="conflict-who"><b>${esc(conflictInfo.conflictedBy||'다른 선생님')}</b>이 <b>${timeStr}</b>에 이미 수정한 내용이 있습니다.</div>
+  let bodyHtml;
+  if(field){
+    const label=fieldLabel(field);
+    const curVal=fieldValDisplay(field, cur);
+    const myVal=fieldValDisplay(field, myLesson);
+    bodyHtml=`
+    <div class="conflict-compare">
+      <div class="conflict-box">
+        <div class="cb-title">📋 현재 저장된 내용 (${esc(conflictInfo.conflictedBy||'')})</div>
+        <div class="cb-row">${esc(label)}: <span class="cb-val">${esc(curVal)}</span></div>
+      </div>
+      <div class="conflict-box">
+        <div class="cb-title">✏️ 내가 입력한 내용</div>
+        <div class="cb-row">${esc(label)}: <span class="cb-val">${esc(myVal)}</span></div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:14px"><b>${esc(label)}</b> 칸만 어떻게 하시겠어요? 다른 칸의 내용에는 영향이 없습니다.</div>
+    <div class="mfoot" style="padding-top:0;border-top:none;justify-content:space-between">
+      <button class="btn" onclick="resolveConflict('keep')">이 칸만 취소 (서버 값 유지)</button>
+      <button class="btn btn-red" onclick="resolveConflict('overwrite')">이 칸 내 값으로 저장</button>
+    </div>`;
+  } else {
+    bodyHtml=`
     <div class="conflict-compare">
       <div class="conflict-box">
         <div class="cb-title">📋 현재 저장된 내용 (${esc(conflictInfo.conflictedBy||'')})</div>
@@ -2024,7 +2057,18 @@ function showConflictModal(myLesson, conflictInfo){
     <div class="mfoot" style="padding-top:0;border-top:none;justify-content:space-between">
       <button class="btn" onclick="resolveConflict('keep')">현재 내용 유지 (내 입력 취소)</button>
       <button class="btn btn-red" onclick="resolveConflict('overwrite')">내 내용으로 덮어쓰기</button>
-    </div>
+    </div>`;
+  }
+
+  const div=document.createElement('div');
+  div.id='conflictOverlay';
+  div.className='overlay';
+  div.style.zIndex='500';
+  div.innerHTML=`<div class="conflict-modal">
+    <h3>⚠️ 수정 충돌 발생</h3>
+    ${stuName?`<div style="font-size:12px;background:#fdf0d8;border:1px solid #e0c060;border-radius:var(--r);padding:5px 10px;margin-bottom:8px;color:#7a4e00"><b>👤 ${esc(stuName)}</b>${esc(dateInfo)}</div>`:''}
+    <div class="conflict-who"><b>${esc(conflictInfo.conflictedBy||'다른 선생님')}</b>이 <b>${timeStr}</b>에 이미 수정한 내용이 있습니다.</div>
+    ${bodyHtml}
   </div>`;
   document.body.appendChild(div);
 }
@@ -2034,18 +2078,39 @@ function attLabel(v){ return v==='attend'?'출석':v==='late'?'지각':v==='abse
 async function resolveConflict(choice){
   const ex=document.getElementById('conflictOverlay'); if(ex) ex.remove();
   if(!pendingConflict) return;
-  const {myLesson, conflictInfo} = pendingConflict;
+  const {myLesson, conflictInfo, field} = pendingConflict;
   pendingConflict = null;
+  const cur = conflictInfo.currentRecord || {};
+  const key = myLesson.studentId+'_'+myLesson.date;
 
+  // ── 필드(셀) 단위 해결: 그 칸만 취소/덮어쓰기, 다른 칸은 그대로 ──
+  if(field){
+    if(choice==='overwrite'){
+      // 서버의 최신 레코드를 기준으로, 이 필드만 내 값으로 교체해서 저장
+      const merged={...cur, [field]: myLesson[field]};
+      if(field==='testScore') merged.testIsFullRange = myLesson.testIsFullRange;
+      const ok=await persistLesson(merged, true, field);
+      if(ok!==false){ mdb.lessons[key]=merged; }
+      render();
+      toast(`"${fieldLabel(field)}" 칸을 내 값으로 저장했습니다`);
+    } else {
+      // 이 필드만 서버 값으로 되돌리고, 나머지 필드는 내가 입력해둔 값 그대로 유지
+      const merged={...myLesson, [field]: cur[field], updatedAt: cur.updatedAt};
+      if(field==='testScore') merged.testIsFullRange = cur.testIsFullRange;
+      mdb.lessons[key]=merged;
+      if(cur.updatedAt) lessonVersions[key]=cur.updatedAt;
+      render();
+      toast(`"${fieldLabel(field)}" 칸만 취소했습니다`);
+    }
+    return;
+  }
+
+  // ── 레코드 전체 단위 해결 (field 정보 없는 구형 호출 대비) ──
   if(choice==='overwrite'){
-    // 강제 덮어쓰기
     await persistLesson(myLesson, true);
     toast('내 내용으로 덮어썼습니다');
   } else {
-    // 현재 저장된 내용으로 로컬 데이터 업데이트
-    const cur = conflictInfo.currentRecord;
     if(cur){
-      const key = myLesson.studentId+'_'+myLesson.date;
       mdb.lessons[key] = cur;
       if(cur.updatedAt) lessonVersions[key] = cur.updatedAt;
     }
@@ -10555,7 +10620,7 @@ async function mAttend(sid,d,v){
     await autoRemoveMakeupRequest(l);
   }
   render();
-  await persistLesson(l);
+  await persistLesson(l, false, 'attendance');
   logActivity('attendance',sid,d,'attendance',oldV,l.attendance);
 }
 async function mSave(sid,d,f,v){
@@ -10571,7 +10636,7 @@ async function mSave(sid,d,f,v){
     l.attendance='attend';
   }
   setSyncState('syncing','저장 중...');
-  await persistLesson(l);render();
+  await persistLesson(l, false, f);render();
   logActivity('edit',sid,d,f,oldV,v);
 }
 async function mSaveHw(sid,d,cls,v){
@@ -10579,7 +10644,7 @@ async function mSaveHw(sid,d,cls,v){
   const oldV=l.homework;
   l.homework=v;
   setSyncState('syncing','저장 중...');
-  await persistLesson(l);render();
+  await persistLesson(l, false, 'homework');render();
   logActivity('edit',sid,d,'homework',oldV,v);
 }
 async function mToggle(sid,d,f){
@@ -10587,7 +10652,7 @@ async function mToggle(sid,d,f){
   const oldV=!!l[f];
   l[f]=!l[f];
   render();
-  await persistLesson(l);
+  await persistLesson(l, false, f);
   logActivity('edit',sid,d,f,oldV,l[f]);
 }
 
@@ -10600,7 +10665,7 @@ async function tAttend(sid,d,v){
     await autoRemoveMakeupRequest(l);
   }
   render();
-  await persistLesson(l);
+  await persistLesson(l, false, 'attendance');
   logActivity('attendance',sid,d,'attendance',oldV,l.attendance);
 }
 async function tSave(sid,d,cls,f,v){
@@ -10616,7 +10681,7 @@ async function tSave(sid,d,cls,f,v){
     l.attendance='attend';
   }
   setSyncState('syncing','저장 중...');
-  await persistLesson(l);
+  await persistLesson(l, false, f);
   if(st.tab!=='today') render();
   logActivity('edit',sid,d,f,oldV,v);
 }
@@ -10631,7 +10696,7 @@ async function tSaveHw(sid,d,cls,v){
   const oldV=l.homework;
   l.homework=v;
   setSyncState('syncing','저장 중...');
-  await persistLesson(l);
+  await persistLesson(l, false, 'homework');
   if(st.tab!=='today') render();
   logActivity('edit',sid,d,'homework',oldV,v);
 }
