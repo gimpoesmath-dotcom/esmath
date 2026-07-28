@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260728v4';
+const APP_VERSION = 'v20260728v5';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2288,12 +2288,13 @@ function getNextClassDate(s, fromDateStr, specialIdx){
     });
   });
 
-  // 3) 특강 — 인덱싱된 specialLessons에서 이 학생의 미래 회차
+  // 3) 특강 — 인덱싱된 specialLessons에서 이 학생의 미래 회차 (숙제 연동이 켜진 특강만 포함)
   const list=(specialIdx || buildSpecialIndexByStudent())[s.id] || [];
   list.forEach(l=>{
     if(!l.date || l.date<=fromDateStr) return;
     const sp=(cfg.specialClasses||[]).find(x=>x.id===l.specialId);
-    consider(l.date, sp?`특강 · ${sp.name}`:'특강');
+    if(!sp || !sp.linkHomework) return;
+    consider(l.date, '특강');
   });
 
   if(!best) return null;
