@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260728v3';
+const APP_VERSION = 'v20260728v4';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -6069,6 +6069,8 @@ function rMatrix(){
   if(isFiltered0) filterBar+=`<button class="btn btn-sm" onclick="st.studentGradeFilter='';st.studentLevelFilter='';st.studentTeacherFilter='';matrixNameSearchFilter('');const ni=document.getElementById('matrixNameSearch');if(ni)ni.value='';render()" style="font-size:11px">✕ 필터 초기화</button>`;
   filterBar+=`</div>`;
 
+  // 보기 모드: 반별(기존) / 교시별(오늘입력처럼 교시 기준으로 묶어서 표시)
+  const viewMode = st.matrixViewMode || 'period';
   let h=`<div class="toolbar">
     <div class="tleft" style="flex-wrap:wrap;gap:8px">
       <select onchange="st.matrixGroup=this.value;render()" style="font-size:13px;font-weight:600;padding:5px 10px">
@@ -6078,13 +6080,17 @@ function rMatrix(){
         <option value="" ${!teacherFilter?'selected':''}>👩‍🏫 전체 선생님</option>
         ${allTeachers().map(t=>`<option value="${esc(t)}" ${teacherFilter===t?'selected':''}>${esc(t)}</option>`).join('')}
       </select>`:''}
+      <div style="display:inline-flex;border:1px solid var(--border2);border-radius:20px;overflow:hidden">
+        <span onclick="st.matrixViewMode='period';render()" style="padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;${viewMode==='period'?'background:var(--blue);color:#fff':'background:var(--bg);color:var(--text2)'}">⏰ 교시별</span>
+        <span onclick="st.matrixViewMode='class';render()" style="padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;${viewMode==='class'?'background:var(--blue);color:#fff':'background:var(--bg);color:var(--text2)'}">📚 반별</span>
+      </div>
     </div>
     <button class="btn btn-green" onclick="exportExcel()">📥 엑셀 다운로드</button>
   </div>`;
   h+=filterBar;
 
-  // 교시별로 각각 테이블 렌더
-  let anyRendered=false;
+  // 반별로 학생 필터링 + 월 세션 컬럼 계산 (두 보기 모드 공통)
+  const classEntries=[];
   clsInGroup.forEach(([cls, ct])=>{
     let studs=(cfg.students||[]).filter(s=>s.classType===cls);
     if(teacherFilter) studs=studs.filter(s=>isStudentOfTeacher(s,teacherFilter));
@@ -6121,18 +6127,53 @@ function rMatrix(){
     satDays.forEach(e=>mergedCols.push({type:'sat',dateStr:e.date}));
     mergedCols.sort((a,b)=>a.dateStr.localeCompare(b.dateStr));
 
-    // 교시 헤더
-    const periodLabel=ct.period?`${ct.period}교시`:'';
-    h+=`<div style="margin-bottom:20px">
-      <div style="padding:8px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rl) var(--rl) 0 0;display:flex;align-items:center;gap:8px">
-        <span class="badge ${ct.badge||'b-mwf'}">${esc(ct.label)}</span>
-        ${periodLabel?`<b style="font-size:14px">⏰ ${periodLabel}</b>`:''}
-        <span style="font-size:12px;color:var(--text2)">${studs.length}명</span>
-      </div>`;
-    h+=renderMatrixTable(studs,mergedCols,todayStr,cls);
-    h+=`</div>`;
-    anyRendered=true;
+    classEntries.push({cls, ct, studs, mergedCols});
   });
+
+  let anyRendered=false;
+
+  if(viewMode==='class'){
+    // 반별 보기 (기존 방식): 반(월수반/월수금반 등) 단위로 테이블 하나씩
+    classEntries.forEach(({cls,ct,studs,mergedCols})=>{
+      h+=`<div style="margin-bottom:20px">
+        <div style="padding:8px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rl) var(--rl) 0 0;display:flex;align-items:center;gap:8px">
+          <span class="badge ${ct.badge||'b-mwf'}">${esc(ct.label)}</span>
+          <span style="font-size:12px;color:var(--text2)">${studs.length}명</span>
+        </div>`;
+      h+=renderMatrixTable(studs,mergedCols,todayStr,cls);
+      h+=`</div>`;
+      anyRendered=true;
+    });
+  } else {
+    // 교시별 보기 (오늘입력과 동일한 기준): weekdayTime(평일 교시) 기준으로 묶어서,
+    // 같은 교시라면 반(월수반/월수금반 등)이 달라도 같은 섹션 안에 이어서 표시
+    const periodSet=new Set();
+    classEntries.forEach(e=>e.studs.forEach(s=>periodSet.add(String(s.weekdayTime||''))));
+    const periods=[...periodSet].sort((a,b)=>{
+      if(a==='') return 1;
+      if(b==='') return -1;
+      return Number(a)-Number(b);
+    });
+
+    periods.forEach(period=>{
+      let periodHtml='';
+      classEntries.forEach(({cls,ct,studs,mergedCols})=>{
+        const periodStuds=studs.filter(s=>String(s.weekdayTime||'')===period);
+        if(!periodStuds.length) return;
+        periodHtml+=`<div style="margin-bottom:20px">
+          <div style="padding:8px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rl) var(--rl) 0 0;display:flex;align-items:center;gap:8px">
+            <span class="badge ${ct.badge||'b-mwf'}">${esc(ct.label)}</span>
+            <span style="font-size:12px;color:var(--text2)">${periodStuds.length}명</span>
+          </div>`;
+        periodHtml+=renderMatrixTable(periodStuds,mergedCols,todayStr,cls);
+        periodHtml+=`</div>`;
+        anyRendered=true;
+      });
+      if(periodHtml){
+        h+=`<div style="margin:22px 0 8px;padding-left:2px"><b style="font-size:15px">⏰ ${period?period+'교시':'교시 미지정'}</b></div>${periodHtml}`;
+      }
+    });
+  }
 
   if(!anyRendered){
     h+=`<div class="empty">${curGroup?.label||''} 에 표시할 학생이 없습니다.</div>`;
