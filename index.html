@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260728v2';
+const APP_VERSION = 'v20260728v3';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -6993,13 +6993,13 @@ function rToday(){
     h+=`</div></div>`;
   }
 
-  h+=renderTodaySpecialSection(dateStr, teacherFilter, isPrin);
+  h+=renderTodaySpecialSection(dateStr, teacherFilter, isPrin, specialIdx);
 
   return h;
 }
 
 /* 오늘입력 탭: 오늘 날짜에 회차 날짜가 지정된 특강 세션들을 모아 보여줌 */
-function renderTodaySpecialSection(dateStr, teacherFilter, isPrin){
+function renderTodaySpecialSection(dateStr, teacherFilter, isPrin, specialIdx){
   const specials = cfg.specialClasses||[];
   const items = []; // {sp, s, sn, l}
   specials.forEach(sp=>{
@@ -7022,11 +7022,13 @@ function renderTodaySpecialSection(dateStr, teacherFilter, isPrin){
   items.forEach(({sp,s,sn,l})=>{
     const att=l.attendance||'';
     const ph = l.date ? prevHwInMonth(s.id, l.date, s.classType, +l.date.slice(0,4), +l.date.slice(5,7)) : null;
+    const nextBadge = nextClassBadge(s, dateStr, specialIdx);
     h+=`<div class="today-card" style="border-left:3px solid #a05a00">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
         <b style="font-size:13px">${esc(s.name)}</b>
         ${s.grade?gradeBadge(s.grade):''}
         <span style="font-size:10px;color:#a05a00;background:#fffbef;border:1px solid #e0c080;border-radius:8px;padding:1px 6px">🎯 ${esc(sp.name)} ${sn}회차</span>
+        ${nextBadge}
         <div style="display:flex;gap:3px;margin-left:auto;align-items:center">
           <button class="abm${att==='attend'?' on-attend':''}" onclick="spAttend('${sp.id}','${s.id}',${sn},'attend');render()">출</button>
           <button class="abm${att==='late'?' on-late':''}" onclick="spAttend('${sp.id}','${s.id}',${sn},'late');render()">지</button>
