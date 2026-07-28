@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260728v1';
+const APP_VERSION = 'v20260728v2';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2241,6 +2241,109 @@ function studentScheduleChips(s){
   return html;
 }
 
+/* ── 다음 수업일 계산 ──
+ specialLessons(특강 회차, 이미 개별 date 배정됨)를 studentId 기준으로 1회 인덱싱.
+ 오늘 탭 렌더링 시작 시 한 번만 호출하고, 학생 카드마다는 이 인덱스만 조회하도록 함 */
+function buildSpecialIndexByStudent(){
+  const idx={};
+  Object.values(specialLessons).forEach(l=>{
+    if(!l.date || !l.studentId) return;
+    (idx[l.studentId] ||= []).push(l);
+  });
+  return idx;
+}
+
+/* 학생의 "기준일 이후" 가장 빠른 예정 수업일을 찾는다.
+ 정규 요일(classType.days) / 토요보강(cfg.makeupDays) / 특강(specialLessons) 중
+ 가장 빠른 날짜를 채택. 세 소스 모두 실제 등록된 데이터를 그대로 사용하므로
+ 별도의 "특강 진행중 여부" 판단 없이도 지난 특강은 미래 날짜가 없어 자동 제외됨.
+ fromDateStr: 기준 날짜 (오늘입력 탭에서 보고 있는 날짜, 실제 오늘이 아닐 수도 있음) */
+function getNextClassDate(s, fromDateStr, specialIdx){
+  const ct=CT()[s.classType];
+  const fromDate=parseDate(fromDateStr);
+  let best=null; // {date, label}
+  const consider=(dateStr, label)=>{
+    if(!dateStr || dateStr<=fromDateStr) return;
+    if(best && dateStr>=best.date) return;
+    best={date:dateStr, label};
+  };
+
+  // 1) 정규 요일 — 기준일 다음날부터 최대 21일 탐색, 휴일 제외
+  if(ct && ct.days && ct.days.length){
+    let cur=new Date(fromDate.getFullYear(),fromDate.getMonth(),fromDate.getDate()+1);
+    for(let i=0;i<21;i++){
+      const dStr=dk(cur);
+      if(ct.days.includes(cur.getDay()) && !isHol(dStr)){ consider(dStr,'정규수업'); break; }
+      cur=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate()+1);
+    }
+  }
+
+  // 2) 토요보강 — cfg.makeupDays(월별 그룹) 전체에서 이 학생이 등록된 미래 날짜
+  const md=cfg.makeupDays||{};
+  Object.values(md).forEach(monthList=>{
+    (monthList||[]).forEach(entry=>{
+      if(!entry.date || entry.date<=fromDateStr) return;
+      const regs=getMakeupStudents(entry);
+      if(regs.some(r=>r.id===s.id)) consider(entry.date,'토요보강');
+    });
+  });
+
+  // 3) 특강 — 인덱싱된 specialLessons에서 이 학생의 미래 회차
+  const list=(specialIdx || buildSpecialIndexByStudent())[s.id] || [];
+  list.forEach(l=>{
+    if(!l.date || l.date<=fromDateStr) return;
+    const sp=(cfg.specialClasses||[]).find(x=>x.id===l.specialId);
+    consider(l.date, sp?`특강 · ${sp.name}`:'특강');
+  });
+
+  if(!best) return null;
+  const dDay=Math.round((parseDate(best.date)-fromDate)/86400000);
+  return {date:best.date, label:best.label, dDay};
+}
+
+/* 다음 수업일 배지 HTML — 학생 카드 상단에 붙임 */
+function nextClassBadge(s, dateStr, specialIdx){
+  const info=getNextClassDate(s, dateStr, specialIdx);
+  if(!info) return '';
+  const c = info.label==='정규수업' ? {bg:'#e5effc',fg:'#1558a8'}
+          : info.label==='토요보강' ? {bg:'#fdf0d8',fg:'#7a4e00'}
+          : {bg:'#f3e8fc',fg:'#5a2080'};
+  return `<span style="font-size:10px;font-weight:600;color:${c.fg};background:${c.bg};border-radius:8px;padding:2px 7px;white-space:nowrap" title="다음 등원일: ${info.date}">D-${info.dDay} · ${esc(info.label)}</span>`;
+}
+
+/* ── 특강 종료일 추정 ──
+ specialLessons에 이미 배정된 날짜가 있으면 그중 최댓값을 사용,
+ 아직 회차 날짜가 배정 전이면 startDate+repeatDays+totalSessions로 시뮬레이션 */
+function getSpecialEndDate(sp){
+  const dates=Object.values(specialLessons)
+    .filter(l=>l.specialId===sp.id && l.date)
+    .map(l=>l.date);
+  if(dates.length) return dates.sort().at(-1);
+  if(sp.startDate && sp.repeatDays && sp.repeatDays.length && sp.totalSessions){
+    let cur=parseDate(sp.startDate), sn=0, guard=0, last=null;
+    while(sn<sp.totalSessions && guard<400){
+      guard++;
+      if(sp.repeatDays.includes(cur.getDay())){ sn++; last=dk(cur); }
+      cur=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate()+1);
+    }
+    return last;
+  }
+  return null;
+}
+
+/* 특강 완료 처리 토글 — 수동 확정 방식 (날짜 기반 자동판단은 안내 배지로만 제공) */
+async function toggleSpecialComplete(spId){
+  const sp=(cfg.specialClasses||[]).find(x=>x.id===spId);
+  if(!sp) return;
+  sp.completed=!sp.completed;
+  sp.completedAt=sp.completed?dk(new Date()):null;
+  try{
+    await gasCall('saveConfig', {config: cfg});
+    toast(sp.completed?'✅ 완료 처리되었습니다':'↩️ 진행중으로 되돌렸습니다');
+    render();
+  }catch(e){ toast('저장 실패: '+e.message, true); }
+}
+
 /* ── 담당 선생님 목록 / 학생 필터 ──
  설정에서 등록한 선생님 명단(cfg.teachers)만 반환.
  명단이 비어있으면 학생 데이터에서 실제로 쓰이는 담당자들을 fallback으로 반환 */
@@ -3039,8 +3142,25 @@ function rSpecial(){
     return h;
   }
 
+  // 진행중 / 지난특강 서브탭 — 판별은 sp.completed(수동 확정) 플래그 기준
+  const sub = st.specialSub==='past' ? 'past' : 'ongoing';
+  const ongoing = specials.filter(sp=>!sp.completed);
+  const past    = specials.filter(sp=>sp.completed);
+  const shown   = sub==='past' ? past : ongoing;
+  const todayStr = dk(new Date());
+
+  h+=`<div style="display:flex;gap:6px;margin-bottom:12px">
+    <button class="tab ${sub!=='past'?'active':''}" onclick="st.specialSub='ongoing';render()">진행중 (${ongoing.length})</button>
+    <button class="tab ${sub==='past'?'active':''}" onclick="st.specialSub='past';render()">지난특강 (${past.length})</button>
+  </div>`;
+
+  if(!shown.length){
+    h+=`<div class="empty">${sub==='past'?'완료 처리된 특강이 없습니다.':'진행중인 특강이 없습니다.'}</div>`;
+    return h;
+  }
+
   h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:12px;padding:8px 0">`;
-  specials.forEach(sp=>{
+  shown.forEach(sp=>{
     const studCnt=(sp.students||[]).length;
     // 진도 통계: 전체 학생 × 회차 중 입력된 수업
     const totalCells=studCnt * (sp.totalSessions||0);
@@ -3052,10 +3172,14 @@ function rSpecial(){
       }
     });
     const progPct=totalCells>0?Math.round(filledCells/totalCells*100):0;
+    // 마지막 회차가 지났는데 아직 완료 처리 안 된 경우 → 안내만 (자동 이동은 안 함)
+    const endDate=getSpecialEndDate(sp);
+    const showEndedHint = !sp.completed && endDate && endDate<todayStr;
     h+=`<div class="card" style="padding:14px;cursor:pointer" onclick="openSpecial('${sp.id}')">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
         <span style="font-size:15px;font-weight:700">${esc(sp.name)}</span>
         <span style="font-size:11px;color:var(--text2);background:var(--bg2);padding:2px 8px;border-radius:10px">${sp.totalSessions||0}회차</span>
+        ${sp.completed?`<span class="badge" style="background:#eef0f3;color:#3a4555">✅ 완료</span>`:''}
       </div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:6px">
         👥 ${studCnt}명 · 👩‍🏫 ${esc(sp.teacher||'미지정')}
@@ -3065,10 +3189,12 @@ function rSpecial(){
       <div style="height:6px;background:var(--bg2);border-radius:3px;overflow:hidden">
         <div style="height:100%;width:${progPct}%;background:var(--green);transition:width 0.3s"></div>
       </div>
+      ${showEndedHint?`<div style="font-size:10px;color:var(--amber);margin-top:8px">⚠️ 마지막 회차(${endDate})가 지났어요 — 완료 처리할까요?</div>`:''}
       <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
         <button class="btn btn-sm" onclick="event.stopPropagation();openSpecial('${sp.id}')">📋 회차 입력</button>
         <button class="btn btn-sm btn-green" onclick="event.stopPropagation();exportSpecialExcel('${sp.id}')">📥 엑셀</button>
         ${isPrin?`<button class="btn btn-sm" onclick="event.stopPropagation();openM('editSpecial','${sp.id}')">✏️ 정보 수정</button>`:''}
+        ${isPrin?`<button class="btn btn-sm" style="color:${sp.completed?'var(--text2)':'var(--green)'}" onclick="event.stopPropagation();toggleSpecialComplete('${sp.id}')">${sp.completed?'↩️ 진행중으로':'✅ 완료 처리'}</button>`:''}
         ${isPrin?`<button class="btn btn-sm" style="color:var(--red)" onclick="event.stopPropagation();delSpecial('${sp.id}')">🗑</button>`:''}
       </div>
     </div>`;
@@ -6142,7 +6268,7 @@ function renderMatrixTable(studs,mergedCols,todayStr,cls){
 }
 
 /* 오늘입력 학생 카드 (재사용 가능) */
-function renderTodayStudentCard(s, dateStr, dy, dm, sn){
+function renderTodayStudentCard(s, dateStr, dy, dm, sn, specialIdx){
   const l=getOrCreate(s.id,dateStr);
   const ph=prevHwInMonth(s.id,dateStr,s.classType,dy,dm);
   const att=l.attendance||'';
@@ -6150,6 +6276,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
   const sTbs=(s.textbooks||[]);
   const scheduleChips = studentScheduleChips(s);
   const specialNote=s.specialNote||''; // 학생 기본 특이사항
+  const nextBadge = nextClassBadge(s, dateStr, specialIdx);
 
   // 조교선생님: 출결 + 이전 과제 확인 + 과제점수 + 시험점수 입력 + 클립보드 복사
   if(session?.role==='assistant'){
@@ -6160,6 +6287,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
         ${s.grade?gradeBadge(s.grade):''}
         ${s.level?levelBadge(s.level):''}
         <button onclick="openM('studentProfile','${s.id}')" style="padding:2px 8px;font-size:11px;border:1px solid var(--border2);border-radius:6px;background:var(--bg);color:var(--text2);cursor:pointer;font-family:inherit">📋 상세</button>
+        ${nextBadge}
         ${sn?`<span style="font-size:10px;color:var(--text3)">${sn}회차</span>`:''}
         <div style="display:flex;gap:3px;margin-left:auto;align-items:center">
           ${sTbs.length?`<button title="전범위 시험 점수 입력" style="padding:2px 7px;font-size:12px;border:1px solid var(--amber);border-radius:10px;background:var(--amber-bg);color:var(--amber);cursor:pointer;font-weight:700" onclick="openM('addTest','${s.id}')">✱</button>`:''}
@@ -6216,6 +6344,7 @@ function renderTodayStudentCard(s, dateStr, dy, dm, sn){
       ${s.level?levelBadge(s.level):''}
       <button onclick="openM('studentProfile','${s.id}')" style="padding:2px 8px;font-size:11px;border:1px solid var(--border2);border-radius:6px;background:var(--bg);color:var(--text2);cursor:pointer;font-family:inherit">📋 상세</button>
       ${scheduleChips}
+      ${nextBadge}
       ${sn?`<span style="font-size:10px;color:var(--text3)">${sn}회차</span>`:''}
       <div style="display:flex;gap:3px;margin-left:auto;align-items:center">
         ${sTbs.length?`<button title="전범위 시험 점수 입력" style="padding:2px 7px;font-size:12px;border:1px solid var(--amber);border-radius:10px;background:var(--amber-bg);color:var(--amber);cursor:pointer;font-weight:700" onclick="openM('addTest','${s.id}')">✱</button>`:''}
@@ -6615,6 +6744,8 @@ function refreshUnitPanel(sid, tbId){
 /* 토요일 오늘입력 — 보강 신청한 학생들을 1교시/2교시로 그룹핑 표시 */
 function renderSaturdayInput(dateStr, dy, dm, teacherFilter){
   const studs=cfg.students||[];
+  // 다음 수업일 배지용 특강 인덱스 — 이 함수 호출당 1회만 생성
+  const specialIdx=buildSpecialIndexByStudent();
   // 이 토요일에 등록된 보강 학생 목록 가져오기
   const entry=getMkEntryByDate(dateStr);
   if(!entry){
@@ -6676,7 +6807,7 @@ function renderSaturdayInput(dateStr, dy, dm, teacherFilter){
       glist.forEach(es=>{
         const s=studs.find(x=>x.id===es.id);
         if(!s) return;
-        block+=renderTodayStudentCard(s, dateStr, dy, dm, null);
+        block+=renderTodayStudentCard(s, dateStr, dy, dm, null, specialIdx);
       });
       block+=`</div>`;
     });
@@ -6692,7 +6823,7 @@ function renderSaturdayInput(dateStr, dy, dm, teacherFilter){
     byPeriod._.forEach(es=>{
       const s=studs.find(x=>x.id===es.id);
       if(!s) return;
-      h+=renderTodayStudentCard(s, dateStr, dy, dm, null);
+      h+=renderTodayStudentCard(s, dateStr, dy, dm, null, specialIdx);
     });
     h+=`</div></div>`;
   }
@@ -6744,7 +6875,9 @@ function rToday(){
     return h+`<div class="empty">${DAY[dow]}요일은 수업이 없습니다.</div>`;
   }
 
-  const renderStudentCard=(s,dateStr,dy,dm,sn,ctk)=>renderTodayStudentCard(s,dateStr,dy,dm,sn);
+  // 다음 수업일 배지용 특강 인덱스 — 이 렌더링당 1회만 생성 (studentId 기준 인덱싱)
+  const specialIdx=buildSpecialIndexByStudent();
+  const renderStudentCard=(s,dateStr,dy,dm,sn,ctk)=>renderTodayStudentCard(s,dateStr,dy,dm,sn,specialIdx);
 
   // 학생을 타임별로 그룹화
   // 금요일이면 fridayTime, 그 외엔 weekdayTime 기준
