@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260728v6';
+const APP_VERSION = 'v20260728v7';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2178,10 +2178,12 @@ async function switchMonth(y,m){
   const py=m===1?y-1:y;
   const prevKey=`${py}-${String(pm).padStart(2,'0')}`;
   delete prevMonthLessonsCache[prevKey];
+  try{ sessionStorage.removeItem(`lessons_cache_${prevKey}`); }catch(e){}
   const nm=m===12?1:m+1;
   const ny=m===12?y+1:y;
   const nextKey2=`${ny}-${String(nm).padStart(2,'0')}`;
   delete prevMonthLessonsCache[nextKey2];
+  try{ sessionStorage.removeItem(`lessons_cache_${nextKey2}`); }catch(e){}
   setSyncState('syncing',`${y}년 ${m}월 불러오는 중...`);
   await loadMonthData();
   setSyncState('ok','준비 완료');
