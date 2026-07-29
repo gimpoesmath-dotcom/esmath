@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260728v7';
+const APP_VERSION = 'v20260729v1';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -1125,6 +1125,24 @@ async function firebaseAction(action, body){
             mainToSave[k] = latestMainSnap.data()[k];
           }
         });
+      }
+
+      // specialClasses 충돌 방지: updatedAt 기준으로 항목별 최신값만 채택
+      // (다른 관리자가 방금 수정/추가한 내용을, 내 화면에 아직 반영 안 된 옛 데이터로 덮어쓰는 사고 방지)
+      if(mainToSave.specialClasses){
+        const latestSpecials = (latestMainSnap.exists() ? (latestMainSnap.data().specialClasses||[]) : []);
+        const localSpecials = mainToSave.specialClasses||[];
+        const latestMap = new Map(latestSpecials.map(s=>[s.id, s]));
+        const localIds = new Set(localSpecials.map(s=>s.id));
+        const merged = localSpecials.map(ls=>{
+          const srv = latestMap.get(ls.id);
+          if(!srv) return ls; // 내 화면에서 새로 추가한 항목 → 그대로 유지
+          const localTs = ls.updatedAt||0, srvTs = srv.updatedAt||0;
+          return srvTs > localTs ? srv : ls; // 서버가 더 최신이면 서버값 채택 (내 낡은 값으로 덮어쓰지 않음)
+        });
+        // 내 화면엔 없지만 서버엔 있는 항목 (다른 관리자가 방금 추가, 나는 아직 새로고침 전) → 보존
+        latestSpecials.forEach(srv=>{ if(!localIds.has(srv.id)) merged.push(srv); });
+        mainToSave.specialClasses = merged;
       }
     }catch(e){ console.warn('main cfg 충돌 방지 읽기 실패(무시):', e); }
 
@@ -3132,7 +3150,7 @@ function spLessonKey(spId, sid, sn){ return spId+'_'+sid+'_'+sn; }
 
 function rSpecial(){
   const isPrin=session?.role==='principal';
-  const specials=cfg.specialClasses||[];
+  const specials=(cfg.specialClasses||[]).filter(sp=>!sp.deleted);
 
   // 특강 선택된 상태면 → 회차 매트릭스 화면
   if(st.selectedSpecial){
@@ -3463,7 +3481,10 @@ async function delSpecial(spId){
   const sp=(cfg.specialClasses||[]).find(x=>x.id===spId);
   if(!sp) return;
   if(!confirm(`'${sp.name}' 특강을 삭제합니다. 모든 회차 기록이 사라져요. 계속하시겠어요?`)) return;
-  cfg.specialClasses=(cfg.specialClasses||[]).filter(x=>x.id!==spId);
+  // 즉시 배열에서 제거하지 않고 삭제 표시만 남김 (다른 관리자가 동시에 수정한 내용과 충돌 시
+  // updatedAt 기준 병합 로직이 올바르게 처리할 수 있도록 하기 위함)
+  sp.deleted=true;
+  sp.updatedAt=Date.now();
   try{
     await gasCall('saveConfig', {config: cfg});
     await gasCall('deleteSpecialLessons', {specialId: spId});
@@ -7048,7 +7069,7 @@ function rToday(){
 
 /* 오늘입력 탭: 오늘 날짜에 회차 날짜가 지정된 특강 세션들을 모아 보여줌 */
 function renderTodaySpecialSection(dateStr, teacherFilter, isPrin, specialIdx){
-  const specials = cfg.specialClasses||[];
+  const specials = (cfg.specialClasses||[]).filter(sp=>!sp.deleted);
   const items = []; // {sp, s, sn, l}
   specials.forEach(sp=>{
     if(teacherFilter && sp.teacher && sp.teacher!==teacherFilter) return;
@@ -10599,12 +10620,14 @@ async function confSaveSpecial(spId){
       sp.students=students;
       sp.linkHomework=linkHomework;
       sp.repeatDays=repeatDays;
+      sp.updatedAt=Date.now(); // 다른 관리자의 옛 캐시가 이 수정을 덮어쓰지 않도록 기록
     }
   } else {
     // 추가
     sp={
       id:'sp'+Date.now(),
       name, totalSessions, startDate, teacher, students, linkHomework, repeatDays,
+      updatedAt:Date.now(),
     };
     cfg.specialClasses.push(sp);
   }
