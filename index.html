@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v20260730v1';
+const APP_VERSION = 'v2026030v2';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -1295,13 +1295,8 @@ async function loadMonthData(){
       if(ssCached){
         prevMonthLessonsCache[prevKey]=JSON.parse(ssCached);
       } else {
-        // 컬렉션 전체를 긁지 않고, 사이클 overflow가 발생할 수 있는 "지난달 마지막 10일"만 범위 쿼리로 조회
-        // (한 사이클이 며칠 이상 다음달로 넘어가는 경우는 실질적으로 없으므로 10일이면 충분히 안전한 여유치)
-        const prevLastDay=new Date(py, pm, 0); // pm은 1~12, day=0 → 그 달의 마지막날
-        const prevCutoff=dk(new Date(prevLastDay.getFullYear(), prevLastDay.getMonth(), prevLastDay.getDate()-9));
         const prevCol=collection(fbDb(), `lessons_${prevKey}`);
-        const prevQ=query(prevCol, where('date','>=',prevCutoff));
-        const prevSnaps=await getDocs(prevQ);
+        const prevSnaps=await getDocs(prevCol);
         const prevLessons={};
         prevSnaps.forEach(d=>{ const data=d.data(); prevLessons[data.key||d.id]=data; });
         prevMonthLessonsCache[prevKey]=prevLessons;
@@ -1322,11 +1317,8 @@ async function loadMonthData(){
       if(ssCached){
         prevMonthLessonsCache[nextKey]=JSON.parse(ssCached);
       } else {
-        // 컬렉션 전체를 긁지 않고, 이번달 사이클이 넘어갈 수 있는 "다음달 첫 10일"만 범위 쿼리로 조회
-        const nextCutoff=dk(new Date(ny, nm-1, 10));
         const nextCol=collection(fbDb(), `lessons_${nextKey}`);
-        const nextQ=query(nextCol, where('date','<=',nextCutoff));
-        const nextSnaps=await getDocs(nextQ);
+        const nextSnaps=await getDocs(nextCol);
         const nextLessons={};
         nextSnaps.forEach(d=>{ const data=d.data(); nextLessons[data.key||d.id]=data; });
         prevMonthLessonsCache[nextKey]=nextLessons;
