@@ -450,7 +450,7 @@ window._fbStorage = { storage, storageRef, uploadString, getDownloadURL, deleteO
 </div>
 
 <script>
-const APP_VERSION = 'v2026030v2';
+const APP_VERSION = 'v20260730v3';
 console.log('%c ES 수학 ' + APP_VERSION + ' ', 'background:#1a1a1a;color:#fff;font-size:13px;font-weight:700;border-radius:4px;padding:2px 6px');
 const DAY=['일','월','화','수','목','금','토'];
 const BADGE_POOL=['b-mwf','b-ttf','b-mw','b-tt','b-sat'];
@@ -2770,14 +2770,20 @@ function showTab(t){
   }
   render();
   if(!cfg||!mdb){document.getElementById('main').innerHTML='<div class="empty">데이터 로딩 중...</div>';return;}
-  // 매트릭스 탭 스크롤 위치 보존
-  let savedScrollLeft=0, savedScrollTop=0;
+  // 매트릭스 탭 스크롤 위치 보존 (반/교시별로 테이블이 여러 개 그려질 수 있어 순서로 매칭)
+  let savedMatrixScrolls=[];
+  // 특강 매트릭스 스크롤 위치 보존
+  let savedSpScroll=null;
   if(st.tab==='matrix'){
-    const mw=document.getElementById('matrixWrap');
-    if(mw){ savedScrollLeft=mw.scrollLeft; savedScrollTop=mw.scrollTop; }
+    document.querySelectorAll('.matrix-wrap').forEach(mw=>{
+      savedMatrixScrolls.push({left:mw.scrollLeft, top:mw.scrollTop});
+    });
   }
-  // 주간 요약/오늘 입력의 윈도우 스크롤도 보존 (가로 스크롤도 함께 보존해야 매트릭스 편집 시 맨 앞으로 튕기지 않음)
-  const winScrollX=window.scrollX;
+  if(st.tab==='special'){
+    const sw=document.getElementById('spMatrixWrap');
+    if(sw){ savedSpScroll={left:sw.scrollLeft, top:sw.scrollTop}; }
+  }
+  // 주간 요약/오늘 입력의 윈도우 스크롤도 보존
   const winScrollY=window.scrollY;
   const el=document.getElementById('main');
   if(st.tab==='matrix')        el.innerHTML=rMatrix();
@@ -2794,10 +2800,16 @@ function showTab(t){
   rModal();
   // 스크롤 복원
   if(st.tab==='matrix'){
-    const mw=document.getElementById('matrixWrap');
-    if(mw){ mw.scrollLeft=savedScrollLeft; mw.scrollTop=savedScrollTop; }
+    document.querySelectorAll('.matrix-wrap').forEach((mw,i)=>{
+      const s=savedMatrixScrolls[i];
+      if(s){ mw.scrollLeft=s.left; mw.scrollTop=s.top; }
+    });
   }
-  if(winScrollX||winScrollY) window.scrollTo(winScrollX, winScrollY);
+  if(st.tab==='special'){
+    const sw=document.getElementById('spMatrixWrap');
+    if(sw && savedSpScroll){ sw.scrollLeft=savedSpScroll.left; sw.scrollTop=savedSpScroll.top; }
+  }
+  if(winScrollY) window.scrollTo(0, winScrollY);
   // 렌더 후 프레즌스 이벤트 연결 (matrix/today 탭)
   if(st.tab==='matrix'||st.tab==='today'){
     attachPresenceListeners();
@@ -3288,7 +3300,7 @@ function rSpecialMatrix(spId){
   }
 
   // 회차 매트릭스 (학생 행 × 회차 열)
-  h+=`<div style="overflow-x:auto;border:1px solid var(--border);border-radius:var(--r);background:#fff">
+  h+=`<div id="spMatrixWrap" style="overflow-x:auto;border:1px solid var(--border);border-radius:var(--r);background:#fff">
     <table style="border-collapse:collapse;font-size:12px;min-width:100%">
       <thead>
         <tr style="background:var(--bg2)">
@@ -6211,7 +6223,7 @@ function rMatrix(){
 }
 
 function renderMatrixTable(studs,mergedCols,todayStr,cls){
-  let h=`<div class="matrix-wrap" id="matrixWrap"><table class="mtbl"><thead><tr><th class="col-student hdr" rowspan="2">학생</th>`;
+  let h=`<div class="matrix-wrap"><table class="mtbl"><thead><tr><th class="col-student hdr" rowspan="2">학생</th>`;
   mergedCols.forEach(col=>{
     const d=col.dateStr;
     const isT=d===todayStr;
