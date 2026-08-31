@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ES 수학 — Firebase 이전 복구</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:#f6f6f4;color:#1a1a1a;font-size:13px;min-height:100vh;padding:24px;max-width:860px;margin:0 auto}
+h1{font-size:18px;font-weight:700;margin-bottom:4px}
+.sub{font-size:12px;color:#888;margin-bottom:20px}
+.card{background:#fff;border:1px solid #e2e2de;border-radius:12px;padding:18px;margin-bottom:14px}
+.card h2{font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.step-num{width:22px;height:22px;border-radius:50%;background:#1a1a1a;color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.btn{padding:8px 16px;font-size:13px;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:600;transition:opacity .15s}
+.btn-primary{background:#1a1a1a;color:#fff}
+.btn-primary:hover{opacity:.85}
+.btn-green{background:#1e6e3a;color:#fff}
+.btn-green:hover{opacity:.85}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.notice{font-size:12px;background:#fdf0d8;border:1px solid #e8c860;border-radius:8px;padding:10px 14px;margin-bottom:14px;color:#5a3c00;line-height:1.7}
+.info{font-size:12px;background:#e5effc;border:1px solid #b0cef0;border-radius:8px;padding:10px 14px;margin-bottom:10px;color:#1a4a80;line-height:1.7}
+.log{background:#111;color:#0f0;font-family:monospace;font-size:11px;padding:12px;border-radius:8px;max-height:420px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;margin-top:10px;line-height:1.6}
+.log .err{color:#f88}.log .ok{color:#8f8}.log .warn{color:#ff8}.log .info2{color:#88f}
+.frow{margin-bottom:12px}
+.frow label{display:block;font-size:11px;font-weight:600;color:#666;margin-bottom:4px}
+.frow input,.frow select,.frow textarea{width:100%;padding:7px 10px;font-size:12px;border:1px solid #ccc;border-radius:8px;background:#fff;font-family:inherit}
+.frow textarea{min-height:90px;resize:vertical;font-size:11px}
+.frow input:focus,.frow select:focus,.frow textarea:focus{outline:none;border-color:#1558a8}
+.hint{font-size:10px;color:#aaa;margin-top:3px;line-height:1.5}
+.progress-wrap{background:#e8e8e8;border-radius:20px;height:8px;margin:10px 0 4px;overflow:hidden}
+.progress-fill{height:100%;border-radius:20px;background:#1558a8;transition:width .3s}
+.badge{display:inline-flex;align-items:center;font-size:10px;padding:2px 8px;border-radius:20px;font-weight:600;margin:2px}
+.b-ok{background:#d4edda;color:#1e6e3a}.b-skip{background:#eee;color:#888}.b-warn{background:#fff3cd;color:#a05a00}
+.sheet-check-wrap{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.sheet-check-wrap label{display:flex;align-items:center;gap:5px;cursor:pointer;
+  background:#f6f6f4;border:1px solid #ddd;border-radius:20px;padding:5px 12px;font-size:12px;font-weight:400}
+.row-steps{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.rstep{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f0f0ee;font-size:12px}
+.rstep:last-child{border-bottom:none}
+.rstep-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.si-wait{background:#eee;color:#aaa}.si-run{background:#fff3cd;color:#a05a00;animation:pulse .8s infinite}
+.si-ok{background:#d4edda;color:#1e6e3a}.si-err{background:#f8d7da;color:#a02828}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+</style>
+</head>
+<body>
+
+<h1>🔄 ES 수학 — Firebase 이전 복구</h1>
+<p class="sub">백업 엑셀 파일을 새 Firebase 프로젝트로 완전 이전합니다.</p>
+
+<div class="notice">
+  ⚠️ <b>이 도구는 새 Firebase 프로젝트로 이전할 때 사용합니다.</b><br>
+  • 새 Firebase 콘솔에서 프로젝트를 생성하고 Firestore를 활성화한 뒤 사용하세요.<br>
+  • Firebase 설정 값(apiKey 등)은 Firebase 콘솔 → 프로젝트 설정 → 내 앱에서 확인할 수 있습니다.<br>
+  • 복구 완료 후 <b>index.html의 firebaseConfig를 새 값으로 교체</b>해야 앱이 정상 동작합니다.
+</div>
+
+<!-- STEP 1: Firebase 설정 -->
+<div class="card" id="card1">
+  <h2><span class="step-num">1</span> 새 Firebase 프로젝트 설정 입력</h2>
+  <div class="info">
+    Firebase 콘솔(console.firebase.google.com) → 프로젝트 설정 → 일반 → 내 앱 → SDK 설정 및 구성에서<br>
+    <b>firebaseConfig</b> 객체 전체를 복사해서 아래에 붙여넣으세요.
+  </div>
+  <div class="frow">
+    <label>firebaseConfig 전체 붙여넣기</label>
+    <textarea id="fbConfigRaw" placeholder='const firebaseConfig = {
+  apiKey: "AIzaSy...",
+  authDomain: "my-project.firebaseapp.com",
+  projectId: "my-project",
+  storageBucket: "my-project.firebasestorage.app",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abcdef"
+};'></textarea>
+    <div class="hint">위 형식 그대로 붙여넣거나, JSON 형식으로 붙여넣어도 됩니다.</div>
+  </div>
+  <div class="frow">
+    <label>reCAPTCHA v3 사이트 키 (App Check용, 없으면 비워두세요)</label>
+    <input type="text" id="recaptchaKey" placeholder="6Let...">
+    <div class="hint">App Check를 사용하지 않는 새 프로젝트라면 비워두세요. 비우면 App Check 없이 연결합니다.</div>
+  </div>
+  <button class="btn btn-primary" onclick="connectFirebase()">🔌 연결 확인</button>
+  <div id="fbConnStatus" style="margin-top:8px;font-size:12px"></div>
+</div>
+
+<!-- STEP 2: 백업 파일 -->
+<div class="card" id="card2" style="display:none">
+  <h2><span class="step-num">2</span> 백업 파일 선택</h2>
+  <div class="frow">
+    <label>ES수학_전체백업_YYYYMMDD.xlsx 파일을 선택하세요</label>
+    <input type="file" id="fileInput" accept=".xlsx,.xls" onchange="onFileChange(this)">
+  </div>
+  <div id="sheetPreview" style="font-size:11px;margin-top:6px"></div>
+</div>
+
+<!-- STEP 3: 복구 범위 및 시작 -->
+<div class="card" id="card3" style="display:none">
+  <h2><span class="step-num">3</span> 복구 범위 선택 및 시작</h2>
+  <div class="info">
+    새 Firebase이므로 <b>전체 항목 복구</b>를 권장합니다.<br>
+    학생 정보는 항상 가장 먼저 처리되어 새 ID가 부여됩니다.
+  </div>
+  <div class="sheet-check-wrap" id="sheetChecks"></div>
+  <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+    <button class="btn" style="font-size:11px;padding:5px 12px" onclick="setAllChecks(true)">전체 선택</button>
+    <button class="btn" style="font-size:11px;padding:5px 12px" onclick="setAllChecks(false)">전체 해제</button>
+  </div>
+  <button class="btn btn-green" onclick="startRestore()" id="startBtn">🚀 이전 복구 시작</button>
+</div>
+
+<!-- STEP 4: 진행 -->
+<div class="card" id="card4" style="display:none">
+  <h2><span class="step-num">4</span> 복구 진행 중</h2>
+  <div class="row-steps" id="stepList"></div>
+  <div class="progress-wrap"><div class="progress-fill" id="progressBar" style="width:0%"></div></div>
+  <div id="progressLabel" style="font-size:11px;color:#888;text-align:right">0%</div>
+  <div class="log" id="logBox"></div>
+  <div id="doneMsg" style="display:none;margin-top:12px;padding:12px;background:#d4edda;border:1px solid #80c090;border-radius:8px;font-size:13px;font-weight:600;color:#1e6e3a"></div>
+</div>
+
+<script>
+// ── 전역 상태 ──
+let _db = null, _fb = null;
+let wb = null, sheets = {}, nameToId = {}, tbNameToId = {};
+let foundSheets = [];
+
+const SHEET_NAMES = ['학생','교재배정','포인트','학교성적','수업기록','단원체크','교재진도','교재시험','특강수업기록','보강일정','주간평가'];
+const SHEET_LABELS = {
+  '학생':'👤 학생정보','교재배정':'📚 교재배정','포인트':'💰 포인트','학교성적':'🏫 학교성적',
+  '수업기록':'📝 수업기록','단원체크':'✅ 단원체크','교재진도':'📖 교재진도',
+  '교재시험':'📋 교재시험','특강수업기록':'🎯 특강수업기록','보강일정':'🗓️ 보강일정','주간평가':'📊 주간평가',
+};
+
+// ── Firebase 연결 ──
+async function connectFirebase(){
+  const raw = document.getElementById('fbConfigRaw').value.trim();
+  const recaptcha = document.getElementById('recaptchaKey').value.trim();
+  const statusEl = document.getElementById('fbConnStatus');
+  statusEl.textContent = '연결 중...'; statusEl.style.color='#888';
+
+  let config = {};
+  try{
+    // JSON 형태 or const firebaseConfig = {...} 형태 모두 파싱
+    let jsonStr = raw;
+    // const ... = {...}; 형태 제거
+    jsonStr = jsonStr.replace(/^.*?=\s*/,'').replace(/;?\s*$/,'').trim();
+    // 키에 따옴표 없는 경우 처리
+    jsonStr = jsonStr.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)/g, '$1"$2"$3');
+    config = JSON.parse(jsonStr);
+  } catch(e){
+    statusEl.textContent = '❌ 설정 파싱 실패: 형식을 확인하세요. (' + e.message + ')';
+    statusEl.style.color='#a02828'; return;
+  }
+  if(!config.apiKey || !config.projectId){
+    statusEl.textContent = '❌ apiKey 또는 projectId가 없습니다.';
+    statusEl.style.color='#a02828'; return;
+  }
+
+  // Firebase 동적 로드
+  try{
+    const { initializeApp, getApps, deleteApp } = await import('https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js');
+    const { getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, writeBatch }
+      = await import('https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js');
+
+    // 기존 앱 정리
+    getApps().forEach(a=>deleteApp(a));
+    const app = initializeApp(config);
+
+    // App Check (선택적)
+    if(recaptcha){
+      const { initializeAppCheck, ReCaptchaV3Provider } = await import('https://www.gstatic.com/firebasejs/12.13.0/firebase-app-check.js');
+      initializeAppCheck(app, { provider: new ReCaptchaV3Provider(recaptcha), isTokenAutoRefreshEnabled: true });
+    }
+
+    _db = getFirestore(app);
+    _fb = { doc, getDoc, setDoc, collection, getDocs, deleteDoc, writeBatch };
+
+    // 연결 테스트 (config/main 읽기 시도)
+    try{
+      await _fb.getDoc(_fb.doc(_db,'config','main'));
+      statusEl.textContent = `✅ 연결 성공! 프로젝트: ${config.projectId}`;
+      statusEl.style.color='#1e6e3a';
+      document.getElementById('card2').style.display='';
+    } catch(e2){
+      // Firestore 규칙 오류일 수 있음 — 그래도 연결은 된 것으로 처리
+      statusEl.textContent = `⚠️ 연결됨 (${config.projectId}) — Firestore 규칙을 확인하세요: ${e2.message}`;
+      statusEl.style.color='#a05a00';
+      document.getElementById('card2').style.display='';
+    }
+  } catch(e){
+    statusEl.textContent = '❌ Firebase 초기화 실패: ' + e.message;
+    statusEl.style.color='#a02828';
+  }
+}
+
+// ── 파일 로드 ──
+function onFileChange(input){
+  const file = input.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try{
+      wb = XLSX.read(e.target.result, {type:'array'});
+      foundSheets = wb.SheetNames.filter(n=>SHEET_NAMES.includes(n));
+      const missing = SHEET_NAMES.filter(n=>!wb.SheetNames.includes(n));
+      document.getElementById('sheetPreview').innerHTML =
+        `<b style="color:#1e6e3a">✅ 파일 로드 완료</b> — 시트 ${wb.SheetNames.length}개<br>` +
+        foundSheets.map(n=>`<span class="badge b-ok">${n}</span>`).join('') +
+        (missing.length ? `<br>누락: ${missing.map(n=>`<span class="badge b-skip">${n}</span>`).join('')}` : '');
+
+      foundSheets.forEach(name=>{
+        sheets[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], {defval:''});
+      });
+
+      // 복구 항목 체크박스 생성
+      const div = document.getElementById('sheetChecks');
+      div.innerHTML = '';
+      // 학생은 항상 맨 앞, 나머지는 원래 순서
+      const ordered = ['학생', ...SHEET_NAMES.filter(n=>n!=='학생')].filter(n=>foundSheets.includes(n));
+      ordered.forEach(name=>{
+        const cnt = sheets[name]?.length||0;
+        div.innerHTML += `<label>
+          <input type="checkbox" value="${name}" checked style="accent-color:#1558a8">
+          ${SHEET_LABELS[name]||name} <span style="color:#888;font-size:10px">(${cnt}행)</span>
+        </label>`;
+      });
+      document.getElementById('card3').style.display='';
+    } catch(e){
+      document.getElementById('sheetPreview').innerHTML = `<span style="color:#a02828">❌ 파일 읽기 실패: ${e.message}</span>`;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function setAllChecks(val){
+  document.querySelectorAll('#sheetChecks input[type=checkbox]').forEach(el=>el.checked=val);
+}
+function getChecked(){
+  return [...document.querySelectorAll('#sheetChecks input[type=checkbox]:checked')].map(el=>el.value);
+}
+
+// ── 유틸 ──
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function log(msg, type=''){
+  const box=document.getElementById('logBox');
+  const cls=type==='err'?'err':type==='ok'?'ok':type==='warn'?'warn':type==='info'?'info2':'';
+  box.innerHTML+=`<span class="${cls}">${msg}</span>\n`;
+  box.scrollTop=box.scrollHeight;
+}
+function setStep(id, state, label){
+  const el=document.getElementById('rstep_'+id); if(!el) return;
+  const icon=el.querySelector('.rstep-icon'); const txt=el.querySelector('.rstep-txt');
+  icon.className='rstep-icon si-'+state;
+  icon.textContent=state==='ok'?'✓':state==='err'?'✗':state==='run'?'…':'·';
+  if(label) txt.textContent=label;
+}
+function setProgress(pct){
+  document.getElementById('progressBar').style.width=pct+'%';
+  document.getElementById('progressLabel').textContent=Math.round(pct)+'%';
+}
+
+// Firestore batch 분할 쓰기 (최대 499개씩)
+async function batchWrite(writes){
+  const db=_db; const {writeBatch:wb2, doc:_doc}=_fb;
+  for(let i=0;i<writes.length;i+=499){
+    const chunk=writes.slice(i,i+499);
+    const batch=wb2(db);
+    chunk.forEach(({ref,data})=>batch.set(ref,data));
+    await batch.commit();
+    await sleep(200); // 연속 요청 사이 약간의 딜레이
+  }
+}
+async function batchDelete(refs){
+  const {writeBatch:wb2}=_fb;
+  for(let i=0;i<refs.length;i+=499){
+    const chunk=refs.slice(i,i+499);
+    const batch=wb2(_db);
+    chunk.forEach(ref=>batch.delete(ref));
+    await batch.commit();
+  }
+}
+
+// ── 복구 메인 ──
+async function startRestore(){
+  const checked=getChecked();
+  if(!checked.length){alert('복구할 항목을 선택하세요.');return;}
+  if(!confirm(`선택한 ${checked.length}개 항목을 새 Firebase에 복구합니다.\n\n새 Firebase는 비어있다고 가정하고 전체 데이터를 씁니다.\n계속하시겠어요?`)) return;
+
+  document.getElementById('startBtn').disabled=true;
+  document.getElementById('card4').style.display='';
+
+  // 스텝 UI
+  const stepDiv=document.getElementById('stepList');
+  stepDiv.innerHTML=checked.map(name=>`
+    <div class="rstep" id="rstep_${name}">
+      <div class="rstep-icon si-wait">·</div>
+      <span class="rstep-txt">${SHEET_LABELS[name]||name} 대기 중...</span>
+    </div>`).join('');
+
+  const {doc:_doc,getDoc:_getDoc,setDoc:_setDoc,collection:_col,getDocs:_getDocs}=_fb;
+  const db=_db;
+  const total=checked.length; let done=0;
+  const ATT_R={'출석':'attend','지각':'late','결석':'absent'};
+
+  try{
+    // ────────────────────────────────────────
+    // STEP A: 학생 정보 (항상 가장 먼저)
+    // ────────────────────────────────────────
+    let existingConfig={};
+    let existingStudents=[];
+    let existingTextbooks=[];
+    // 새 Firebase에서 기존 config 읽기 (있을 수도 있음)
+    try{
+      const s=await _getDoc(_doc(db,'config','main'));
+      if(s.exists()) existingConfig=s.data();
+      const ss=await _getDoc(_doc(db,'config','students'));
+      if(ss.exists()) existingStudents=ss.data().students||[];
+      const st=await _getDoc(_doc(db,'config','textbooks'));
+      if(st.exists()) existingTextbooks=st.data().textbooks||[];
+    }catch(e){ log('기존 설정 없음 (새 프로젝트)','warn'); }
+
+    // 교재 이름→ID 매핑 (기존 교재 있으면 활용)
+    existingTextbooks.forEach(t=>{ if(t.name) tbNameToId[t.name]=t.id; });
+
+    if(checked.includes('학생')){
+      setStep('학생','run','학생 정보 복구 중...');
+      log('\n[학생] 백업에서 학생 목록 생성', 'info');
+      const rows=sheets['학생']||[];
+      const newStudents=[];
+
+      rows.forEach(row=>{
+        const name=String(row['학생명']||'').trim(); if(!name) return;
+        // 이미 새 Firebase에 같은 이름의 학생이 있으면 그 ID 재사용, 없으면 새 ID 생성
+        const existing=existingStudents.find(s=>s.name===name);
+        const id=existing ? existing.id : ('s'+Date.now()+Math.floor(Math.random()*9999));
+        nameToId[name]=id;
+        newStudents.push({
+          id, name,
+          grade:String(row['학년']||'').trim(),
+          classType:String(row['반']||'').trim(),
+          level:String(row['레벨']||'').trim(),
+          teacher:String(row['평일담당']||'').trim(),
+          fridayTeacher:String(row['금요일담당']||'').trim(),
+          weekdayTime:String(row['평일교시']||'').trim(),
+          fridayTime:String(row['금요일교시']||'').trim(),
+          joinDate:String(row['등록일']||'').trim(),
+          specialNote:String(row['특이사항']||'').trim(),
+          textbooks:[],
+        });
+        log(`  ${name} → ${id}${existing?' (기존 ID 재사용)':' (새 ID)'}`, existing?'warn':'ok');
+        await sleep(1); // ID 중복 방지
+      });
+
+      // 교재배정도 함께 처리 (학생 문서에 포함)
+      if(checked.includes('교재배정') && sheets['교재배정']){
+        log('[교재배정] 학생 textbooks 필드에 병합', 'info');
+        sheets['교재배정'].forEach(row=>{
+          const name=String(row['학생명']||'').trim();
+          const stu=newStudents.find(s=>s.name===name); if(!stu) return;
+          const tbName=String(row['교재명']||'').trim();
+          const tbId=tbNameToId[tbName]||tbName;
+          stu.textbooks.push({
+            tbId,
+            startDate:String(row['시작일']||'').trim(),
+            rowType:String(row['현행선행']||'현행').trim(),
+          });
+        });
+      }
+
+      await _setDoc(_doc(db,'config','students'),{students:newStudents});
+      // config/main 유지 (기존 설정 보존)
+      if(Object.keys(existingConfig).length>0)
+        await _setDoc(_doc(db,'config','main'),existingConfig);
+
+      existingStudents=newStudents;
+      log(`  총 ${newStudents.length}명 저장 완료`,'ok');
+      setStep('학생','ok',`학생 정보 복구 완료 (${newStudents.length}명)`);
+      done++; setProgress(done/total*100);
+    } else {
+      // 학생 시트 미선택: 기존 ID 매핑만 구성
+      existingStudents.forEach(s=>{ if(s.name) nameToId[s.name]=s.id; });
+      log('[학생] 시트 미선택 — 기존 학생 ID 매핑 사용','warn');
+    }
+
+    // 교재배정은 학생 처리 시 함께 했으므로 별도 처리하되 학생 없이 단독 선택 시만
+    if(checked.includes('교재배정') && !checked.includes('학생')){
+      setStep('교재배정','run','교재배정 복구 중...');
+      log('\n[교재배정] 학생 문서 업데이트', 'info');
+      try{
+        const rows=sheets['교재배정']||[];
+        const students=JSON.parse(JSON.stringify(existingStudents));
+        const byStudent={};
+        rows.forEach(row=>{
+          const name=String(row['학생명']||'').trim();
+          const sid=nameToId[name]; if(!sid) return;
+          if(!byStudent[sid]) byStudent[sid]=[];
+          const tbName=String(row['교재명']||'').trim();
+          byStudent[sid].push({tbId:tbNameToId[tbName]||tbName, startDate:String(row['시작일']||'').trim(), rowType:String(row['현행선행']||'현행').trim()});
+        });
+        students.forEach(s=>{ if(byStudent[s.id]) s.textbooks=byStudent[s.id]; });
+        await _setDoc(_doc(db,'config','students'),{students});
+        setStep('교재배정','ok','교재배정 복구 완료');
+      }catch(e){ log('  오류: '+e.message,'err'); setStep('교재배정','err','교재배정 복구 실패'); }
+      done++; setProgress(done/total*100);
+    } else if(checked.includes('교재배정') && checked.includes('학생')){
+      // 이미 처리됨
+      setStep('교재배정','ok','교재배정 복구 완료 (학생정보에 포함)');
+      done++; setProgress(done/total*100);
+    }
+
+    // ────────────────────────────────────────
+    // 포인트
+    // ────────────────────────────────────────
+    if(checked.includes('포인트')){
+      setStep('포인트','run','포인트 복구 중...');
+      log('\n[포인트] 복구 시작','info');
+      try{
+        const rows=sheets['포인트']||[];
+        const byStudent={};
+        rows.forEach(row=>{
+          const name=String(row['학생명']||'').trim();
+          const sid=nameToId[name]; if(!sid){log(`  미매핑: ${name}`,'warn');return;}
+          if(!byStudent[sid]){byStudent[sid]={studentId:sid,balance:0,history:[]};}
+          const pts=parseFloat(row['포인트'])||0;
+          byStudent[sid].history.push({
+            date:String(row['날짜']||'').trim(),
+            label:String(row['항목']||'').trim(),
+            type:String(row['항목']||'').trim(),
+            points:pts, note:String(row['메모']||'').trim(),
+          });
+          byStudent[sid].balance+=pts;
+        });
+        const writes=Object.entries(byStudent).map(([sid,data])=>({ref:_doc(db,'points',sid),data}));
+        await batchWrite(writes);
+        log(`  ${writes.length}명 저장 완료`,'ok');
+        setStep('포인트','ok',`포인트 복구 완료 (${writes.length}명)`);
+      }catch(e){log('  오류: '+e.message,'err');setStep('포인트','err','포인트 복구 실패');}
+      done++; setProgress(done/total*100);
+    }
+
+    // ────────────────────────────────────────
+    // 학교성적
+    // ────────────────────────────────────────
+    if(checked.includes('학교성적')){
+      setStep('학교성적','run','학교성적 복구 중...');
+      log('\n[학교성적] 복구 시작','info');
+      try{
+        const rows=sheets['학교성적']||[];
+        const EXAM_R={'1학기중간':'s1_mid','1학기기말':'s1_fin','2학기중간':'s2_mid','2학기기말':'s2_fin'};
+        const byStudent={};
+        rows.forEach(row=>{
+          const name=String(row['학생명']||'').trim();
+          const sid=nameToId[name]; if(!sid){log(`  미매핑: ${name}`,'warn');return;}
+          if(!byStudent[sid]){byStudent[sid]={studentId:sid,exams:[]};}
+          const rawKey=String(row['시험']||'').trim();
+          byStudent[sid].exams.push({
+            type:'school', key:EXAM_R[rawKey]||rawKey,
+            gradeLabel:String(row['학년']||'').trim(),
+            score:String(row['점수']||'').trim()===''?null:parseFloat(row['점수']),
+            certified:String(row['성적표인증']||'').trim()==='O',
+            savedAt:String(row['저장일']||'').trim(),
+          });
+        });
+        const writes=Object.entries(byStudent).map(([sid,data])=>({ref:_doc(db,'school_exams',sid),data}));
+        await batchWrite(writes);
+        log(`  ${writes.length}명 저장 완료`,'ok');
+        setStep('학교성적','ok',`학교성적 복구 완료 (${writes.length}명)`);
+      }catch(e){log('  오류: '+e.message,'err');setStep('학교성적','err','학교성적 복구 실패');}
+      done++; setProgress(done/total*100);
+    }
+
+    // ────────────────────────────────────────
+    // 수업기록
+    // ────────────────────────────────────────
+    if(checked.includes('수업기록')){
+      setStep('수업기록','run','수업기록 복구 중...');
+      log('\n[수업기록] 복구 시작','info');
+      try{
+        const rows=sheets['수업기록']||[];
+        const byCol={};
+        let skipCnt=0, writeCnt=0;
+        rows.forEach(row=>{
+          const name=String(row['학생명']||'').trim();
+          const sid=nameToId[name]; if(!sid){skipCnt++;return;}
+          const date=String(row['날짜']||'').trim();
+          if(!date||!date.match(/^\d{4}-\d{2}-\d{2}$/)){skipCnt++;return;}
+          const y=date.slice(0,4), m=date.slice(5,7);
+          const colName=`lessons_${y}-${m}`;
+          const key=sid+'_'+date;
+          if(!byCol[colName]) byCol[colName]={};
+          const hwScore=String(row['과제점수']||'').trim();
+          const tsScore=String(row['시험점수']||'').trim();
+          byCol[colName][key]={
+            key, studentId:sid, date,
+            year:parseInt(y), month:parseInt(m),
+            attendance:ATT_R[String(row['출결']||'').trim()]||'',
+            homeworkScore:hwScore===''?null:parseFloat(hwScore),
+            testScore:tsScore===''?null:parseFloat(tsScore),
+            progress:String(row['진도']||'').trim(),
+            homework:String(row['과제']||'').trim(),
+            note:String(row['특이사항']||'').trim(),
+            makeupClass:String(row['보강여부']||'').trim()==='O',
+            updatedAt:new Date().toISOString(), updatedBy:'restore',
+          };
+          writeCnt++;
+        });
+        if(skipCnt) log(`  매핑 실패 ${skipCnt}건 스킵`,'warn');
+        for(const [colName,lessons] of Object.entries(byCol)){
+          const writes=Object.entries(lessons).map(([k,data])=>({ref:_doc(db,colName,k),data}));
+          await batchWrite(writes);
+          log(`  ${colName}: ${writes.length}건`,'ok');
+        }
+        log(`  총 ${writeCnt}건 저장 완료`,'ok');
+        setStep('수업기록','ok',`수업기록 복구 완료 (${writeCnt}건)`);
+      }catch(e){log('  오류: '+e.message,'err');setStep('수업기록','err','수업기록 복구 실패');}
+      done++; setProgress(done/total*100);
+    }
+
+    // ────────────────────────────────────────
+    // 교재진도
+    // ────────────────────────────────────────
+    if(checked.includes('교재진도')){
+      setStep('교재진도','run','교재진도 복구 중...');
+      log('\n[교재진도] 복구 시작','info');
+      try{
+        const rows=sheets['교재진도']||[];
+        const writes=[];
+        rows.forEach(row=>{
+          const name=String(row['학생명']||'').trim();
+          const sid=nameToId[name]; if(!sid){log(`  미매핑: ${name}`,'warn');return;}
+          const tbName=String(row['교재명']||'').trim();
+          const tbId=tbNameToId[tbName]||tbName;
+          const key=sid+'_'+tbId;
+          writes.push({ref:_doc(db,'textbook_progress',key),data:{
+            key, studentId:sid, textbookId:tbId,
+            currentPage:parseInt(row['현재쪽수'])||0,
+            totalPage:parseInt(row['전체쪽수'])||0,
+            startDate:String(row['시작일']||'').trim(),
+            memo:String(row['메모']||'').trim(),
+            updatedAt:new Date().toISOString(), updatedBy:'restore'
+          }});
+        });
+        await batchWrite(writes);
+        log(`  ${writes.length}건 저장 완료`,'ok');
+        setStep('교재진도','ok',`교재진도 복구 완료 (${writes.length}건)`);
+      }catch(e){log('  오류: '+e.message,'err');setStep('교재진도','err','교재진도 복구 실패');}
+      done++; setProgress(done/total*100);
+    }
+
+    // ────────────────────────────────────────
+    // 교재시험
+    // ────────────────────────────────────────
+    if(checked.includes('교재시험')){
+      setStep('교재시험','run','교재시험 복구 중...');
+      log('\n[교재시험] 복구 시작','info');
+      try{
+        const rows=sheets['교재시험']||[];
+        const writes=[];
+        rows.forEach(row=>{
+          const name=String(row['학생명']||'').trim();
+          const sid=nameToId[name]; if(!sid){log(`  미매핑: ${name}`,'warn');return;}
+          const tbName=String(row['교재명']||'').trim();
+          const tbId=tbNameToId[tbName]||tbName;
+          const attempt=parseInt(row['시도'])||1;
+          const key=sid+'_'+tbId+'_'+attempt;
+          const scoreRaw=String(row['점수']||'').trim();
+          writes.push({ref:_doc(db,'textbook_tests',key),data:{
+            key, studentId:sid, textbookId:tbId, attempt,
+            score:scoreRaw===''?null:parseFloat(scoreRaw),
+            passed:String(row['합격여부']||'').trim()==='합격',
+            date:String(row['날짜']||'').trim(),
+            memo:String(row['메모']||'').trim(),
+            manualComplete:String(row['수동합격']||'').trim()==='O',
+            updatedAt:new Date().toISOString(), updatedBy:'restore'
+          }});
+        });
+        await batchWrite(writes);
+        log(`  ${writes.length}건 저장 완료`,'ok');
+        setStep('교재시험','ok',`교재시험 복구 완료 (${writes.length}건)`);
+      }catch(e){log('  오류: '+e.message,'err');setStep('교재시험','err','교재시험 복구 실패');}
+      done++; setProgress(done/total*100);
+    }
+
+    // ────────────────────────────────────────
+    // 단원체크
+    // ────────────────────────────────────────
+    if(checked.includes('단원체크')){
+      setStep('단원체크','run','단원체크 복구 중...');
+      log('\n[단원체크] 복구 시작','info');
+      try{
+        const rows=sheets['단원체크']||[];
+        const byKey={};
+        rows.forEach(row=>{
+          const name=String(row['학생명']||'').trim();
+          const sid=nameToId[name]; if(!sid){log(`  미매핑: ${name}`,'warn');return;}
+          const tbName=String(row['교재명']||'').trim();
+          const tbId=tbNameToId[tbName]||tbName;
+          const key=(sid+'_'+tbId).replace(/[\/\.#\[\]\*~%]/g,'_');
+          if(!byKey[key]) byKey[key]={sid,tbId,units:[]};
+          byKey[key].units.push({
+            name:String(row['단원명']||'').trim(),
+            checked:String(row['체크']||'').trim()==='O',
+            score:String(row['점수']||'').trim()===''?null:parseFloat(row['점수']),
+            checkedDate:String(row['완료일']||'').trim(),
+          });
+        });
+        const writes=Object.entries(byKey).map(([k,v])=>({
+          ref:_doc(db,'textbook_units',k),
+          data:{studentId:v.sid,textbookId:v.tbId,units:v.units,updatedAt:new Date().toISOString()}
+        }));
+        await batchWrite(writes);
+        log(`  ${writes.length}건 저장 완료`,'ok');
+        setStep('단원체크','ok',`단원체크 복구 완료 (${writes.length}건)`);
+      }catch(e){log('  오류: '+e.message,'err');setStep('단원체크','err','단원체크 복구 실패');}
+      done++; setProgress(done/total*100);
+    }
+
+    // ────────────────────────────────────────
+    // 특강수업기록
+    // ────────────────────────────────────────
+    if(checked.includes('특강수업기록')){
+      setStep('특강수업기록','run','특강수업기록 복구 중...');
+      log('\n[특강수업기록] 복구 시작','info');
+      try{
+        const rows=sheets['특강수업기록']||[];
+        const spClasses=existingConfig.specialClasses||[];
+        const spNameToId={};
+        spClasses.forEach(s=>{if(s.name)spNameToId[s.name]=s.id;});
+        const writes=[];
+        rows.forEach(row=>{
+          const spName=String(row['특강명']||'').trim();
+          const spId=spNameToId[spName]||('sp_'+spName.replace(/\s/g,'_'));
+          const stuName=String(row['학생명']||'').trim();
+          const sid=nameToId[stuName]; if(!sid){log(`  미매핑: ${stuName}`,'warn');return;}
+          const sessionNo=parseInt(row['회차'])||1;
+          const key=spId+'_'+sid+'_'+sessionNo;
+          const hwS=String(row['과제점수']||'').trim();
+          const tsS=String(row['시험점수']||'').trim();
+          writes.push({ref:_doc(db,'special_lessons',key),data:{
+            key, specialId:spId, studentId:sid, sessionNo,
+            date:String(row['날짜']||'').trim(),
+            attendance:ATT_R[String(row['출결']||'').trim()]||'',
+            homeworkScore:hwS===''?null:parseFloat(hwS),
+            testScore:tsS===''?null:parseFloat(tsS),
+            progress:String(row['진도']||'').trim(),
+            homework:String(row['과제']||'').trim(),
+            note:String(row['특이사항']||'').trim(),
+            updatedAt:new Date().toISOString(), updatedBy:'restore'
+          }});
+        });
+        await batchWrite(writes);
+        log(`  ${writes.length}건 저장 완료`,'ok');
+        setStep('특강수업기록','ok',`특강수업기록 복구 완료 (${writes.length}건)`);
+      }catch(e){log('  오류: '+e.message,'err');setStep('특강수업기록','err','특강수업기록 복구 실패');}
+      done++; setProgress(done/total*100);
+    }
+
+    // ────────────────────────────────────────
+    // 보강일정
+    // ────────────────────────────────────────
+    if(checked.includes('보강일정')){
+      setStep('보강일정','run','보강일정 복구 중...');
+      log('\n[보강일정] 복구 시작','info');
+      try{
+        const rows=sheets['보강일정']||[];
+        const byDate={};
+        rows.forEach(row=>{
+          const date=String(row['보강날짜']||'').trim(); if(!date) return;
+          const stuName=String(row['학생명']||'').trim();
+          const sid=nameToId[stuName]; if(!sid){log(`  미매핑: ${stuName}`,'warn');return;}
+          if(!byDate[date]) byDate[date]={date,students:[]};
+          byDate[date].students.push({
+            id:sid,
+            period:String(row['교시']||'').replace('교시','').trim(),
+            teacher:String(row['담당']||'').trim(),
+            makeupType:String(row['보강유형']||'').trim()==='특강'?'special':'regular',
+            absentDate:String(row['결석일']||'').trim(),
+          });
+        });
+        const writes=Object.entries(byDate).map(([date,data])=>({ref:_doc(db,'makeup_days',date),data}));
+        await batchWrite(writes);
+        log(`  ${writes.length}일 저장 완료`,'ok');
+        setStep('보강일정','ok',`보강일정 복구 완료 (${writes.length}일)`);
+      }catch(e){log('  오류: '+e.message,'err');setStep('보강일정','err','보강일정 복구 실패');}
+      done++; setProgress(done/total*100);
+    }
+
+    // ────────────────────────────────────────
+    // 주간평가
+    // ────────────────────────────────────────
+    if(checked.includes('주간평가')){
+      setStep('주간평가','run','주간평가 복구 중...');
+      log('\n[주간평가] 복구 시작','info');
+      try{
+        const rows=sheets['주간평가']||[];
+        const byCol={};
+        rows.forEach(row=>{
+          const year=parseInt(row['연도'])||0;
+          const month=parseInt(row['월'])||0;
+          if(!year||!month) return;
+          const colName=`weekly_eval_${year}-${String(month).padStart(2,'0')}`;
+          const key=String(row['주차키']||'').trim(); if(!key) return;
+          if(!byCol[colName]) byCol[colName]={};
+          byCol[colName][key]={
+            key,year,month,
+            app:parseFloat(row['성실도'])||0,
+            focus:parseFloat(row['집중도'])||0,
+            hw:parseFloat(row['과제'])||0,
+            memo:String(row['메모']||'').trim(),
+            updatedAt:new Date().toISOString(), updatedBy:'restore'
+          };
+        });
+        let total2=0;
+        for(const [colName,evals] of Object.entries(byCol)){
+          const writes=Object.entries(evals).map(([k,data])=>({ref:_doc(db,colName,k),data}));
+          await batchWrite(writes);
+          total2+=writes.length;
+          log(`  ${colName}: ${writes.length}건`,'ok');
+        }
+        setStep('주간평가','ok',`주간평가 복구 완료 (${total2}건)`);
+      }catch(e){log('  오류: '+e.message,'err');setStep('주간평가','err','주간평가 복구 실패');}
+      done++; setProgress(done/total*100);
+    }
+
+    // ── 완료 ──
+    setProgress(100);
+    log('\n\n✅ 모든 복구가 완료되었습니다!','ok');
+    log('다음 단계: index.html의 firebaseConfig를 새 프로젝트 설정으로 교체하세요.','info');
+
+    const doneMsg=document.getElementById('doneMsg');
+    doneMsg.style.display='';
+    doneMsg.innerHTML=`✅ 복구 완료!<br>
+      <span style="font-weight:400;font-size:12px">
+      이제 <b>index.html</b>을 열어 <code>firebaseConfig</code> 블록을<br>
+      새 Firebase 프로젝트 값으로 교체하면 앱이 정상 작동합니다.
+      </span>`;
+    document.getElementById('startBtn').disabled=false;
+    document.getElementById('startBtn').textContent='🔄 다시 실행';
+
+  }catch(e){
+    log('\n❌ 치명적 오류: '+e.message,'err');
+    console.error(e);
+    document.getElementById('startBtn').disabled=false;
+  }
+}
+</script>
+</body>
+</html>
